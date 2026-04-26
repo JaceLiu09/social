@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum MembershipType {
+  FREE
+  MONTH
+  QUARTER
+  HALF_YEAR
+  YEAR
+}
+
+model User {
+  id                 String         @id @default(cuid())
+  phone              String         @unique
+  password           String
+  nickname           String
+  gender             Gender
+  age                Int
+  height             Int
+  weight             Int
+  hometown           String
+  currentCity        String
+  incomeProofStatus  String         @default("PENDING")
+  hobbies            String
+  partnerExpectation String
+  avatarUrl          String?
+  photoUrls          String
+  membershipType     MembershipType @default(FREE)
+  membershipExpireAt DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  maleUnlocks MaleUnlock[]
+}
+
+model MatchSession {
+  id               String   @id @default(cuid())
+  maleUserId       String
+  femaleUserId     String
+  friendliness     Int      @default(0)
+  roundsPlayed     Int      @default(0)
+  isUnlocked       Boolean  @default(false)
+  unlockPaid       Boolean  @default(false)
+  startedAt        DateTime @default(now())
+  lastInteractionAt DateTime @updatedAt
+}
+
+model MaleUnlock {
+  id            String   @id @default(cuid())
+  maleUserId    String
+  femaleUserId  String
+  amount        Float
+  createdAt     DateTime @default(now())
+
+  maleUser User @relation(fields: [maleUserId], references: [id])
+}
