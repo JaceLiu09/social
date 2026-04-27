@@ -3,7 +3,7 @@
 这是一个从 0 到 1 的「异性互动盲盒社交」基础项目，按前后端分离搭建：
 
 - `frontend`：移动端风格 Web 前端（React + Vite）
-- `backend`：API 服务（Node.js + Express + Prisma + SQLite）
+- `backend`：API 服务（Node.js + Express + Prisma + MySQL）
 
 ## 核心流程（已落地）
 
@@ -57,6 +57,8 @@
 ```bash
 cd backend
 npm install
+cp .env.example .env
+# 填入远程 MySQL 的 DATABASE_URL
 npx prisma generate
 npx prisma db push
 node prisma/seed.js

@@ -13,6 +13,48 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+function randInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function formatAgo(totalMinutes) {
+  if (totalMinutes < 60) return `${totalMinutes}分钟前`;
+  if (totalMinutes < 60 * 24) return `${Math.floor(totalMinutes / 60)}小时前`;
+  return `${Math.floor(totalMinutes / (60 * 24))}天前`;
+}
+
+function createSquarePostPool(size = 5000) {
+  const templates = [
+    "今天工作有点累，想找个能聊得来的人。",
+    "希望遇到一个三观契合的人。",
+    "刚下班，来广场看看有没有同频的人。",
+    "最近在学做饭，谁来分享简单菜谱。",
+    "喜欢散步和听歌，想找个能一起放松的人。",
+    "真诚最重要，希望互相尊重、互相理解。",
+    "周末想去短途旅行，有没有推荐。",
+    "想认真恋爱，不想无效社交。"
+  ];
+
+  const posts = [];
+  for (let i = 1; i <= size; i += 1) {
+    const gender = Math.random() > 0.5 ? "MALE" : "FEMALE";
+    const minutesAgo = randInt(1, 60 * 24 * 15);
+    posts.push({
+      id: i,
+      nickname: gender === "MALE" ? `盲盒男生${randInt(10, 999)}` : `盲盒女生${randInt(10, 999)}`,
+      gender,
+      text: templates[randInt(0, templates.length - 1)],
+      likes: randInt(0, 999),
+      minutesAgo,
+      createdAt: formatAgo(minutesAgo),
+      distanceKm: Number((Math.random() * (300 - 10) + 10).toFixed(1))
+    });
+  }
+  return posts;
+}
+
+let squarePostPool = createSquarePostPool(5000).sort((a, b) => a.minutesAgo - b.minutesAgo);
+
 const profileSchema = z.object({
   phone: z.string().min(6),
   password: z.string().min(6),
@@ -39,24 +81,47 @@ app.post("/auth/register", async (req, res) => {
     });
     return res.json({ user });
   } catch (error) {
+    if (error?.name?.includes("PrismaClient")) {
+      return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
+    }
     return res.status(400).json({ message: error.message });
   }
 });
 
 app.post("/auth/login", async (req, res) => {
-  const { phone, password } = req.body;
-  const user = await prisma.user.findFirst({ where: { phone, password } });
-  if (!user) return res.status(401).json({ message: "手机号或密码错误" });
-  return res.json({ user });
+  try {
+    const { phone, password } = req.body;
+    const user = await prisma.user.findFirst({ where: { phone, password } });
+    if (!user) return res.status(401).json({ message: "手机号或密码错误" });
+    return res.json({ user });
+  } catch (error) {
+    if (error?.name?.includes("PrismaClient")) {
+      return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
+    }
+    return res.status(500).json({ message: "登录失败，请稍后重试" });
+  }
 });
 
 app.get("/square/posts", (_req, res) => {
+  const limit = Math.min(Number(_req.query.limit) || 60, 200);
+  const offset = Math.max(Number(_req.query.offset) || 0, 0);
+  const refresh = String(_req.query.refresh || "0") === "1";
+
+  if (refresh) {
+    squarePostPool = createSquarePostPool(5000).sort((a, b) => a.minutesAgo - b.minutesAgo);
+  }
+
+  const sliced = squarePostPool.slice(offset, offset + limit);
+  const posts = sliced.map(({ minutesAgo, ...rest }) => rest);
+  const nextOffset = offset + posts.length;
+  const hasMore = nextOffset < squarePostPool.length;
+
   res.json({
-    posts: [
-      { id: 1, text: "今天加班好累，想找个能聊得来的人。", likes: 120 },
-      { id: 2, text: "真诚比颜值重要，希望遇到同频的人。", likes: 258 },
-      { id: 3, text: "刚学做饭，有没有人分享简单菜谱。", likes: 76 }
-    ]
+    posts,
+    total: squarePostPool.length,
+    offset,
+    nextOffset,
+    hasMore
   });
 });
 
