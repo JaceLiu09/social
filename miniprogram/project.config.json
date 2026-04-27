@@ -1,0 +1,15 @@
+{
+  "miniprogramRoot": "./",
+  "compileType": "miniprogram",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "minified": true,
+    "postcss": true,
+    "packNpmRelationList": []
+  },
+  "appid": "touristappid",
+  "projectname": "social-blindbox",
+  "condition": {},
+  "libVersion": "3.5.5"
+}

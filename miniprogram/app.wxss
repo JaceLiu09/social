@@ -1,0 +1,6 @@
+page {
+  font-size: 28rpx;
+  color: #111827;
+  background: #f3f4f6;
+  box-sizing: border-box;
+}

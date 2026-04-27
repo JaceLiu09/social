@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "mysql"
+  url      = "mysql://socialuser:StrongPass!123@112.124.51.207:3306/socialdb"
 }
 
 enum Gender {

@@ -1,0 +1,98 @@
+<view class="page">
+  <view class="intro">先互动，后解锁；男解女资料 1.9 元；聊天需会员。</view>
+
+  <block wx:if="{{!user}}">
+    <view class="card">
+      <view class="h2">注册 / 登录</view>
+      <view class="seg">
+        <view class="seg-item {{authMode==='register'?'on':''}}" data-mode="register" bindtap="onAuthMode">新用户注册</view>
+        <view class="seg-item {{authMode==='login'?'on':''}}" data-mode="login" bindtap="onAuthMode">已有账号登录</view>
+      </view>
+
+      <block wx:if="{{authMode==='register'}}">
+        <input class="input" value="{{form.phone}}" data-k="phone" bindinput="onForm" placeholder="手机号" type="number" />
+        <input class="input" value="{{form.password}}" data-k="password" bindinput="onForm" placeholder="密码" password />
+        <input class="input" value="{{form.nickname}}" data-k="nickname" bindinput="onForm" placeholder="昵称" />
+        <picker mode="selector" range="{{genders}}" value="{{genderIndex}}" bindchange="onGender">
+          <view class="picker">性别：{{genders[genderIndex]}}</view>
+        </picker>
+        <input class="input" value="{{form.age}}" data-k="age" bindinput="onForm" placeholder="年龄" type="number" />
+        <input class="input" value="{{form.height}}" data-k="height" bindinput="onForm" placeholder="身高 cm" type="number" />
+        <input class="input" value="{{form.weight}}" data-k="weight" bindinput="onForm" placeholder="体重 kg" type="number" />
+        <input class="input" value="{{form.hometown}}" data-k="hometown" bindinput="onForm" placeholder="家乡" />
+        <input class="input" value="{{form.currentCity}}" data-k="currentCity" bindinput="onForm" placeholder="现居城市" />
+        <input class="input" value="{{form.hobbies}}" data-k="hobbies" bindinput="onForm" placeholder="爱好" />
+        <input class="input" value="{{form.partnerExpectation}}" data-k="partnerExpectation" bindinput="onForm" placeholder="对另一半期待" />
+        <input class="input" value="{{form.avatarUrl}}" data-k="avatarUrl" bindinput="onForm" placeholder="头像图 URL（可空）" />
+        <input class="input" value="{{form.photoUrl}}" data-k="photoUrl" bindinput="onForm" placeholder="照片 URL（需 https 有效地址）" />
+        <button class="btn" bindtap="onRegister" loading="{{loading}}">注册并进入</button>
+      </block>
+
+      <block wx:else>
+        <input class="input" value="{{loginForm.phone}}" data-k="phone" bindinput="onLoginForm" placeholder="手机号" type="number" />
+        <input class="input" value="{{loginForm.password}}" data-k="password" bindinput="onLoginForm" placeholder="密码" password />
+        <button class="btn" bindtap="onLogin" loading="{{loading}}">登录</button>
+      </block>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="user-bar">
+      <text>{{user.nickname}}</text>
+      <text class="muted">（{{user.gender==='MALE'?'男':'女'}}）</text>
+      <text class="out" bindtap="onLogout">退出</text>
+    </view>
+
+    <view class="tabs">
+      <view class="tab {{tab==='match'?'on':''}}" data-tab="match" bindtap="onTab">开盲盒</view>
+      <view class="tab {{tab==='square'?'on':''}}" data-tab="square" bindtap="onTab">盲盒广场</view>
+      <view class="tab {{tab==='interacted'?'on':''}}" data-tab="interacted" bindtap="onTab">已互动</view>
+    </view>
+
+    <view class="card" wx:if="{{tab==='match'}}">
+      <view class="h2">开盲盒</view>
+      <view class="muted">盲盒星球在线：{{onlineCount}} 人</view>
+      <button class="btn" bindtap="startMatch" loading="{{loading}}">开始匹配</button>
+      <view wx:if="{{targetBlindBox}}" class="mt">已匹配：{{targetBlindBox.nickname}}（资料未解锁）</view>
+      <block wx:if="{{session}}">
+        <button class="btn secondary" bindtap="playRound" loading="{{loading}}">掷骰子一回合</button>
+        <view class="mt">回合：{{session.roundsPlayed}} / 5+</view>
+        <view>友好度：{{session.friendliness}}%</view>
+      </block>
+      <view wx:if="{{gameState}}" class="result mt">
+        <view>骰子 A={{gameState.diceA}}，B={{gameState.diceB}}</view>
+        <view class="mt-sm">{{gameState.question}}</view>
+        <view class="options">{{gameState.optionsTxt}}</view>
+      </view>
+      <button
+        wx:if="{{session && session.isUnlocked && user.gender==='MALE'}}"
+        class="btn warn"
+        bindtap="unlockProfile"
+        loading="{{loading}}"
+      >模拟支付 1.9 元解锁女方资料</button>
+    </view>
+
+    <view class="card" wx:if="{{tab==='square'}}">
+      <view class="h2">盲盒广场</view>
+      <view wx:for="{{posts}}" wx:key="id" class="post">
+        <view class="bb-av">盲盒</view>
+        <view class="post-t">{{item.text}}</view>
+        <view class="muted">点赞 {{item.likes}}</view>
+      </view>
+    </view>
+
+    <view class="card" wx:if="{{tab==='interacted'}}">
+      <view class="h2">会员</view>
+      <view class="muted">解锁后可发起聊天，需双方会员（MVP 模拟）。</view>
+      <view class="plans">
+        <button size="mini" data-plan="MONTH" bindtap="subscribe">月卡 49</button>
+        <button size="mini" data-plan="QUARTER" bindtap="subscribe">季卡 129</button>
+        <button size="mini" data-plan="HALF_YEAR" bindtap="subscribe">半年 199</button>
+        <button size="mini" data-plan="YEAR" bindtap="subscribe">年卡 359</button>
+      </view>
+      <view class="mt">{{membershipText}}</view>
+    </view>
+  </block>
+
+  <view wx:if="{{message}}" class="toast">{{message}}</view>
+</view>

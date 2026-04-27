@@ -95,6 +95,13 @@ app.post("/game/dice-round", async (req, res) => {
 
   const diceA = Math.floor(Math.random() * 6) + 1;
   const diceB = Math.floor(Math.random() * 6) + 1;
+  const questions = [
+    "你最近一次心动是什么时候？",
+    "你最希望另一半具备什么品质？",
+    "你会因为什么瞬间决定认真恋爱？"
+  ];
+  const options = ["真诚最重要", "情绪稳定", "有共同成长意愿", "能一起面对现实"];
+
   const roundsPlayed = session.roundsPlayed + 1;
   const friendliness = Math.min(100, session.friendliness + FRIENDLINESS_PER_ROUND);
   const isUnlocked = roundsPlayed >= MIN_ROUNDS_FOR_UNLOCK && friendliness >= 100;
@@ -109,8 +116,8 @@ app.post("/game/dice-round", async (req, res) => {
       diceA,
       diceB,
       winner: diceA >= diceB ? "A" : "B",
-      question: "你会因为什么瞬间决定认真恋爱？",
-      options: ["真诚最重要", "情绪稳定", "有共同成长意愿", "能一起面对现实"]
+      question: questions[Math.floor(Math.random() * questions.length)],
+      options
     },
     progress: updated
   });
@@ -150,183 +157,6 @@ app.post("/membership/subscribe", async (req, res) => {
   return res.json({ user, paid: price });
 });
 
-const port = process.env.PORT || 4000;
-app.listen(port, () => console.log(`API running: http://localhost:${port}`));
-import express from "express";
-import cors from "cors";
-import { z } from "zod";
-import { prisma } from "./prisma.js";
-import {
-  FRIENDLINESS_PER_ROUND,
-  MALE_UNLOCK_FEE,
-  MEMBERSHIP_PRICE,
-  MIN_ROUNDS_FOR_UNLOCK
-} from "./config.js";
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const profileSchema = z.object({
-  phone: z.string().min(6),
-  password: z.string().min(6),
-  nickname: z.string().min(1),
-  gender: z.enum(["MALE", "FEMALE"]),
-  age: z.number().int().min(18).max(60),
-  height: z.number().int().min(130).max(220),
-  weight: z.number().int().min(30).max(200),
-  hometown: z.string().min(1),
-  currentCity: z.string().min(1),
-  hobbies: z.string().min(1),
-  partnerExpectation: z.string().min(1),
-  avatarUrl: z.string().optional(),
-  photoUrls: z.array(z.string().url()).min(1)
-});
-
-app.get("/health", (_req, res) => {
-  res.json({ ok: true });
-});
-
-app.post("/auth/register", async (req, res) => {
-  try {
-    const data = profileSchema.parse(req.body);
-    const user = await prisma.user.create({
-      data: {
-        ...data,
-        photoUrls: JSON.stringify(data.photoUrls)
-      }
-    });
-    res.json({ user });
-  } catch (error) {
-    res.status(400).json({ message: error.message });
-  }
-});
-
-app.post("/auth/login", async (req, res) => {
-  const { phone, password } = req.body;
-  const user = await prisma.user.findFirst({ where: { phone, password } });
-  if (!user) {
-    return res.status(401).json({ message: "手机号或密码错误" });
-  }
-  return res.json({ user });
-});
-
-app.get("/square/posts", (_req, res) => {
-  const posts = [
-    { id: 1, text: "今天加班好累，想找个能聊得来的人。", likes: 120 },
-    { id: 2, text: "真诚比颜值重要，希望遇到同频的人。", likes: 258 },
-    { id: 3, text: "刚学做饭，有没有人分享简单菜谱。", likes: 76 }
-  ];
-  res.json({ posts });
-});
-
-app.get("/match/online-count", (_req, res) => {
-  const base = Math.floor(Math.random() * (300000 - 180000 + 1)) + 180000;
-  const swing = Math.floor(Math.random() * 5001);
-  const direction = Math.random() > 0.5 ? 1 : -1;
-  const count = Math.max(180000, Math.min(300000, base + direction * swing));
-  res.json({ count });
-});
-
-app.post("/match/start", async (req, res) => {
-  const { userId } = req.body;
-  const currentUser = await prisma.user.findUnique({ where: { id: userId } });
-  if (!currentUser) {
-    return res.status(404).json({ message: "用户不存在" });
-  }
-  const target = await prisma.user.findFirst({
-    where: {
-      id: { not: currentUser.id },
-      gender: currentUser.gender === "MALE" ? "FEMALE" : "MALE"
-    }
-  });
-  if (!target) {
-    return res.status(404).json({ message: "暂时没有可匹配对象" });
-  }
-  const [maleUserId, femaleUserId] =
-    currentUser.gender === "MALE"
-      ? [currentUser.id, target.id]
-      : [target.id, currentUser.id];
-
-  const session = await prisma.matchSession.create({
-    data: { maleUserId, femaleUserId }
-  });
-  return res.json({ session, targetBlindBox: { id: target.id, nickname: "盲盒用户" } });
-});
-
-app.post("/game/dice-round", async (req, res) => {
-  const { sessionId } = req.body;
-  const session = await prisma.matchSession.findUnique({ where: { id: sessionId } });
-  if (!session) {
-    return res.status(404).json({ message: "对局不存在" });
-  }
-
-  const diceA = Math.floor(Math.random() * 6) + 1;
-  const diceB = Math.floor(Math.random() * 6) + 1;
-  const winner = diceA >= diceB ? "A" : "B";
-  const questions = [
-    "你最近一次心动是什么时候？",
-    "你最希望另一半具备什么品质？",
-    "你会因为什么瞬间决定认真恋爱？"
-  ];
-  const options = [
-    "真诚最重要",
-    "情绪稳定",
-    "有共同成长意愿",
-    "能一起面对现实"
-  ];
-
-  const roundsPlayed = session.roundsPlayed + 1;
-  const friendliness = Math.min(100, session.friendliness + FRIENDLINESS_PER_ROUND);
-  const isUnlocked = roundsPlayed >= MIN_ROUNDS_FOR_UNLOCK && friendliness >= 100;
-
-  const updated = await prisma.matchSession.update({
-    where: { id: sessionId },
-    data: { roundsPlayed, friendliness, isUnlocked }
-  });
-
-  return res.json({
-    result: { diceA, diceB, winner, question: questions[Math.floor(Math.random() * questions.length)], options },
-    progress: updated
-  });
-});
-
-app.post("/match/unlock", async (req, res) => {
-  const { sessionId, maleUserId } = req.body;
-  const session = await prisma.matchSession.findUnique({ where: { id: sessionId } });
-  if (!session || session.maleUserId !== maleUserId) {
-    return res.status(400).json({ message: "解锁请求无效" });
-  }
-  if (!session.isUnlocked) {
-    return res.status(400).json({ message: "友好度未达到100或回合不足5次" });
-  }
-  if (session.unlockPaid) {
-    return res.json({ ok: true, amount: MALE_UNLOCK_FEE });
-  }
-
-  await prisma.maleUnlock.create({
-    data: { maleUserId: session.maleUserId, femaleUserId: session.femaleUserId, amount: MALE_UNLOCK_FEE }
-  });
-  await prisma.matchSession.update({ where: { id: sessionId }, data: { unlockPaid: true } });
-  return res.json({ ok: true, amount: MALE_UNLOCK_FEE });
-});
-
-app.post("/membership/subscribe", async (req, res) => {
-  const { userId, plan } = req.body;
-  const price = MEMBERSHIP_PRICE[plan];
-  if (!price) {
-    return res.status(400).json({ message: "无效会员套餐" });
-  }
-  const monthsMap = { MONTH: 1, QUARTER: 3, HALF_YEAR: 6, YEAR: 12 };
-  const expire = new Date();
-  expire.setMonth(expire.getMonth() + monthsMap[plan]);
-  const user = await prisma.user.update({
-    where: { id: userId },
-    data: { membershipType: plan, membershipExpireAt: expire }
-  });
-  return res.json({ user, paid: price });
-});
-
 app.get("/users/:id/profile", async (req, res) => {
   const { viewerId } = req.query;
   const target = await prisma.user.findUnique({ where: { id: req.params.id } });
@@ -335,7 +165,10 @@ app.get("/users/:id/profile", async (req, res) => {
     return res.status(404).json({ message: "用户不存在" });
   }
 
-  const hasMembership = viewer.membershipType !== "FREE" && viewer.membershipExpireAt && viewer.membershipExpireAt > new Date();
+  const hasMembership =
+    viewer.membershipType !== "FREE" &&
+    viewer.membershipExpireAt &&
+    viewer.membershipExpireAt > new Date();
   if (!hasMembership) {
     return res.status(403).json({ message: "开通会员后可查看资料并发起聊天" });
   }
@@ -357,74 +190,4 @@ app.get("/users/:id/profile", async (req, res) => {
 });
 
 const port = process.env.PORT || 4000;
-app.listen(port, () => {
-  console.log(`API running: http://localhost:${port}`);
-});
-import cors from "cors";
-import express from "express";
-import { nanoid } from "nanoid";
-import { createMatchSession, createUser, db } from "./data/store.js";
-
-const app = express();
-const PORT = 3001;
-
-app.use(cors());
-app.use(express.json());
-
-app.post("/api/users/register", (req, res) => {
-  const { nickname, gender, age } = req.body;
-  if (!nickname || !gender || !age) {
-    return res.status(400).json({ message: "昵称、性别、年龄必填" });
-  }
-  const user = createUser(req.body);
-  return res.status(201).json({ user });
-});
-
-app.get("/api/plaza/posts", (_req, res) => {
-  res.json({ posts: db.plazaPosts });
-});
-
-app.post("/api/match/start", (req, res) => {
-  const { userId } = req.body;
-  const user = db.users.find((item) => item.id === userId);
-  if (!user) {
-    return res.status(404).json({ message: "用户不存在" });
-  }
-
-  const opposite = user.gender === "male" ? "female" : "male";
-  let partner = db.users.find((item) => item.gender === opposite && item.id !== user.id);
-  if (!partner) {
-    partner = {
-      id: nanoid(),
-      nickname: "系统匹配用户",
-      gender: opposite
-    };
-  }
-
-  const session = createMatchSession(user, partner);
-  res.status(201).json({ session });
-});
-
-app.post("/api/match/:sessionId/round", (req, res) => {
-  const { sessionId } = req.params;
-  const session = db.matchSessions.find((item) => item.id === sessionId);
-  if (!session) {
-    return res.status(404).json({ message: "匹配会话不存在" });
-  }
-
-  session.rounds += 1;
-  session.friendliness = Math.min(100, session.friendliness + 10);
-  if (session.rounds >= 5 && session.friendliness >= 100) {
-    session.unlocked = true;
-  }
-
-  return res.json({ session });
-});
-
-app.get("/health", (_req, res) => {
-  res.json({ ok: true });
-});
-
-app.listen(PORT, () => {
-  console.log(`Blindbox backend is running on http://localhost:${PORT}`);
-});
+app.listen(port, () => console.log(`API running: http://localhost:${port}`));
