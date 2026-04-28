@@ -20,25 +20,19 @@ const io = new Server(httpServer, {
     origin: "*"
   }
 });
-const chatStore = new Map();
-const unreadStore = new Map();
 const userSockets = new Map();
 
 function getPairKey(a, b) {
   return [a, b].sort().join(":");
 }
 
-function getUnreadKey(userId, peerId) {
-  return `${userId}:${peerId}`;
-}
-
-function increaseUnread(userId, peerId) {
-  const key = getUnreadKey(userId, peerId);
-  unreadStore.set(key, (unreadStore.get(key) || 0) + 1);
-}
-
-function resetUnread(userId, peerId) {
-  unreadStore.set(getUnreadKey(userId, peerId), 0);
+function pairWhere(userA, userB) {
+  return {
+    OR: [
+      { fromUserId: userA, toUserId: userB },
+      { fromUserId: userB, toUserId: userA }
+    ]
+  };
 }
 
 async function ensureDefaultUsers() {
@@ -99,24 +93,26 @@ async function ensureDefaultUsers() {
   const userA = await prisma.user.findUnique({ where: { phone: "13800000001" } });
   const userB = await prisma.user.findUnique({ where: { phone: "ellie" } });
   if (userA && userB) {
-    const key = getPairKey(userA.id, userB.id);
-    if (!chatStore.has(key)) {
-      chatStore.set(key, [
-        {
-          id: `m-${Date.now()}-1`,
-          fromUserId: userB.id,
-          toUserId: userA.id,
-          text: "嗨，我是ellie，很高兴认识你~",
-          createdAt: new Date(Date.now() - 1000 * 60 * 30).toISOString()
-        },
-        {
-          id: `m-${Date.now()}-2`,
-          fromUserId: userA.id,
-          toUserId: userB.id,
-          text: "你好呀，周末要不要一起喝咖啡？",
-          createdAt: new Date(Date.now() - 1000 * 60 * 20).toISOString()
-        }
-      ]);
+    const seededCount = await prisma.chatMessage.count({
+      where: pairWhere(userA.id, userB.id)
+    });
+    if (seededCount === 0) {
+      await prisma.chatMessage.createMany({
+        data: [
+          {
+            fromUserId: userB.id,
+            toUserId: userA.id,
+            text: "嗨，我是ellie，很高兴认识你~",
+            createdAt: new Date(Date.now() - 1000 * 60 * 30)
+          },
+          {
+            fromUserId: userA.id,
+            toUserId: userB.id,
+            text: "你好呀，周末要不要一起喝咖啡？",
+            createdAt: new Date(Date.now() - 1000 * 60 * 20)
+          }
+        ]
+      });
     }
   }
 }
@@ -368,19 +364,32 @@ app.get("/chat/conversations", async (req, res) => {
       orderBy: { updatedAt: "desc" },
       take: 50
     });
-    const conversations = contacts.map((peer) => {
-      const key = getPairKey(userId, peer.id);
-      const messages = chatStore.get(key) || [];
-      const last = messages[messages.length - 1];
-      return {
-        id: peer.id,
-        name: peer.nickname,
-        avatar: peer.avatarUrl || "https://picsum.photos/80/80?chat",
-        preview: last?.text || "开始聊天吧",
-        time: last?.createdAt || peer.updatedAt.toISOString(),
-        unread: unreadStore.get(getUnreadKey(userId, peer.id)) || 0
-      };
-    });
+    const conversations = await Promise.all(
+      contacts.map(async (peer) => {
+        const [last, unread] = await Promise.all([
+          prisma.chatMessage.findFirst({
+            where: pairWhere(userId, peer.id),
+            orderBy: { createdAt: "desc" }
+          }),
+          prisma.chatMessage.count({
+            where: {
+              fromUserId: peer.id,
+              toUserId: userId,
+              readAt: null
+            }
+          })
+        ]);
+
+        return {
+          id: peer.id,
+          name: peer.nickname,
+          avatar: peer.avatarUrl || "https://picsum.photos/80/80?chat",
+          preview: last?.text || "开始聊天吧",
+          time: last?.createdAt?.toISOString() || peer.updatedAt.toISOString(),
+          unread
+        };
+      })
+    );
     return res.json({ conversations });
   } catch (error) {
     return res.status(500).json({ message: "拉取会话失败" });
@@ -392,8 +401,20 @@ app.get("/chat/messages", async (req, res) => {
     const userId = String(req.query.userId || "");
     const peerId = String(req.query.peerId || "");
     if (!userId || !peerId) return res.status(400).json({ message: "缺少 userId 或 peerId" });
-    const key = getPairKey(userId, peerId);
-    return res.json({ messages: chatStore.get(key) || [] });
+    const messages = await prisma.chatMessage.findMany({
+      where: pairWhere(userId, peerId),
+      orderBy: { createdAt: "asc" },
+      take: 300
+    });
+    return res.json({
+      messages: messages.map((item) => ({
+        id: item.id,
+        fromUserId: item.fromUserId,
+        toUserId: item.toUserId,
+        text: item.text,
+        createdAt: item.createdAt.toISOString()
+      }))
+    });
   } catch (error) {
     return res.status(500).json({ message: "拉取消息失败" });
   }
@@ -403,7 +424,14 @@ app.post("/chat/read", async (req, res) => {
   try {
     const { userId, peerId } = req.body;
     if (!userId || !peerId) return res.status(400).json({ message: "参数不完整" });
-    resetUnread(String(userId), String(peerId));
+    await prisma.chatMessage.updateMany({
+      where: {
+        fromUserId: String(peerId),
+        toUserId: String(userId),
+        readAt: null
+      },
+      data: { readAt: new Date() }
+    });
     return res.json({ ok: true });
   } catch (error) {
     return res.status(500).json({ message: "更新已读失败" });
@@ -417,25 +445,27 @@ app.post("/chat/messages", async (req, res) => {
     if (!fromUserId || !toUserId || !content) {
       return res.status(400).json({ message: "参数不完整" });
     }
-    const key = getPairKey(String(fromUserId), String(toUserId));
-    const message = {
-      id: `m-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    const message = await prisma.chatMessage.create({
+      data: {
+        fromUserId: String(fromUserId),
+        toUserId: String(toUserId),
+        text: content
+      }
+    });
+    const payload = {
+      id: message.id,
       fromUserId: String(fromUserId),
       toUserId: String(toUserId),
       text: content,
-      createdAt: new Date().toISOString()
+      createdAt: message.createdAt.toISOString()
     };
-    const messages = chatStore.get(key) || [];
-    messages.push(message);
-    chatStore.set(key, messages.slice(-200));
-    increaseUnread(String(toUserId), String(fromUserId));
     const targetSockets = userSockets.get(String(toUserId));
     if (targetSockets?.size) {
       targetSockets.forEach((socketId) => {
-        io.to(socketId).emit("chat:message", message);
+        io.to(socketId).emit("chat:message", payload);
       });
     }
-    return res.json({ message });
+    return res.json({ message: payload });
   } catch (error) {
     return res.status(500).json({ message: "发送消息失败" });
   }
@@ -482,28 +512,34 @@ io.on("connection", (socket) => {
   if (!userSockets.has(userId)) userSockets.set(userId, new Set());
   userSockets.get(userId).add(socket.id);
 
-  socket.on("chat:send", ({ toUserId, text }) => {
+  socket.on("chat:send", async ({ toUserId, text }) => {
     const content = String(text || "").trim();
     if (!toUserId || !content) return;
-    const message = {
-      id: `m-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      fromUserId: userId,
-      toUserId: String(toUserId),
-      text: content,
-      createdAt: new Date().toISOString()
-    };
-    const key = getPairKey(userId, String(toUserId));
-    const messages = chatStore.get(key) || [];
-    messages.push(message);
-    chatStore.set(key, messages.slice(-200));
-    increaseUnread(String(toUserId), userId);
-
-    socket.emit("chat:message", message);
-    const targetSockets = userSockets.get(String(toUserId));
-    if (targetSockets?.size) {
-      targetSockets.forEach((socketId) => {
-        io.to(socketId).emit("chat:message", message);
+    try {
+      const message = await prisma.chatMessage.create({
+        data: {
+          fromUserId: userId,
+          toUserId: String(toUserId),
+          text: content
+        }
       });
+      const payload = {
+        id: message.id,
+        fromUserId: message.fromUserId,
+        toUserId: message.toUserId,
+        text: message.text,
+        createdAt: message.createdAt.toISOString()
+      };
+
+      socket.emit("chat:message", payload);
+      const targetSockets = userSockets.get(String(toUserId));
+      if (targetSockets?.size) {
+        targetSockets.forEach((socketId) => {
+          io.to(socketId).emit("chat:message", payload);
+        });
+      }
+    } catch (_error) {
+      socket.emit("chat:error", { message: "消息发送失败" });
     }
   });
 

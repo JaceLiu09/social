@@ -28,6 +28,8 @@ model User {
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
   maleUnlocks        MaleUnlock[]
+  sentMessages       ChatMessage[]  @relation("ChatMessageSender")
+  recvMessages       ChatMessage[]  @relation("ChatMessageReceiver")
 }
 
 model MatchSession {
@@ -51,6 +53,21 @@ model MaleUnlock {
   maleUser     User     @relation(fields: [maleUserId], references: [id])
 
   @@index([maleUserId], map: "MaleUnlock_maleUserId_fkey")
+}
+
+model ChatMessage {
+  id         String   @id @default(cuid())
+  fromUserId String
+  toUserId   String
+  text       String
+  readAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  fromUser User @relation("ChatMessageSender", fields: [fromUserId], references: [id])
+  toUser   User @relation("ChatMessageReceiver", fields: [toUserId], references: [id])
+
+  @@index([fromUserId, toUserId, createdAt])
+  @@index([toUserId, fromUserId, readAt])
 }
 
 enum Gender {
