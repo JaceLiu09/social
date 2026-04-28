@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { io } from "socket.io-client";
 
 const API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
 const settingItems = [
@@ -74,6 +75,8 @@ export default function App() {
   const [pullHint, setPullHint] = useState("下拉刷新");
   const [squareOffset, setSquareOffset] = useState(0);
   const squareFeedRef = useRef(null);
+  const socketRef = useRef(null);
+  const activeConversationIdRef = useRef("");
   const touchStartYRef = useRef(0);
   const pullTriggeredRef = useRef(false);
   const [message, setMessage] = useState("");
@@ -86,6 +89,7 @@ export default function App() {
   const [contacts, setContacts] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
+  const [chatNotice, setChatNotice] = useState("");
   const [selectedCover, setSelectedCover] = useState("");
   const [profileForm, setProfileForm] = useState({
     nickname: "",
@@ -152,6 +156,45 @@ export default function App() {
       }),
     [chatKeyword, contacts]
   );
+  const totalUnreadCount = useMemo(
+    () => conversations.reduce((sum, item) => sum + Number(item.unread || 0), 0),
+    [conversations]
+  );
+
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversation?.id || "";
+  }, [activeConversation]);
+
+  useEffect(() => {
+    if (!chatNotice) return undefined;
+    const timer = setTimeout(() => setChatNotice(""), 2500);
+    return () => clearTimeout(timer);
+  }, [chatNotice]);
+
+  const refreshChatPanels = async (currentUserId) => {
+    try {
+      const [contactsRes, convRes] = await Promise.all([
+        fetch(`${API}/chat/contacts?userId=${currentUserId}`),
+        fetch(`${API}/chat/conversations?userId=${currentUserId}`)
+      ]);
+      const contactsData = await contactsRes.json();
+      const convData = await convRes.json();
+      setContacts(Array.isArray(contactsData.contacts) ? contactsData.contacts : []);
+      setConversations(Array.isArray(convData.conversations) ? convData.conversations : []);
+    } catch (_error) {
+      // Keep last successful data if refresh fails briefly.
+    }
+  };
+
+  const refreshActiveMessages = async (currentUserId, peerId) => {
+    try {
+      const res = await fetch(`${API}/chat/messages?userId=${currentUserId}&peerId=${peerId}`);
+      const data = await res.json();
+      setChatMessages(Array.isArray(data.messages) ? data.messages : []);
+    } catch (_error) {
+      // Keep last loaded messages if refresh fails.
+    }
+  };
 
   const loadSquarePosts = async (reset = false) => {
     if (squareLoading) return;
@@ -235,24 +278,89 @@ export default function App() {
   }, [tab]);
 
   useEffect(() => {
-    if (!user || tab !== "chat") return;
-    const loadChatData = async () => {
-      try {
-        const [contactsRes, convRes] = await Promise.all([
-          fetch(`${API}/chat/contacts?userId=${user.id}`),
-          fetch(`${API}/chat/conversations?userId=${user.id}`)
-        ]);
-        const contactsData = await contactsRes.json();
-        const convData = await convRes.json();
-        setContacts(Array.isArray(contactsData.contacts) ? contactsData.contacts : []);
-        setConversations(Array.isArray(convData.conversations) ? convData.conversations : []);
-      } catch (_error) {
-        setContacts([]);
-        setConversations([]);
+    if (!user?.id) return undefined;
+    const socket = io(API, {
+      transports: ["websocket"],
+      query: { userId: user.id }
+    });
+    socketRef.current = socket;
+
+    socket.on("chat:message", (message) => {
+      if (!message?.fromUserId || !message?.toUserId) return;
+      const peerId = message.fromUserId === user.id ? message.toUserId : message.fromUserId;
+      const isActive = peerId === activeConversationIdRef.current;
+      if (isActive) {
+        setChatMessages((prev) => {
+          if (prev.some((item) => item.id === message.id)) return prev;
+          return [...prev, message];
+        });
+        fetch(`${API}/chat/read`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: user.id, peerId })
+        }).catch(() => null);
       }
+      setConversations((prev) => {
+        const exists = prev.some((item) => item.id === peerId);
+        const nextUnread = message.fromUserId === user.id || isActive ? 0 : 1;
+        if (message.fromUserId !== user.id && !isActive) {
+          const peerName = prev.find((item) => item.id === peerId)?.name || "新朋友";
+          setChatNotice(`${peerName} 发来新消息`);
+        }
+        if (!exists) {
+          return [
+            {
+              id: peerId,
+              name: "新朋友",
+              avatar: "https://picsum.photos/80/80?chat",
+              preview: message.text,
+              time: message.createdAt,
+              unread: nextUnread
+            },
+            ...prev
+          ];
+        }
+        return prev.map((item) =>
+          item.id === peerId
+            ? {
+                ...item,
+                preview: message.text,
+                time: message.createdAt,
+                unread:
+                  message.fromUserId === user.id || isActive ? 0 : (item.unread || 0) + 1
+              }
+            : item
+        );
+      });
+    });
+
+    return () => {
+      socket.disconnect();
+      if (socketRef.current === socket) socketRef.current = null;
     };
-    loadChatData();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || tab !== "chat") return;
+    refreshChatPanels(user.id);
   }, [tab, user]);
+
+  useEffect(() => {
+    if (!user || tab !== "chat") return undefined;
+    const timer = setInterval(() => {
+      refreshChatPanels(user.id);
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [tab, user]);
+
+  useEffect(() => {
+    if (!user || tab !== "chat" || !activeConversation) return undefined;
+    refreshActiveMessages(user.id, activeConversation.id);
+    const timer = setInterval(() => {
+      refreshActiveMessages(user.id, activeConversation.id);
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [activeConversation, tab, user]);
 
   const isMembershipValid = useMemo(() => {
     if (!user?.membershipExpireAt || user.membershipType === "FREE") return false;
@@ -452,19 +560,30 @@ export default function App() {
     if (!user) return;
     setActiveConversation(item);
     setChatInput("");
-    try {
-      const res = await fetch(`${API}/chat/messages?userId=${user.id}&peerId=${item.id}`);
-      const data = await res.json();
-      setChatMessages(Array.isArray(data.messages) ? data.messages : []);
-    } catch (_error) {
-      setChatMessages([]);
-    }
+    await refreshActiveMessages(user.id, item.id);
+    setConversations((prev) =>
+      prev.map((conv) => (conv.id === item.id ? { ...conv, unread: 0 } : conv))
+    );
+    fetch(`${API}/chat/read`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: user.id, peerId: item.id })
+    }).catch(() => null);
   };
 
   const sendChatMessage = async () => {
     if (!user || !activeConversation) return;
     const text = chatInput.trim();
     if (!text) return;
+    const socket = socketRef.current;
+    if (socket?.connected) {
+      socket.emit("chat:send", {
+        toUserId: activeConversation.id,
+        text
+      });
+      setChatInput("");
+      return;
+    }
     try {
       const res = await fetch(`${API}/chat/messages`, {
         method: "POST",
@@ -578,6 +697,7 @@ export default function App() {
 
   return (
     <div className="main-app">
+      {chatNotice && <div className="chat-notice-banner">{chatNotice}</div>}
       <header className={`main-header ${tab === "me" ? "me-header" : ""}`}>
         {tab === "me" ? (
           <>
@@ -1001,6 +1121,9 @@ export default function App() {
         <div className="nav-gap" />
         <button className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}>
           聊天
+          {totalUnreadCount > 0 && (
+            <span className="nav-unread-badge">{totalUnreadCount > 99 ? "99+" : totalUnreadCount}</span>
+          )}
         </button>
         <button className={tab === "me" ? "active" : ""} onClick={() => setTab("me")}>
           自己

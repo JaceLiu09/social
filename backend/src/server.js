@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import { z } from "zod";
+import { createServer } from "node:http";
+import { Server } from "socket.io";
 import { prisma } from "./prisma.js";
 import {
   FRIENDLINESS_PER_ROUND,
@@ -12,10 +14,31 @@ import {
 const app = express();
 app.use(cors());
 app.use(express.json());
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*"
+  }
+});
 const chatStore = new Map();
+const unreadStore = new Map();
+const userSockets = new Map();
 
 function getPairKey(a, b) {
   return [a, b].sort().join(":");
+}
+
+function getUnreadKey(userId, peerId) {
+  return `${userId}:${peerId}`;
+}
+
+function increaseUnread(userId, peerId) {
+  const key = getUnreadKey(userId, peerId);
+  unreadStore.set(key, (unreadStore.get(key) || 0) + 1);
+}
+
+function resetUnread(userId, peerId) {
+  unreadStore.set(getUnreadKey(userId, peerId), 0);
 }
 
 async function ensureDefaultUsers() {
@@ -355,7 +378,7 @@ app.get("/chat/conversations", async (req, res) => {
         avatar: peer.avatarUrl || "https://picsum.photos/80/80?chat",
         preview: last?.text || "开始聊天吧",
         time: last?.createdAt || peer.updatedAt.toISOString(),
-        unread: 0
+        unread: unreadStore.get(getUnreadKey(userId, peer.id)) || 0
       };
     });
     return res.json({ conversations });
@@ -373,6 +396,17 @@ app.get("/chat/messages", async (req, res) => {
     return res.json({ messages: chatStore.get(key) || [] });
   } catch (error) {
     return res.status(500).json({ message: "拉取消息失败" });
+  }
+});
+
+app.post("/chat/read", async (req, res) => {
+  try {
+    const { userId, peerId } = req.body;
+    if (!userId || !peerId) return res.status(400).json({ message: "参数不完整" });
+    resetUnread(String(userId), String(peerId));
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ message: "更新已读失败" });
   }
 });
 
@@ -394,6 +428,13 @@ app.post("/chat/messages", async (req, res) => {
     const messages = chatStore.get(key) || [];
     messages.push(message);
     chatStore.set(key, messages.slice(-200));
+    increaseUnread(String(toUserId), String(fromUserId));
+    const targetSockets = userSockets.get(String(toUserId));
+    if (targetSockets?.size) {
+      targetSockets.forEach((socketId) => {
+        io.to(socketId).emit("chat:message", message);
+      });
+    }
     return res.json({ message });
   } catch (error) {
     return res.status(500).json({ message: "发送消息失败" });
@@ -432,11 +473,53 @@ app.get("/users/:id/profile", async (req, res) => {
   return res.json({ profile: safeProfile });
 });
 
+io.on("connection", (socket) => {
+  const userId = String(socket.handshake.query.userId || "");
+  if (!userId) {
+    socket.disconnect(true);
+    return;
+  }
+  if (!userSockets.has(userId)) userSockets.set(userId, new Set());
+  userSockets.get(userId).add(socket.id);
+
+  socket.on("chat:send", ({ toUserId, text }) => {
+    const content = String(text || "").trim();
+    if (!toUserId || !content) return;
+    const message = {
+      id: `m-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      fromUserId: userId,
+      toUserId: String(toUserId),
+      text: content,
+      createdAt: new Date().toISOString()
+    };
+    const key = getPairKey(userId, String(toUserId));
+    const messages = chatStore.get(key) || [];
+    messages.push(message);
+    chatStore.set(key, messages.slice(-200));
+    increaseUnread(String(toUserId), userId);
+
+    socket.emit("chat:message", message);
+    const targetSockets = userSockets.get(String(toUserId));
+    if (targetSockets?.size) {
+      targetSockets.forEach((socketId) => {
+        io.to(socketId).emit("chat:message", message);
+      });
+    }
+  });
+
+  socket.on("disconnect", () => {
+    const sockets = userSockets.get(userId);
+    if (!sockets) return;
+    sockets.delete(socket.id);
+    if (!sockets.size) userSockets.delete(userId);
+  });
+});
+
 const port = process.env.PORT || 4000;
 ensureDefaultUsers()
   .catch((error) => {
     console.error("failed to ensure default users", error);
   })
   .finally(() => {
-    app.listen(port, () => console.log(`API running: http://localhost:${port}`));
+    httpServer.listen(port, () => console.log(`API running: http://localhost:${port}`));
   });

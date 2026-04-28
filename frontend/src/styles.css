@@ -148,6 +148,20 @@ body {
   padding: 14px 12px 92px;
 }
 
+.chat-notice-banner {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  background: rgba(35, 44, 72, 0.92);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 16px;
+  font-size: 13px;
+  box-shadow: 0 6px 16px rgba(26, 33, 55, 0.25);
+}
+
 .main-header {
   display: flex;
   align-items: center;
@@ -958,10 +972,25 @@ button:hover {
   color: #8d95ad;
   padding: 8px 2px;
   border-radius: 8px;
+  position: relative;
 }
 
 .bottom-nav button.active {
   color: #3dbde7;
+}
+
+.nav-unread-badge {
+  position: absolute;
+  top: 2px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: #ff4b63;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
 }
 
 .nav-gap {
