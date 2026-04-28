@@ -32,6 +32,20 @@ async function main() {
         hobbies: "篮球,音乐,露营",
         partnerExpectation: "善良，愿意沟通",
         photoUrls: JSON.stringify(["https://picsum.photos/300/300?2"])
+      },
+      {
+        phone: "ellie",
+        password: "123456",
+        nickname: "ellie",
+        gender: "FEMALE",
+        age: 23,
+        height: 166,
+        weight: 49,
+        hometown: "杭州",
+        currentCity: "上海",
+        hobbies: "拍照,探店,旅行",
+        partnerExpectation: "温柔靠谱，有上进心",
+        photoUrls: JSON.stringify(["https://picsum.photos/300/300?3"])
       }
     ],
     skipDuplicates: true

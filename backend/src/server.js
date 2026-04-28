@@ -12,6 +12,91 @@ import {
 const app = express();
 app.use(cors());
 app.use(express.json());
+const chatStore = new Map();
+
+function getPairKey(a, b) {
+  return [a, b].sort().join(":");
+}
+
+async function ensureDefaultUsers() {
+  const defaults = [
+    {
+      phone: "13800000001",
+      password: "123456",
+      nickname: "星河",
+      gender: "FEMALE",
+      age: 25,
+      height: 165,
+      weight: 50,
+      hometown: "成都",
+      currentCity: "深圳",
+      hobbies: "旅行,电影,摄影",
+      partnerExpectation: "三观契合，有责任感",
+      photoUrls: JSON.stringify(["https://picsum.photos/300/300?1"])
+    },
+    {
+      phone: "13800000002",
+      password: "123456",
+      nickname: "阿北",
+      gender: "MALE",
+      age: 27,
+      height: 178,
+      weight: 72,
+      hometown: "武汉",
+      currentCity: "广州",
+      hobbies: "篮球,音乐,露营",
+      partnerExpectation: "善良，愿意沟通",
+      photoUrls: JSON.stringify(["https://picsum.photos/300/300?2"])
+    },
+    {
+      phone: "ellie",
+      password: "123456",
+      nickname: "ellie",
+      gender: "FEMALE",
+      age: 23,
+      height: 166,
+      weight: 49,
+      hometown: "杭州",
+      currentCity: "上海",
+      hobbies: "拍照,探店,旅行",
+      partnerExpectation: "温柔靠谱，有上进心",
+      photoUrls: JSON.stringify(["https://picsum.photos/300/300?3"])
+    }
+  ];
+  await Promise.all(
+    defaults.map((item) =>
+      prisma.user.upsert({
+        where: { phone: item.phone },
+        update: {},
+        create: item
+      })
+    )
+  );
+
+  const userA = await prisma.user.findUnique({ where: { phone: "13800000001" } });
+  const userB = await prisma.user.findUnique({ where: { phone: "ellie" } });
+  if (userA && userB) {
+    const key = getPairKey(userA.id, userB.id);
+    if (!chatStore.has(key)) {
+      chatStore.set(key, [
+        {
+          id: `m-${Date.now()}-1`,
+          fromUserId: userB.id,
+          toUserId: userA.id,
+          text: "嗨，我是ellie，很高兴认识你~",
+          createdAt: new Date(Date.now() - 1000 * 60 * 30).toISOString()
+        },
+        {
+          id: `m-${Date.now()}-2`,
+          fromUserId: userA.id,
+          toUserId: userB.id,
+          text: "你好呀，周末要不要一起喝咖啡？",
+          createdAt: new Date(Date.now() - 1000 * 60 * 20).toISOString()
+        }
+      ]);
+    }
+  }
+}
 
 function randInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -222,6 +307,99 @@ app.post("/membership/subscribe", async (req, res) => {
   return res.json({ user, paid: price });
 });
 
+app.get("/chat/contacts", async (req, res) => {
+  try {
+    const userId = String(req.query.userId || "");
+    if (!userId) return res.status(400).json({ message: "缺少 userId" });
+    const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+    if (!currentUser) return res.status(404).json({ message: "用户不存在" });
+
+    const contacts = await prisma.user.findMany({
+      where: { id: { not: userId } },
+      orderBy: { updatedAt: "desc" },
+      take: 50
+    });
+    return res.json({
+      contacts: contacts.map((item) => ({
+        id: item.id,
+        name: item.nickname,
+        avatar: item.avatarUrl || "https://picsum.photos/80/80?chat",
+        status: `${item.currentCity} · 在线`,
+        phone: item.phone
+      }))
+    });
+  } catch (error) {
+    return res.status(500).json({ message: "拉取通讯录失败" });
+  }
+});
+
+app.get("/chat/conversations", async (req, res) => {
+  try {
+    const userId = String(req.query.userId || "");
+    if (!userId) return res.status(400).json({ message: "缺少 userId" });
+    const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+    if (!currentUser) return res.status(404).json({ message: "用户不存在" });
+
+    const contacts = await prisma.user.findMany({
+      where: { id: { not: userId } },
+      orderBy: { updatedAt: "desc" },
+      take: 50
+    });
+    const conversations = contacts.map((peer) => {
+      const key = getPairKey(userId, peer.id);
+      const messages = chatStore.get(key) || [];
+      const last = messages[messages.length - 1];
+      return {
+        id: peer.id,
+        name: peer.nickname,
+        avatar: peer.avatarUrl || "https://picsum.photos/80/80?chat",
+        preview: last?.text || "开始聊天吧",
+        time: last?.createdAt || peer.updatedAt.toISOString(),
+        unread: 0
+      };
+    });
+    return res.json({ conversations });
+  } catch (error) {
+    return res.status(500).json({ message: "拉取会话失败" });
+  }
+});
+
+app.get("/chat/messages", async (req, res) => {
+  try {
+    const userId = String(req.query.userId || "");
+    const peerId = String(req.query.peerId || "");
+    if (!userId || !peerId) return res.status(400).json({ message: "缺少 userId 或 peerId" });
+    const key = getPairKey(userId, peerId);
+    return res.json({ messages: chatStore.get(key) || [] });
+  } catch (error) {
+    return res.status(500).json({ message: "拉取消息失败" });
+  }
+});
+
+app.post("/chat/messages", async (req, res) => {
+  try {
+    const { fromUserId, toUserId, text } = req.body;
+    const content = String(text || "").trim();
+    if (!fromUserId || !toUserId || !content) {
+      return res.status(400).json({ message: "参数不完整" });
+    }
+    const key = getPairKey(String(fromUserId), String(toUserId));
+    const message = {
+      id: `m-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      fromUserId: String(fromUserId),
+      toUserId: String(toUserId),
+      text: content,
+      createdAt: new Date().toISOString()
+    };
+    const messages = chatStore.get(key) || [];
+    messages.push(message);
+    chatStore.set(key, messages.slice(-200));
+    return res.json({ message });
+  } catch (error) {
+    return res.status(500).json({ message: "发送消息失败" });
+  }
+});
+
 app.get("/users/:id/profile", async (req, res) => {
   const { viewerId } = req.query;
   const target = await prisma.user.findUnique({ where: { id: req.params.id } });
@@ -255,4 +433,10 @@ app.get("/users/:id/profile", async (req, res) => {
 });
 
 const port = process.env.PORT || 4000;
-app.listen(port, () => console.log(`API running: http://localhost:${port}`));
+ensureDefaultUsers()
+  .catch((error) => {
+    console.error("failed to ensure default users", error);
+  })
+  .finally(() => {
+    app.listen(port, () => console.log(`API running: http://localhost:${port}`));
+  });
