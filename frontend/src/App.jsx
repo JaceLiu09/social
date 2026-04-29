@@ -72,6 +72,7 @@ const registerBasicInitial = {
 
 const profileSetupInitial = {
   nickname: "",
+  gender: "",
   birthYear: "",
   birthMonth: "",
   birthDay: "",
@@ -223,14 +224,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [chatNotice]);
 
-  useEffect(() => {
-    if (!showAddFriendModal || !authToken) return;
-    const timer = setTimeout(() => {
-      searchAddFriends(addFriendKeyword).catch((error) => setMessage(error.message || "搜索失败"));
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [showAddFriendModal, addFriendKeyword, authToken]);
-
   const refreshChatPanels = async (currentUserId) => {
     try {
       const [contactsRes, convRes] = await Promise.all([
@@ -239,6 +232,11 @@ export default function App() {
       ]);
       const contactsData = await contactsRes.json();
       const convData = await convRes.json();
+      if (!contactsRes.ok || !convRes.ok) {
+        setContacts([]);
+        setConversations([]);
+        return;
+      }
       setContacts(Array.isArray(contactsData.contacts) ? contactsData.contacts : []);
       const incoming = Array.isArray(convData.conversations) ? convData.conversations : [];
       const visible = incoming.filter((item) => !hiddenConversationIds.includes(item.id));
@@ -249,12 +247,24 @@ export default function App() {
   };
 
   const searchAddFriends = async (keyword = "") => {
+    if (!String(keyword || "").trim()) {
+      setAddFriendResults([]);
+      return;
+    }
     const res = await fetch(`${API}/friends/search?keyword=${encodeURIComponent(keyword)}`, {
       headers: authHeaders
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || "搜索失败");
     setAddFriendResults(Array.isArray(data.users) ? data.users : []);
+  };
+
+  const onRunAddFriendSearch = async () => {
+    try {
+      await searchAddFriends(addFriendKeyword);
+    } catch (error) {
+      setChatNotice(error.message || "搜索失败");
+    }
   };
 
   const loadIncomingRequests = async () => {
@@ -545,6 +555,12 @@ export default function App() {
     });
     const data = await res.json();
     if (!res.ok) return setMessage(data.message || "登录失败");
+    setContacts([]);
+    setConversations([]);
+    setChatMessages([]);
+    setActiveConversation(null);
+    setChatInput("");
+    setHiddenConversationIds([]);
     setUser(data.user);
     setAuthToken(data.token || "");
     setNeedsProfileSetup(Boolean(data.needsProfile || !data.user.profileCompleted));
@@ -574,6 +590,12 @@ export default function App() {
       if (data.message) window.alert(data.message);
       return;
     }
+    setContacts([]);
+    setConversations([]);
+    setChatMessages([]);
+    setActiveConversation(null);
+    setChatInput("");
+    setHiddenConversationIds([]);
     setUser(data.user);
     setAuthToken(data.token || "");
     setNeedsProfileSetup(true);
@@ -584,7 +606,8 @@ export default function App() {
   const onCompleteProfile = async (e) => {
     e.preventDefault();
     if (!user) return;
-    const { birthYear, birthMonth, birthDay } = profileSetupForm;
+    const { birthYear, birthMonth, birthDay, gender } = profileSetupForm;
+    if (!gender) return setMessage("请选择性别");
     if (!birthYear || !birthMonth || !birthDay) {
       return setMessage("请选择完整的出生年月日");
     }
@@ -620,6 +643,12 @@ export default function App() {
     });
     const data = await res.json();
     if (!res.ok) return setMessage("快捷登录失败，请先注册账号");
+    setContacts([]);
+    setConversations([]);
+    setChatMessages([]);
+    setActiveConversation(null);
+    setChatInput("");
+    setHiddenConversationIds([]);
     setUser(data.user);
     setAuthToken(data.token || "");
     setNeedsProfileSetup(Boolean(data.needsProfile || !data.user.profileCompleted));
@@ -1186,6 +1215,15 @@ export default function App() {
             <h3>完善新用户资料</h3>
             <p>资料仅用于匹配推荐，提交后即可正常使用。</p>
             <div className="birth-select-row">
+              <select
+                value={profileSetupForm.gender}
+                onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, gender: e.target.value }))}
+                required
+              >
+                <option value="">性别</option>
+                <option value="MALE">男</option>
+                <option value="FEMALE">女</option>
+              </select>
               <select
                 value={profileSetupForm.birthYear}
                 onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, birthYear: e.target.value }))}
@@ -1786,11 +1824,19 @@ export default function App() {
           <div className="profile-setup-card add-friend-card" onClick={(e) => e.stopPropagation()}>
             <h3>添加通讯录好友</h3>
             <p>按昵称、手机号、10位用户ID 搜索全部用户。</p>
-            <input
-              placeholder="搜索昵称 / 手机号 / 10位用户ID"
-              value={addFriendKeyword}
-              onChange={(e) => setAddFriendKeyword(e.target.value)}
-            />
+            <div className="add-friend-search-row">
+              <input
+                placeholder="搜索昵称 / 手机号 / 10位用户ID"
+                value={addFriendKeyword}
+                onChange={(e) => setAddFriendKeyword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") onRunAddFriendSearch();
+                }}
+              />
+              <button type="button" onClick={onRunAddFriendSearch}>
+                搜索
+              </button>
+            </div>
             {incomingRequests.length > 0 && (
               <div className="add-friend-requests">
                 <p>待处理好友请求</p>
@@ -1831,7 +1877,7 @@ export default function App() {
               </div>
             )}
             <div className="add-friend-list">
-              {addFriendCandidates.length === 0 && <p className="feed-tip">没有匹配到可添加用户</p>}
+              {addFriendKeyword.trim() && addFriendCandidates.length === 0 && <p className="feed-tip">没有匹配到可添加用户</p>}
               {addFriendCandidates.map((item) => (
                 <div className="contact-item" key={`add-${item.id}`}>
                   <img src={resolveAssetUrl(item.avatar)} alt={item.name} className="chat-avatar" />

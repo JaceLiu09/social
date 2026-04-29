@@ -321,6 +321,7 @@ const registerBasicSchema = z.object({
 
 const completeProfileSchema = z.object({
   nickname: z.string().min(1),
+  gender: z.enum(["MALE", "FEMALE"]),
   birthDate: z.string().min(8),
   hometown: z.string().min(1),
   currentCity: z.string().min(1),
@@ -421,6 +422,7 @@ app.post("/auth/complete-profile", async (req, res) => {
       where: { id: userId },
       data: {
         nickname: data.nickname,
+        gender: data.gender,
         birthDate: birth,
         age,
         hometown: data.hometown,
@@ -609,10 +611,11 @@ app.get("/friends/search", async (req, res) => {
     const userId = getAuthUserId(req);
     if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
     const keyword = String(req.query.keyword || "").trim().toLowerCase();
+    if (!keyword) return res.json({ users: [] });
     const allUsers = await prisma.user.findMany({
       where: { id: { not: userId } },
       orderBy: { updatedAt: "desc" },
-      take: keyword.length > 0 ? 5000 : 300
+      take: 5000
     });
     const friendIds = new Set(await getFriendIds(userId));
     const requests = await prisma.friendRequest.findMany({
@@ -627,7 +630,6 @@ app.get("/friends/search", async (req, res) => {
     });
     const candidates = allUsers
       .filter((u) => {
-        if (!keyword) return true;
         return (
           String(u.nickname || "").toLowerCase().includes(keyword) ||
           String(u.phone || "").toLowerCase().includes(keyword) ||
