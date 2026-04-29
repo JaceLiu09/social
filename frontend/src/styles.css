@@ -815,6 +815,10 @@ button:hover {
   padding-bottom: 120px;
 }
 
+.chat-page.chat-page-detail {
+  padding-bottom: 16px;
+}
+
 .chat-top-tabs {
   display: flex;
   gap: 20px;
@@ -1114,6 +1118,9 @@ button:hover {
   border-radius: 14px;
   border: 1px solid #edf0f6;
   overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: calc(100dvh - 240px);
 }
 
 .chat-detail-header {
@@ -1139,12 +1146,13 @@ button:hover {
 }
 
 .chat-detail-list {
-  min-height: 260px;
+  min-height: 0;
   padding: 12px;
   background: #f7f9ff;
   display: grid;
   gap: 10px;
   align-content: start;
+  overflow-y: auto;
 }
 
 .chat-bubble {

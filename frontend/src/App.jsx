@@ -136,6 +136,7 @@ export default function App() {
   const [swipedConversationId, setSwipedConversationId] = useState("");
   const swipeStartXRef = useRef(0);
   const swipeActiveIdRef = useRef("");
+  const hiddenConversationIdsRef = useRef([]);
   const mediaRecorderRef = useRef(null);
   const recordChunksRef = useRef([]);
   const recordStartAtRef = useRef(0);
@@ -220,6 +221,10 @@ export default function App() {
   }, [activeConversation]);
 
   useEffect(() => {
+    hiddenConversationIdsRef.current = hiddenConversationIds;
+  }, [hiddenConversationIds]);
+
+  useEffect(() => {
     if (!chatNotice) return undefined;
     const timer = setTimeout(() => setChatNotice(""), 2500);
     return () => clearTimeout(timer);
@@ -240,7 +245,8 @@ export default function App() {
       }
       setContacts(Array.isArray(contactsData.contacts) ? contactsData.contacts : []);
       const incoming = Array.isArray(convData.conversations) ? convData.conversations : [];
-      const visible = incoming.filter((item) => !hiddenConversationIds.includes(item.id));
+      const hiddenIds = hiddenConversationIdsRef.current;
+      const visible = incoming.filter((item) => !hiddenIds.includes(item.id));
       setConversations(sortConversations(visible));
     } catch (_error) {
       // Keep last successful data if refresh fails briefly.
@@ -1487,7 +1493,7 @@ export default function App() {
       )}
 
       {tab === "chat" && (
-        <section className="main-content chat-page">
+        <section className={`main-content chat-page ${activeConversation ? "chat-page-detail" : ""}`}>
           {activeConversation ? (
             <>
               <div className="chat-detail-page">
