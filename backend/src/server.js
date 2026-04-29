@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { z } from "zod";
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { Server } from "socket.io";
 import { prisma } from "./prisma.js";
 import {
@@ -21,6 +22,7 @@ const io = new Server(httpServer, {
   }
 });
 const userSockets = new Map();
+const authTokens = new Map();
 
 function getPairKey(a, b) {
   return [a, b].sort().join(":");
@@ -35,11 +37,68 @@ function pairWhere(userA, userB) {
   };
 }
 
+function issueAuthToken(userId) {
+  const token = randomUUID();
+  authTokens.set(token, { userId: String(userId), issuedAt: Date.now() });
+  return token;
+}
+
+function getAuthUserId(req) {
+  const auth = String(req.headers.authorization || "");
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  if (!match) return "";
+  const token = match[1].trim();
+  const session = authTokens.get(token);
+  return session?.userId || "";
+}
+
+const DEFAULT_PASSWORD = "123456";
+const VIRTUAL_USER_COUNT = 12;
+
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function randomPhone(existingPhones) {
+  let phone = "";
+  do {
+    const suffix = String(randomInt(0, 999999999)).padStart(9, "0");
+    phone = `19${suffix}`;
+  } while (existingPhones.has(phone));
+  existingPhones.add(phone);
+  return phone;
+}
+
+function buildVirtualUser(index, existingPhones) {
+  const male = index % 2 === 0;
+  const hobbiesPool = male
+    ? ["篮球,音乐,露营", "健身,游戏,电影", "跑步,摄影,咖啡"]
+    : ["旅行,探店,摄影", "阅读,瑜伽,电影", "羽毛球,音乐,美食"];
+  const cityPool = ["上海", "深圳", "广州", "杭州", "成都", "北京"];
+  const hometownPool = ["南京", "武汉", "西安", "苏州", "青岛", "重庆"];
+  const photoSeed = 100 + index;
+
+  return {
+    phone: randomPhone(existingPhones),
+    password: DEFAULT_PASSWORD,
+    nickname: `guest${String(index + 1).padStart(2, "0")}`,
+    gender: male ? "MALE" : "FEMALE",
+    age: randomInt(22, 30),
+    height: male ? randomInt(170, 186) : randomInt(158, 172),
+    weight: male ? randomInt(62, 82) : randomInt(45, 60),
+    hometown: hometownPool[index % hometownPool.length],
+    currentCity: cityPool[index % cityPool.length],
+    hobbies: hobbiesPool[index % hobbiesPool.length],
+    partnerExpectation: "真诚沟通，三观契合",
+    photoUrls: JSON.stringify([`https://picsum.photos/300/300?${photoSeed}`])
+  };
+}
+
 async function ensureDefaultUsers() {
   const defaults = [
     {
       phone: "13800000001",
-      password: "123456",
+      password: DEFAULT_PASSWORD,
       nickname: "星河",
       gender: "FEMALE",
       age: 25,
@@ -53,7 +112,7 @@ async function ensureDefaultUsers() {
     },
     {
       phone: "13800000002",
-      password: "123456",
+      password: DEFAULT_PASSWORD,
       nickname: "阿北",
       gender: "MALE",
       age: 27,
@@ -66,8 +125,8 @@ async function ensureDefaultUsers() {
       photoUrls: JSON.stringify(["https://picsum.photos/300/300?2"])
     },
     {
-      phone: "ellie",
-      password: "123456",
+      phone: "13800000003",
+      password: DEFAULT_PASSWORD,
       nickname: "ellie",
       gender: "FEMALE",
       age: 23,
@@ -80,18 +139,24 @@ async function ensureDefaultUsers() {
       photoUrls: JSON.stringify(["https://picsum.photos/300/300?3"])
     }
   ];
-  await Promise.all(
-    defaults.map((item) =>
-      prisma.user.upsert({
-        where: { phone: item.phone },
-        update: {},
-        create: item
-      })
-    )
-  );
+  await Promise.all(defaults.map((item) => prisma.user.upsert({ where: { phone: item.phone }, update: {}, create: item })));
+
+  const existingUsers = await prisma.user.findMany({ select: { phone: true, nickname: true } });
+  const existingPhones = new Set(existingUsers.map((u) => u.phone));
+  const existingVirtualCount = existingUsers.filter((u) => u.nickname.startsWith("guest")).length;
+  const missingVirtual = Math.max(0, VIRTUAL_USER_COUNT - existingVirtualCount);
+
+  if (missingVirtual > 0) {
+    const startIndex = existingVirtualCount;
+    const virtualUsers = Array.from({ length: missingVirtual }, (_, idx) => buildVirtualUser(startIndex + idx, existingPhones));
+    await prisma.user.createMany({
+      data: virtualUsers,
+      skipDuplicates: true
+    });
+  }
 
   const userA = await prisma.user.findUnique({ where: { phone: "13800000001" } });
-  const userB = await prisma.user.findUnique({ where: { phone: "ellie" } });
+  const userB = await prisma.user.findUnique({ where: { phone: "13800000003" } });
   if (userA && userB) {
     const seededCount = await prisma.chatMessage.count({
       where: pairWhere(userA.id, userB.id)
@@ -183,7 +248,8 @@ app.post("/auth/register", async (req, res) => {
     const user = await prisma.user.create({
       data: { ...data, photoUrls: JSON.stringify(data.photoUrls) }
     });
-    return res.json({ user });
+    const token = issueAuthToken(user.id);
+    return res.json({ user, token });
   } catch (error) {
     if (error?.name?.includes("PrismaClient")) {
       return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
@@ -197,7 +263,8 @@ app.post("/auth/login", async (req, res) => {
     const { phone, password } = req.body;
     const user = await prisma.user.findFirst({ where: { phone, password } });
     if (!user) return res.status(401).json({ message: "手机号或密码错误" });
-    return res.json({ user });
+    const token = issueAuthToken(user.id);
+    return res.json({ user, token });
   } catch (error) {
     if (error?.name?.includes("PrismaClient")) {
       return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
@@ -343,8 +410,7 @@ app.get("/chat/contacts", async (req, res) => {
         id: item.id,
         name: item.nickname,
         avatar: item.avatarUrl || "https://picsum.photos/80/80?chat",
-        status: `${item.currentCity} · 在线`,
-        phone: item.phone
+        status: `${item.currentCity} · 在线`
       }))
     });
   } catch (error) {
@@ -354,43 +420,58 @@ app.get("/chat/contacts", async (req, res) => {
 
 app.get("/chat/conversations", async (req, res) => {
   try {
-    const userId = String(req.query.userId || "");
-    if (!userId) return res.status(400).json({ message: "缺少 userId" });
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
     const currentUser = await prisma.user.findUnique({ where: { id: userId } });
     if (!currentUser) return res.status(404).json({ message: "用户不存在" });
 
-    const contacts = await prisma.user.findMany({
-      where: { id: { not: userId } },
-      orderBy: { updatedAt: "desc" },
-      take: 50
+    // Only peers with real messages (not "every other user in DB") — avoids rows where
+    // preview/time looked like another person's thread and caused confusion.
+    const recent = await prisma.chatMessage.findMany({
+      where: {
+        OR: [{ fromUserId: userId }, { toUserId: userId }]
+      },
+      orderBy: { createdAt: "desc" },
+      take: 5000
     });
-    const conversations = await Promise.all(
-      contacts.map(async (peer) => {
-        const [last, unread] = await Promise.all([
-          prisma.chatMessage.findFirst({
-            where: pairWhere(userId, peer.id),
-            orderBy: { createdAt: "desc" }
-          }),
-          prisma.chatMessage.count({
-            where: {
-              fromUserId: peer.id,
-              toUserId: userId,
-              readAt: null
-            }
-          })
-        ]);
+    const lastByPeer = new Map();
+    const peerOrder = [];
+    for (const m of recent) {
+      const peerId = m.fromUserId === userId ? m.toUserId : m.fromUserId;
+      if (lastByPeer.has(peerId)) continue;
+      lastByPeer.set(peerId, m);
+      peerOrder.push(peerId);
+    }
 
+    const slice = peerOrder.slice(0, 50);
+    const peers = await prisma.user.findMany({
+      where: { id: { in: slice } }
+    });
+    const peerMap = new Map(peers.map((p) => [p.id, p]));
+
+    const conversations = await Promise.all(
+      slice.map(async (peerId) => {
+        const peer = peerMap.get(peerId);
+        const last = lastByPeer.get(peerId);
+        if (!peer || !last) return null;
+        const unread = await prisma.chatMessage.count({
+          where: {
+            fromUserId: peerId,
+            toUserId: userId,
+            readAt: null
+          }
+        });
         return {
           id: peer.id,
           name: peer.nickname,
           avatar: peer.avatarUrl || "https://picsum.photos/80/80?chat",
-          preview: last?.text || "开始聊天吧",
-          time: last?.createdAt?.toISOString() || peer.updatedAt.toISOString(),
+          preview: last.text,
+          time: last.createdAt.toISOString(),
           unread
         };
       })
     );
-    return res.json({ conversations });
+    return res.json({ conversations: conversations.filter(Boolean) });
   } catch (error) {
     return res.status(500).json({ message: "拉取会话失败" });
   }
@@ -398,9 +479,10 @@ app.get("/chat/conversations", async (req, res) => {
 
 app.get("/chat/messages", async (req, res) => {
   try {
-    const userId = String(req.query.userId || "");
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
     const peerId = String(req.query.peerId || "");
-    if (!userId || !peerId) return res.status(400).json({ message: "缺少 userId 或 peerId" });
+    if (!peerId) return res.status(400).json({ message: "缺少 peerId" });
     const messages = await prisma.chatMessage.findMany({
       where: pairWhere(userId, peerId),
       orderBy: { createdAt: "asc" },
@@ -422,8 +504,10 @@ app.get("/chat/messages", async (req, res) => {
 
 app.post("/chat/read", async (req, res) => {
   try {
-    const { userId, peerId } = req.body;
-    if (!userId || !peerId) return res.status(400).json({ message: "参数不完整" });
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const { peerId } = req.body;
+    if (!peerId) return res.status(400).json({ message: "参数不完整" });
     await prisma.chatMessage.updateMany({
       where: {
         fromUserId: String(peerId),
@@ -440,21 +524,25 @@ app.post("/chat/read", async (req, res) => {
 
 app.post("/chat/messages", async (req, res) => {
   try {
-    const { fromUserId, toUserId, text } = req.body;
+    const authUserId = getAuthUserId(req);
+    if (!authUserId) {
+      return res.status(401).json({ message: "未登录或登录态失效" });
+    }
+    const { toUserId, text } = req.body;
     const content = String(text || "").trim();
-    if (!fromUserId || !toUserId || !content) {
+    if (!toUserId || !content) {
       return res.status(400).json({ message: "参数不完整" });
     }
     const message = await prisma.chatMessage.create({
       data: {
-        fromUserId: String(fromUserId),
+        fromUserId: authUserId,
         toUserId: String(toUserId),
         text: content
       }
     });
     const payload = {
       id: message.id,
-      fromUserId: String(fromUserId),
+      fromUserId: authUserId,
       toUserId: String(toUserId),
       text: content,
       createdAt: message.createdAt.toISOString()

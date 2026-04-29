@@ -1,55 +1,104 @@
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
+const DEFAULT_PASSWORD = "123456";
+const VIRTUAL_USER_COUNT = 12;
+
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function randomPhone(existingPhones) {
+  let phone = "";
+  do {
+    const suffix = String(randomInt(0, 999999999)).padStart(9, "0");
+    phone = `19${suffix}`;
+  } while (existingPhones.has(phone));
+  existingPhones.add(phone);
+  return phone;
+}
+
+function buildVirtualUser(index, existingPhones) {
+  const male = index % 2 === 0;
+  const hobbiesPool = male
+    ? ["篮球,音乐,露营", "健身,游戏,电影", "跑步,摄影,咖啡"]
+    : ["旅行,探店,摄影", "阅读,瑜伽,电影", "羽毛球,音乐,美食"];
+  const cityPool = ["上海", "深圳", "广州", "杭州", "成都", "北京"];
+  const hometownPool = ["南京", "武汉", "西安", "苏州", "青岛", "重庆"];
+  const photoSeed = 200 + index;
+
+  return {
+    phone: randomPhone(existingPhones),
+    password: DEFAULT_PASSWORD,
+    nickname: `guest${String(index + 1).padStart(2, "0")}`,
+    gender: male ? "MALE" : "FEMALE",
+    age: randomInt(22, 30),
+    height: male ? randomInt(170, 186) : randomInt(158, 172),
+    weight: male ? randomInt(62, 82) : randomInt(45, 60),
+    hometown: hometownPool[index % hometownPool.length],
+    currentCity: cityPool[index % cityPool.length],
+    hobbies: hobbiesPool[index % hobbiesPool.length],
+    partnerExpectation: "真诚沟通，三观契合",
+    photoUrls: JSON.stringify([`https://picsum.photos/300/300?${photoSeed}`])
+  };
+}
 
 async function main() {
-  await prisma.user.createMany({
-    data: [
-      {
-        phone: "13800000001",
-        password: "123456",
-        nickname: "星河",
-        gender: "FEMALE",
-        age: 25,
-        height: 165,
-        weight: 50,
-        hometown: "成都",
-        currentCity: "深圳",
-        hobbies: "旅行,电影,摄影",
-        partnerExpectation: "三观契合，有责任感",
-        photoUrls: JSON.stringify(["https://picsum.photos/300/300?1"])
-      },
-      {
-        phone: "13800000002",
-        password: "123456",
-        nickname: "阿北",
-        gender: "MALE",
-        age: 27,
-        height: 178,
-        weight: 72,
-        hometown: "武汉",
-        currentCity: "广州",
-        hobbies: "篮球,音乐,露营",
-        partnerExpectation: "善良，愿意沟通",
-        photoUrls: JSON.stringify(["https://picsum.photos/300/300?2"])
-      },
-      {
-        phone: "ellie",
-        password: "123456",
-        nickname: "ellie",
-        gender: "FEMALE",
-        age: 23,
-        height: 166,
-        weight: 49,
-        hometown: "杭州",
-        currentCity: "上海",
-        hobbies: "拍照,探店,旅行",
-        partnerExpectation: "温柔靠谱，有上进心",
-        photoUrls: JSON.stringify(["https://picsum.photos/300/300?3"])
-      }
-    ],
-    skipDuplicates: true
-  });
+  const defaults = [
+    {
+      phone: "13800000001",
+      password: DEFAULT_PASSWORD,
+      nickname: "星河",
+      gender: "FEMALE",
+      age: 25,
+      height: 165,
+      weight: 50,
+      hometown: "成都",
+      currentCity: "深圳",
+      hobbies: "旅行,电影,摄影",
+      partnerExpectation: "三观契合，有责任感",
+      photoUrls: JSON.stringify(["https://picsum.photos/300/300?1"])
+    },
+    {
+      phone: "13800000002",
+      password: DEFAULT_PASSWORD,
+      nickname: "阿北",
+      gender: "MALE",
+      age: 27,
+      height: 178,
+      weight: 72,
+      hometown: "武汉",
+      currentCity: "广州",
+      hobbies: "篮球,音乐,露营",
+      partnerExpectation: "善良，愿意沟通",
+      photoUrls: JSON.stringify(["https://picsum.photos/300/300?2"])
+    },
+    {
+      phone: "13800000003",
+      password: DEFAULT_PASSWORD,
+      nickname: "ellie",
+      gender: "FEMALE",
+      age: 23,
+      height: 166,
+      weight: 49,
+      hometown: "杭州",
+      currentCity: "上海",
+      hobbies: "拍照,探店,旅行",
+      partnerExpectation: "温柔靠谱，有上进心",
+      photoUrls: JSON.stringify(["https://picsum.photos/300/300?3"])
+    }
+  ];
+  await prisma.user.createMany({ data: defaults, skipDuplicates: true });
+
+  const existing = await prisma.user.findMany({ select: { phone: true, nickname: true } });
+  const existingPhones = new Set(existing.map((item) => item.phone));
+  const existingVirtualCount = existing.filter((item) => item.nickname.startsWith("guest")).length;
+  const missingVirtual = Math.max(0, VIRTUAL_USER_COUNT - existingVirtualCount);
+  if (missingVirtual > 0) {
+    const startIndex = existingVirtualCount;
+    const virtualUsers = Array.from({ length: missingVirtual }, (_, idx) => buildVirtualUser(startIndex + idx, existingPhones));
+    await prisma.user.createMany({ data: virtualUsers, skipDuplicates: true });
+  }
 }
 
 main()

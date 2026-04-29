@@ -65,6 +65,7 @@ export default function App() {
   const [authMode, setAuthMode] = useState("login");
   const [agreed, setAgreed] = useState(false);
   const [user, setUser] = useState(null);
+  const [authToken, setAuthToken] = useState("");
   const [session, setSession] = useState(null);
   const [blindBoxTarget, setBlindBoxTarget] = useState(null);
   const [gameState, setGameState] = useState(null);
@@ -160,6 +161,15 @@ export default function App() {
     () => conversations.reduce((sum, item) => sum + Number(item.unread || 0), 0),
     [conversations]
   );
+  const authHeaders = useMemo(
+    () =>
+      authToken
+        ? {
+            Authorization: `Bearer ${authToken}`
+          }
+        : {},
+    [authToken]
+  );
 
   useEffect(() => {
     activeConversationIdRef.current = activeConversation?.id || "";
@@ -175,7 +185,7 @@ export default function App() {
     try {
       const [contactsRes, convRes] = await Promise.all([
         fetch(`${API}/chat/contacts?userId=${currentUserId}`),
-        fetch(`${API}/chat/conversations?userId=${currentUserId}`)
+        fetch(`${API}/chat/conversations`, { headers: authHeaders })
       ]);
       const contactsData = await contactsRes.json();
       const convData = await convRes.json();
@@ -186,9 +196,9 @@ export default function App() {
     }
   };
 
-  const refreshActiveMessages = async (currentUserId, peerId) => {
+  const refreshActiveMessages = async (_currentUserId, peerId) => {
     try {
-      const res = await fetch(`${API}/chat/messages?userId=${currentUserId}&peerId=${peerId}`);
+      const res = await fetch(`${API}/chat/messages?peerId=${peerId}`, { headers: authHeaders });
       const data = await res.json();
       setChatMessages(Array.isArray(data.messages) ? data.messages : []);
     } catch (_error) {
@@ -287,7 +297,10 @@ export default function App() {
 
     socket.on("chat:message", (message) => {
       if (!message?.fromUserId || !message?.toUserId) return;
-      const peerId = message.fromUserId === user.id ? message.toUserId : message.fromUserId;
+      const uid = String(user.id);
+      const fromId = String(message.fromUserId);
+      const toId = String(message.toUserId);
+      const peerId = fromId === uid ? toId : fromId;
       const isActive = peerId === activeConversationIdRef.current;
       if (isActive) {
         setChatMessages((prev) => {
@@ -296,14 +309,14 @@ export default function App() {
         });
         fetch(`${API}/chat/read`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: user.id, peerId })
+          headers: { "Content-Type": "application/json", ...authHeaders },
+          body: JSON.stringify({ peerId })
         }).catch(() => null);
       }
       setConversations((prev) => {
         const exists = prev.some((item) => item.id === peerId);
-        const nextUnread = message.fromUserId === user.id || isActive ? 0 : 1;
-        if (message.fromUserId !== user.id && !isActive) {
+        const nextUnread = fromId === uid || isActive ? 0 : 1;
+        if (fromId !== uid && !isActive) {
           const peerName = prev.find((item) => item.id === peerId)?.name || "新朋友";
           setChatNotice(`${peerName} 发来新消息`);
         }
@@ -327,7 +340,7 @@ export default function App() {
                 preview: message.text,
                 time: message.createdAt,
                 unread:
-                  message.fromUserId === user.id || isActive ? 0 : (item.unread || 0) + 1
+                  fromId === uid || isActive ? 0 : (item.unread || 0) + 1
               }
             : item
         );
@@ -338,7 +351,7 @@ export default function App() {
       socket.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [user]);
+  }, [authHeaders, user]);
 
   useEffect(() => {
     if (!user || tab !== "chat") return;
@@ -392,6 +405,7 @@ export default function App() {
     const data = await res.json();
     if (!res.ok) return setMessage(data.message || "登录失败");
     setUser(data.user);
+    setAuthToken(data.token || "");
     setMessage(`欢迎回来，${data.user.nickname}`);
   };
 
@@ -414,6 +428,7 @@ export default function App() {
     const data = await res.json();
     if (!res.ok) return setMessage(data.message || "注册失败");
     setUser(data.user);
+    setAuthToken(data.token || "");
     setMessage("注册成功，已自动登录");
   };
 
@@ -431,6 +446,7 @@ export default function App() {
     const data = await res.json();
     if (!res.ok) return setMessage("快捷登录失败，请先注册账号");
     setUser(data.user);
+    setAuthToken(data.token || "");
     setMessage(type === "device" ? "本机号码登录成功" : "微信快捷登录成功");
   };
 
@@ -528,6 +544,7 @@ export default function App() {
 
   const switchAccount = () => {
     setUser(null);
+    setAuthToken("");
     setSession(null);
     setBlindBoxTarget(null);
     setGameState(null);
@@ -543,6 +560,7 @@ export default function App() {
 
   const logout = () => {
     setUser(null);
+    setAuthToken("");
     setSession(null);
     setBlindBoxTarget(null);
     setGameState(null);
@@ -566,8 +584,8 @@ export default function App() {
     );
     fetch(`${API}/chat/read`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: user.id, peerId: item.id })
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ peerId: item.id })
     }).catch(() => null);
   };
 
@@ -587,9 +605,11 @@ export default function App() {
     try {
       const res = await fetch(`${API}/chat/messages`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
         body: JSON.stringify({
-          fromUserId: user.id,
           toUserId: activeConversation.id,
           text
         })
@@ -875,7 +895,7 @@ export default function App() {
                   chatMessages.map((msg) => (
                     <div
                       key={msg.id}
-                      className={`chat-bubble ${msg.fromUserId === user.id ? "me-bubble" : "other-bubble"}`}
+                      className={`chat-bubble ${String(msg.fromUserId) === String(user.id) ? "me-bubble" : "other-bubble"}`}
                     >
                       {msg.text}
                     </div>
@@ -1084,7 +1104,7 @@ export default function App() {
               </div>
 
               <div className="status-card my-stats">
-                <p>账号：{user.phone}</p>
+                <p>用户ID：{user.id}</p>
                 <p>个人签名：{user.partnerExpectation || "做一个有趣的人"}</p>
                 <p>会员状态：{isMembershipValid ? "有效会员" : "免费用户"}</p>
               </div>
