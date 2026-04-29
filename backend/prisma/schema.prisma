@@ -12,15 +12,19 @@ model User {
   phone              String         @unique
   password           String
   nickname           String
-  gender             Gender
-  age                Int
-  height             Int
-  weight             Int
-  hometown           String
-  currentCity        String
+  gender             Gender         @default(MALE)
+  age                Int            @default(24)
+  height             Int            @default(170)
+  weight             Int            @default(60)
+  birthDate          DateTime?
+  hometown           String         @default("")
+  currentCity        String         @default("")
+  income             String?
+  industry           String?
   incomeProofStatus  String         @default("PENDING")
-  hobbies            String
-  partnerExpectation String
+  hobbies            String         @default("")
+  partnerExpectation String         @default("")
+  profileCompleted   Boolean        @default(false)
   avatarUrl          String?
   photoUrls          String
   membershipType     MembershipType @default(FREE)
@@ -30,6 +34,8 @@ model User {
   maleUnlocks        MaleUnlock[]
   sentMessages       ChatMessage[]  @relation("ChatMessageSender")
   recvMessages       ChatMessage[]  @relation("ChatMessageReceiver")
+  sentFriendRequests FriendRequest[] @relation("FriendRequestSender")
+  recvFriendRequests FriendRequest[] @relation("FriendRequestReceiver")
 }
 
 model MatchSession {
@@ -56,18 +62,47 @@ model MaleUnlock {
 }
 
 model ChatMessage {
-  id         String   @id @default(cuid())
-  fromUserId String
-  toUserId   String
-  text       String
-  readAt     DateTime?
-  createdAt  DateTime @default(now())
+  id               String      @id @default(cuid())
+  fromUserId       String
+  toUserId         String
+  kind             MessageKind @default(TEXT)
+  text             String      @default("")
+  mediaUrl         String?
+  audioDurationSec Int?
+  readAt           DateTime?
+  createdAt        DateTime    @default(now())
 
   fromUser User @relation("ChatMessageSender", fields: [fromUserId], references: [id])
   toUser   User @relation("ChatMessageReceiver", fields: [toUserId], references: [id])
 
   @@index([fromUserId, toUserId, createdAt])
   @@index([toUserId, fromUserId, readAt])
+}
+
+model Friendship {
+  id        String   @id @default(cuid())
+  userAId   String
+  userBId   String
+  createdAt DateTime @default(now())
+
+  @@unique([userAId, userBId])
+  @@index([userAId])
+  @@index([userBId])
+}
+
+model FriendRequest {
+  id         String   @id @default(cuid())
+  fromUserId String
+  toUserId   String
+  status     String   @default("PENDING")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  fromUser User @relation("FriendRequestSender", fields: [fromUserId], references: [id])
+  toUser   User @relation("FriendRequestReceiver", fields: [toUserId], references: [id])
+
+  @@unique([fromUserId, toUserId])
+  @@index([toUserId, status])
 }
 
 enum Gender {
@@ -81,4 +116,10 @@ enum MembershipType {
   QUARTER
   HALF_YEAR
   YEAR
+}
+
+enum MessageKind {
+  TEXT
+  IMAGE
+  AUDIO
 }

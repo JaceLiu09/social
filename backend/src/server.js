@@ -3,6 +3,9 @@ import cors from "cors";
 import { z } from "zod";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import { prisma } from "./prisma.js";
 import {
@@ -14,7 +17,7 @@ import {
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "20mb" }));
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
@@ -23,9 +26,18 @@ const io = new Server(httpServer, {
 });
 const userSockets = new Map();
 const authTokens = new Map();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const uploadRoot = path.join(__dirname, "../uploads");
+const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
+const AUDIO_MAX_BYTES = 8 * 1024 * 1024;
 
 function getPairKey(a, b) {
   return [a, b].sort().join(":");
+}
+
+function normalizeFriendPair(a, b) {
+  return [String(a), String(b)].sort();
 }
 
 function pairWhere(userA, userB) {
@@ -50,6 +62,30 @@ function getAuthUserId(req) {
   const token = match[1].trim();
   const session = authTokens.get(token);
   return session?.userId || "";
+}
+
+function previewText(message) {
+  if (message.kind === "IMAGE") return "[图片]";
+  if (message.kind === "AUDIO") return "[语音]";
+  return message.text || "";
+}
+
+function toTenDigitId(input) {
+  const raw = String(input || "");
+  let hash = 0n;
+  for (let i = 0; i < raw.length; i += 1) {
+    hash = (hash * 131n + BigInt(raw.charCodeAt(i))) % 10000000000n;
+  }
+  return hash.toString().padStart(10, "0");
+}
+
+async function getFriendIds(userId) {
+  const list = await prisma.friendship.findMany({
+    where: {
+      OR: [{ userAId: userId }, { userBId: userId }]
+    }
+  });
+  return list.map((item) => (item.userAId === userId ? item.userBId : item.userAId));
 }
 
 const DEFAULT_PASSWORD = "123456";
@@ -88,9 +124,40 @@ function buildVirtualUser(index, existingPhones) {
     weight: male ? randomInt(62, 82) : randomInt(45, 60),
     hometown: hometownPool[index % hometownPool.length],
     currentCity: cityPool[index % cityPool.length],
+    income: "8k-15k",
+    industry: "互联网",
     hobbies: hobbiesPool[index % hobbiesPool.length],
     partnerExpectation: "真诚沟通，三观契合",
+    profileCompleted: true,
     photoUrls: JSON.stringify([`https://picsum.photos/300/300?${photoSeed}`])
+  };
+}
+
+function buildNamedFriendUser(nickname, index, existingPhones) {
+  const profiles = [
+    { gender: "MALE", hometown: "南京", currentCity: "上海", hobbies: "跑步,电影,咖啡" },
+    { gender: "MALE", hometown: "西安", currentCity: "深圳", hobbies: "健身,旅行,摄影" },
+    { gender: "FEMALE", hometown: "苏州", currentCity: "杭州", hobbies: "探店,羽毛球,音乐" },
+    { gender: "FEMALE", hometown: "青岛", currentCity: "北京", hobbies: "阅读,徒步,烘焙" },
+    { gender: "MALE", hometown: "重庆", currentCity: "广州", hobbies: "篮球,唱歌,桌游" }
+  ];
+  const profile = profiles[index % profiles.length];
+  return {
+    phone: randomPhone(existingPhones),
+    password: DEFAULT_PASSWORD,
+    nickname,
+    gender: profile.gender,
+    age: randomInt(22, 30),
+    height: profile.gender === "MALE" ? randomInt(170, 186) : randomInt(158, 172),
+    weight: profile.gender === "MALE" ? randomInt(62, 82) : randomInt(45, 60),
+    hometown: profile.hometown,
+    currentCity: profile.currentCity,
+    income: "10k-20k",
+    industry: "互联网",
+    hobbies: profile.hobbies,
+    partnerExpectation: "真诚沟通，三观契合",
+    profileCompleted: true,
+    photoUrls: JSON.stringify([`https://picsum.photos/300/300?${300 + index}`])
   };
 }
 
@@ -106,8 +173,11 @@ async function ensureDefaultUsers() {
       weight: 50,
       hometown: "成都",
       currentCity: "深圳",
+      income: "15k-25k",
+      industry: "互联网",
       hobbies: "旅行,电影,摄影",
       partnerExpectation: "三观契合，有责任感",
+      profileCompleted: true,
       photoUrls: JSON.stringify(["https://picsum.photos/300/300?1"])
     },
     {
@@ -120,8 +190,11 @@ async function ensureDefaultUsers() {
       weight: 72,
       hometown: "武汉",
       currentCity: "广州",
+      income: "10k-20k",
+      industry: "产品",
       hobbies: "篮球,音乐,露营",
       partnerExpectation: "善良，愿意沟通",
+      profileCompleted: true,
       photoUrls: JSON.stringify(["https://picsum.photos/300/300?2"])
     },
     {
@@ -134,21 +207,37 @@ async function ensureDefaultUsers() {
       weight: 49,
       hometown: "杭州",
       currentCity: "上海",
+      income: "12k-18k",
+      industry: "设计",
       hobbies: "拍照,探店,旅行",
       partnerExpectation: "温柔靠谱，有上进心",
+      profileCompleted: true,
       photoUrls: JSON.stringify(["https://picsum.photos/300/300?3"])
     }
   ];
   await Promise.all(defaults.map((item) => prisma.user.upsert({ where: { phone: item.phone }, update: {}, create: item })));
 
-  const existingUsers = await prisma.user.findMany({ select: { phone: true, nickname: true } });
+  const existingUsers = await prisma.user.findMany({ select: { id: true, phone: true, nickname: true } });
   const existingPhones = new Set(existingUsers.map((u) => u.phone));
-  const existingVirtualCount = existingUsers.filter((u) => u.nickname.startsWith("guest")).length;
+  const existingByNickname = new Set(existingUsers.map((u) => u.nickname));
+
+  const namedFriends = ["alan", "phil", "juni", "dace", "jay"];
+  const missingNamed = namedFriends.filter((nickname) => !existingByNickname.has(nickname));
+  if (missingNamed.length) {
+    await prisma.user.createMany({
+      data: missingNamed.map((nickname, idx) => buildNamedFriendUser(nickname, idx, existingPhones)),
+      skipDuplicates: true
+    });
+  }
+
+  const allUsers = await prisma.user.findMany({ select: { phone: true, nickname: true } });
+  const allPhones = new Set(allUsers.map((u) => u.phone));
+  const existingVirtualCount = allUsers.filter((u) => u.nickname.startsWith("guest")).length;
   const missingVirtual = Math.max(0, VIRTUAL_USER_COUNT - existingVirtualCount);
 
   if (missingVirtual > 0) {
     const startIndex = existingVirtualCount;
-    const virtualUsers = Array.from({ length: missingVirtual }, (_, idx) => buildVirtualUser(startIndex + idx, existingPhones));
+    const virtualUsers = Array.from({ length: missingVirtual }, (_, idx) => buildVirtualUser(startIndex + idx, allPhones));
     await prisma.user.createMany({
       data: virtualUsers,
       skipDuplicates: true
@@ -224,32 +313,127 @@ function createSquarePostPool(size = 5000) {
 
 let squarePostPool = createSquarePostPool(5000).sort((a, b) => a.minutesAgo - b.minutesAgo);
 
-const profileSchema = z.object({
+const registerBasicSchema = z.object({
   phone: z.string().min(6),
   password: z.string().min(6),
+  smsCode: z.string().length(6)
+});
+
+const completeProfileSchema = z.object({
   nickname: z.string().min(1),
-  gender: z.enum(["MALE", "FEMALE"]),
-  age: z.number().int().min(18).max(60),
-  height: z.number().int().min(130).max(220),
-  weight: z.number().int().min(30).max(200),
+  birthDate: z.string().min(8),
   hometown: z.string().min(1),
   currentCity: z.string().min(1),
+  income: z.string().min(1),
+  industry: z.string().min(1),
   hobbies: z.string().min(1),
   partnerExpectation: z.string().min(1),
-  avatarUrl: z.string().optional(),
-  photoUrls: z.array(z.string().url()).min(1)
+  avatarUrl: z.string().optional()
 });
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+app.use("/uploads", express.static(uploadRoot));
 
-app.post("/auth/register", async (req, res) => {
+app.post("/chat/upload", async (req, res) => {
   try {
-    const data = profileSchema.parse(req.body);
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const { fileName, dataUrl, kind } = req.body;
+    const mediaKind = kind === "AUDIO" ? "AUDIO" : "IMAGE";
+    if (!fileName || !dataUrl || !String(dataUrl).startsWith("data:")) {
+      return res.status(400).json({ message: "上传参数不完整" });
+    }
+    const match = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) return res.status(400).json({ message: "文件格式不正确" });
+    const mimeType = match[1];
+    const base64 = match[2];
+    const allowedImage = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    const allowedAudio = ["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg"];
+    if (mediaKind === "IMAGE" && !allowedImage.includes(mimeType)) {
+      return res.status(400).json({ message: "不支持的图片格式" });
+    }
+    if (mediaKind === "AUDIO" && !allowedAudio.includes(mimeType)) {
+      return res.status(400).json({ message: "不支持的语音格式" });
+    }
+    const buffer = Buffer.from(base64, "base64");
+    if (mediaKind === "IMAGE" && buffer.byteLength > IMAGE_MAX_BYTES) {
+      return res.status(400).json({ message: "图片过大，请压缩到 4MB 内" });
+    }
+    if (mediaKind === "AUDIO" && buffer.byteLength > AUDIO_MAX_BYTES) {
+      return res.status(400).json({ message: "语音过大，请压缩到 8MB 内" });
+    }
+    const ext = path.extname(String(fileName)).replace(".", "") || mimeType.split("/")[1] || "bin";
+    const folder = mediaKind === "AUDIO" ? "audio" : "image";
+    const dir = path.join(uploadRoot, folder);
+    await fs.mkdir(dir, { recursive: true });
+    const safeName = `${Date.now()}-${randomUUID()}.${ext}`;
+    const fullPath = path.join(dir, safeName);
+    await fs.writeFile(fullPath, buffer);
+    return res.json({ url: `/uploads/${folder}/${safeName}` });
+  } catch (_error) {
+    return res.status(500).json({ message: "上传失败" });
+  }
+});
+
+app.post("/auth/register-basic", async (req, res) => {
+  try {
+    const data = registerBasicSchema.parse(req.body);
+    if (String(data.smsCode) !== "123456") {
+      return res.status(400).json({ message: "短信验证码错误（测试码：123456）" });
+    }
+    const exists = await prisma.user.findUnique({ where: { phone: data.phone } });
+    if (exists) return res.status(409).json({ message: "手机号已注册，请直接登录" });
+    const nickname = `用户${data.phone.slice(-4)}`;
     const user = await prisma.user.create({
-      data: { ...data, photoUrls: JSON.stringify(data.photoUrls) }
+      data: {
+        phone: data.phone,
+        password: data.password,
+        nickname,
+        photoUrls: JSON.stringify([]),
+        profileCompleted: false
+      }
     });
     const token = issueAuthToken(user.id);
-    return res.json({ user, token });
+    return res.json({ user, token, needsProfile: true });
+  } catch (error) {
+    if (error?.name?.includes("PrismaClient")) {
+      return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
+    }
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+app.post("/auth/complete-profile", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const data = completeProfileSchema.parse(req.body);
+    const birth = new Date(data.birthDate);
+    if (Number.isNaN(birth.getTime())) return res.status(400).json({ message: "出生年月日格式无效" });
+    const now = new Date();
+    const age = Math.max(
+      18,
+      now.getFullYear() -
+        birth.getFullYear() -
+        (now < new Date(now.getFullYear(), birth.getMonth(), birth.getDate()) ? 1 : 0)
+    );
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        nickname: data.nickname,
+        birthDate: birth,
+        age,
+        hometown: data.hometown,
+        currentCity: data.currentCity,
+        income: data.income,
+        industry: data.industry,
+        hobbies: data.hobbies,
+        partnerExpectation: data.partnerExpectation,
+        avatarUrl: data.avatarUrl || null,
+        profileCompleted: true
+      }
+    });
+    return res.json({ user });
   } catch (error) {
     if (error?.name?.includes("PrismaClient")) {
       return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
@@ -264,7 +448,7 @@ app.post("/auth/login", async (req, res) => {
     const user = await prisma.user.findFirst({ where: { phone, password } });
     if (!user) return res.status(401).json({ message: "手机号或密码错误" });
     const token = issueAuthToken(user.id);
-    return res.json({ user, token });
+    return res.json({ user, token, needsProfile: !user.profileCompleted });
   } catch (error) {
     if (error?.name?.includes("PrismaClient")) {
       return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
@@ -395,13 +579,15 @@ app.post("/membership/subscribe", async (req, res) => {
 
 app.get("/chat/contacts", async (req, res) => {
   try {
-    const userId = String(req.query.userId || "");
+    const userId = getAuthUserId(req) || String(req.query.userId || "");
     if (!userId) return res.status(400).json({ message: "缺少 userId" });
     const currentUser = await prisma.user.findUnique({ where: { id: userId } });
     if (!currentUser) return res.status(404).json({ message: "用户不存在" });
+    const friendIds = await getFriendIds(userId);
+    if (!friendIds.length) return res.json({ contacts: [] });
 
     const contacts = await prisma.user.findMany({
-      where: { id: { not: userId } },
+      where: { id: { in: friendIds } },
       orderBy: { updatedAt: "desc" },
       take: 50
     });
@@ -415,6 +601,147 @@ app.get("/chat/contacts", async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: "拉取通讯录失败" });
+  }
+});
+
+app.get("/friends/search", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const keyword = String(req.query.keyword || "").trim().toLowerCase();
+    const allUsers = await prisma.user.findMany({
+      where: { id: { not: userId } },
+      orderBy: { updatedAt: "desc" },
+      take: keyword.length > 0 ? 5000 : 300
+    });
+    const friendIds = new Set(await getFriendIds(userId));
+    const requests = await prisma.friendRequest.findMany({
+      where: {
+        OR: [{ fromUserId: userId }, { toUserId: userId }]
+      }
+    });
+    const requestMap = new Map();
+    requests.forEach((item) => {
+      const peerId = item.fromUserId === userId ? item.toUserId : item.fromUserId;
+      requestMap.set(peerId, item);
+    });
+    const candidates = allUsers
+      .filter((u) => {
+        if (!keyword) return true;
+        return (
+          String(u.nickname || "").toLowerCase().includes(keyword) ||
+          String(u.phone || "").toLowerCase().includes(keyword) ||
+          toTenDigitId(u.id).includes(keyword)
+        );
+      })
+      .map((u) => {
+        const reqItem = requestMap.get(u.id);
+        return {
+          id: u.id,
+          uid10: toTenDigitId(u.id),
+          phone: u.phone,
+          name: u.nickname,
+          avatar: u.avatarUrl || "",
+          hometown: u.hometown,
+          currentCity: u.currentCity,
+          hobbies: u.hobbies,
+          partnerExpectation: u.partnerExpectation,
+          isFriend: friendIds.has(u.id),
+          requestId: reqItem?.id || null,
+          requestStatus: reqItem?.status || null,
+          requestDirection: reqItem ? (reqItem.fromUserId === userId ? "OUTGOING" : "INCOMING") : null
+        };
+      })
+      .slice(0, 80);
+    return res.json({ users: candidates });
+  } catch (_error) {
+    return res.status(500).json({ message: "搜索好友失败" });
+  }
+});
+
+app.post("/friends/requests", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const toUserId = String(req.body.toUserId || "");
+    if (!toUserId || toUserId === userId) return res.status(400).json({ message: "参数无效" });
+
+    const [a, b] = normalizeFriendPair(userId, toUserId);
+    const existingFriend = await prisma.friendship.findFirst({ where: { userAId: a, userBId: b } });
+    if (existingFriend) return res.status(200).json({ ok: true, message: "已是好友" });
+
+    const reverse = await prisma.friendRequest.findUnique({
+      where: { fromUserId_toUserId: { fromUserId: toUserId, toUserId: userId } }
+    });
+    if (reverse?.status === "PENDING") {
+      await prisma.friendRequest.update({
+        where: { fromUserId_toUserId: { fromUserId: toUserId, toUserId: userId } },
+        data: { status: "ACCEPTED" }
+      });
+      await prisma.friendship.create({ data: { userAId: a, userBId: b } });
+      return res.json({ ok: true, message: "已互加成功" });
+    }
+
+    const reqItem = await prisma.friendRequest.upsert({
+      where: { fromUserId_toUserId: { fromUserId: userId, toUserId } },
+      update: { status: "PENDING" },
+      create: { fromUserId: userId, toUserId, status: "PENDING" }
+    });
+    return res.json({ ok: true, request: reqItem });
+  } catch (_error) {
+    return res.status(500).json({ message: "发起好友请求失败" });
+  }
+});
+
+app.get("/friends/requests/incoming", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const requests = await prisma.friendRequest.findMany({
+      where: { toUserId: userId, status: "PENDING" },
+      include: { fromUser: true },
+      orderBy: { createdAt: "desc" }
+    });
+    return res.json({
+      requests: requests.map((r) => ({
+        id: r.id,
+        fromUserId: r.fromUserId,
+        name: r.fromUser.nickname,
+        uid10: toTenDigitId(r.fromUser.id),
+        avatar: r.fromUser.avatarUrl || "",
+        currentCity: r.fromUser.currentCity
+      }))
+    });
+  } catch (_error) {
+    return res.status(500).json({ message: "拉取好友请求失败" });
+  }
+});
+
+app.post("/friends/requests/:id/respond", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const action = String(req.body.action || "").toUpperCase();
+    if (!["ACCEPT", "REJECT"].includes(action)) return res.status(400).json({ message: "无效操作" });
+    const reqItem = await prisma.friendRequest.findUnique({ where: { id: req.params.id } });
+    if (!reqItem || reqItem.toUserId !== userId) return res.status(404).json({ message: "请求不存在" });
+    if (reqItem.status !== "PENDING") return res.status(400).json({ message: "请求已处理" });
+
+    await prisma.friendRequest.update({
+      where: { id: req.params.id },
+      data: { status: action === "ACCEPT" ? "ACCEPTED" : "REJECTED" }
+    });
+    if (action === "ACCEPT") {
+      const [a, b] = normalizeFriendPair(reqItem.fromUserId, reqItem.toUserId);
+      await prisma.friendship.upsert({
+        where: { userAId_userBId: { userAId: a, userBId: b } },
+        update: {},
+        create: { userAId: a, userBId: b }
+      });
+    }
+    return res.json({ ok: true });
+  } catch (_error) {
+    return res.status(500).json({ message: "处理好友请求失败" });
   }
 });
 
@@ -465,7 +792,7 @@ app.get("/chat/conversations", async (req, res) => {
           id: peer.id,
           name: peer.nickname,
           avatar: peer.avatarUrl || "https://picsum.photos/80/80?chat",
-          preview: last.text,
+          preview: previewText(last),
           time: last.createdAt.toISOString(),
           unread
         };
@@ -493,7 +820,10 @@ app.get("/chat/messages", async (req, res) => {
         id: item.id,
         fromUserId: item.fromUserId,
         toUserId: item.toUserId,
+        kind: item.kind,
         text: item.text,
+        mediaUrl: item.mediaUrl,
+        audioDurationSec: item.audioDurationSec,
         createdAt: item.createdAt.toISOString()
       }))
     });
@@ -528,23 +858,40 @@ app.post("/chat/messages", async (req, res) => {
     if (!authUserId) {
       return res.status(401).json({ message: "未登录或登录态失效" });
     }
-    const { toUserId, text } = req.body;
+    const { toUserId, text, kind, mediaUrl, audioDurationSec } = req.body;
+    const messageKind = ["TEXT", "IMAGE", "AUDIO"].includes(String(kind || "TEXT"))
+      ? String(kind || "TEXT")
+      : "TEXT";
     const content = String(text || "").trim();
-    if (!toUserId || !content) {
+    const normalizedMediaUrl = mediaUrl ? String(mediaUrl) : null;
+    if (!toUserId) {
       return res.status(400).json({ message: "参数不完整" });
+    }
+    if (messageKind === "TEXT" && !content) return res.status(400).json({ message: "文本内容不能为空" });
+    if ((messageKind === "IMAGE" || messageKind === "AUDIO") && !normalizedMediaUrl) {
+      return res.status(400).json({ message: "媒体消息缺少地址" });
     }
     const message = await prisma.chatMessage.create({
       data: {
         fromUserId: authUserId,
         toUserId: String(toUserId),
-        text: content
+        kind: messageKind,
+        text: messageKind === "TEXT" ? content : "",
+        mediaUrl: normalizedMediaUrl,
+        audioDurationSec:
+          messageKind === "AUDIO" && Number.isFinite(Number(audioDurationSec))
+            ? Math.max(1, Math.floor(Number(audioDurationSec)))
+            : null
       }
     });
     const payload = {
       id: message.id,
       fromUserId: authUserId,
       toUserId: String(toUserId),
-      text: content,
+      kind: message.kind,
+      text: message.text,
+      mediaUrl: message.mediaUrl,
+      audioDurationSec: message.audioDurationSec,
       createdAt: message.createdAt.toISOString()
     };
     const targetSockets = userSockets.get(String(toUserId));
@@ -600,22 +947,37 @@ io.on("connection", (socket) => {
   if (!userSockets.has(userId)) userSockets.set(userId, new Set());
   userSockets.get(userId).add(socket.id);
 
-  socket.on("chat:send", async ({ toUserId, text }) => {
+  socket.on("chat:send", async ({ toUserId, text, kind, mediaUrl, audioDurationSec }) => {
+    const messageKind = ["TEXT", "IMAGE", "AUDIO"].includes(String(kind || "TEXT"))
+      ? String(kind || "TEXT")
+      : "TEXT";
     const content = String(text || "").trim();
-    if (!toUserId || !content) return;
+    const normalizedMediaUrl = mediaUrl ? String(mediaUrl) : null;
+    if (!toUserId) return;
+    if (messageKind === "TEXT" && !content) return;
+    if ((messageKind === "IMAGE" || messageKind === "AUDIO") && !normalizedMediaUrl) return;
     try {
       const message = await prisma.chatMessage.create({
         data: {
           fromUserId: userId,
           toUserId: String(toUserId),
-          text: content
+          kind: messageKind,
+          text: messageKind === "TEXT" ? content : "",
+          mediaUrl: normalizedMediaUrl,
+          audioDurationSec:
+            messageKind === "AUDIO" && Number.isFinite(Number(audioDurationSec))
+              ? Math.max(1, Math.floor(Number(audioDurationSec)))
+              : null
         }
       });
       const payload = {
         id: message.id,
         fromUserId: message.fromUserId,
         toUserId: message.toUserId,
+        kind: message.kind,
         text: message.text,
+        mediaUrl: message.mediaUrl,
+        audioDurationSec: message.audioDurationSec,
         createdAt: message.createdAt.toISOString()
       };
 

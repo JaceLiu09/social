@@ -2,6 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
 const API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+const MALE_SYMBOL_AVATAR = `data:image/svg+xml;utf8,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#46d5e6"/><stop offset="1" stop-color="#4f86ea"/></linearGradient></defs>
+    <rect width="256" height="256" rx="128" fill="url(#g)"/>
+    <text x="128" y="150" text-anchor="middle" font-size="120" font-family="Arial, Helvetica, sans-serif" fill="#fff">♂</text>
+  </svg>`
+)}`;
 const settingItems = [
   "账户与安全",
   "消息通知",
@@ -41,20 +48,40 @@ function formatChatTime(value) {
   return `${date.getMonth() + 1}月${date.getDate()}日`;
 }
 
-const registerInitial = {
+function resolveAssetUrl(url) {
+  if (!url) return MALE_SYMBOL_AVATAR;
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) return url;
+  if (url.startsWith("/")) return `${API}${url}`;
+  return url;
+}
+
+function toTenDigitId(input) {
+  const raw = String(input || "");
+  let hash = 0n;
+  for (let i = 0; i < raw.length; i += 1) {
+    hash = (hash * 131n + BigInt(raw.charCodeAt(i))) % 10000000000n;
+  }
+  return hash.toString().padStart(10, "0");
+}
+
+const registerBasicInitial = {
   phone: "",
   password: "",
+  smsCode: ""
+};
+
+const profileSetupInitial = {
   nickname: "",
-  gender: "MALE",
-  age: 24,
-  height: 170,
-  weight: 60,
+  birthYear: "",
+  birthMonth: "",
+  birthDay: "",
   hometown: "",
   currentCity: "",
+  income: "",
+  industry: "",
   hobbies: "",
   partnerExpectation: "",
-  avatarUrl: "",
-  photoUrl: "https://picsum.photos/300/300?blindbox"
+  avatarUrl: ""
 };
 
 export default function App() {
@@ -82,7 +109,11 @@ export default function App() {
   const pullTriggeredRef = useRef(false);
   const [message, setMessage] = useState("");
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
-  const [registerForm, setRegisterForm] = useState(registerInitial);
+  const [registerForm, setRegisterForm] = useState(registerBasicInitial);
+  const [profileSetupForm, setProfileSetupForm] = useState(profileSetupInitial);
+  const [needsProfileSetup, setNeedsProfileSetup] = useState(false);
+  const registerPhoneRef = useRef(null);
+  const registerPasswordRef = useRef(null);
   const [chatKeyword, setChatKeyword] = useState("");
   const [heroAvatarList] = useState(() => createHeroAvatars());
   const [activeConversation, setActiveConversation] = useState(null);
@@ -91,6 +122,21 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [chatNotice, setChatNotice] = useState("");
+  const [showAddFriendModal, setShowAddFriendModal] = useState(false);
+  const [addFriendKeyword, setAddFriendKeyword] = useState("");
+  const [addFriendResults, setAddFriendResults] = useState([]);
+  const [incomingRequests, setIncomingRequests] = useState([]);
+  const [incomingRequestCount, setIncomingRequestCount] = useState(0);
+  const [myPosts, setMyPosts] = useState([]);
+  const [newPostText, setNewPostText] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [pinnedConversationIds, setPinnedConversationIds] = useState([]);
+  const [hiddenConversationIds, setHiddenConversationIds] = useState([]);
+  const [swipedConversationId, setSwipedConversationId] = useState("");
+  const swipeStartXRef = useRef(0);
+  const mediaRecorderRef = useRef(null);
+  const recordChunksRef = useRef([]);
+  const recordStartAtRef = useRef(0);
   const [selectedCover, setSelectedCover] = useState("");
   const [profileForm, setProfileForm] = useState({
     nickname: "",
@@ -99,6 +145,9 @@ export default function App() {
     partnerExpectation: "",
     avatarUrl: ""
   });
+  const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
+  const AUDIO_MAX_BYTES = 8 * 1024 * 1024;
+  const UPLOAD_TIMEOUT_MS = 20000;
 
   const friendlinessPercent = session?.friendliness ?? 0;
   const profilePhotos = useMemo(() => {
@@ -110,9 +159,9 @@ export default function App() {
       return [];
     }
   }, [user]);
-  const defaultCover = profilePhotos[0] || user?.avatarUrl || profileForm.avatarUrl || "https://picsum.photos/800/500?self";
+  const defaultCover = resolveAssetUrl(profilePhotos[0] || user?.avatarUrl || profileForm.avatarUrl);
   const profileCover = selectedCover || defaultCover;
-  const userAvatar = profilePhotos[0] || user?.avatarUrl || profileForm.avatarUrl || "https://picsum.photos/200/200?self";
+  const userAvatar = resolveAssetUrl(profilePhotos[0] || user?.avatarUrl || profileForm.avatarUrl);
   const galleryPhotos = useMemo(() => {
     const list = [userAvatar, ...profilePhotos.slice(1)];
     const unique = [];
@@ -121,24 +170,6 @@ export default function App() {
     });
     return unique.slice(0, 3);
   }, [profilePhotos, userAvatar]);
-  const myPosts = useMemo(() => {
-    if (!user) return [];
-    const fromSquare = posts.slice(0, 3).map((post) => ({
-      id: `self-${post.id}`,
-      text: post.text,
-      likes: post.likes,
-      createdAt: post.createdAt || "刚刚"
-    }));
-    if (fromSquare.length > 0) return fromSquare;
-    return [
-      {
-        id: "self-default-1",
-        text: `大家好，我是${user.nickname}，来这里认识有趣的人。`,
-        likes: 3,
-        createdAt: "刚刚"
-      }
-    ];
-  }, [posts, user]);
   const filteredConversations = useMemo(
     () =>
       conversations.filter((item) => {
@@ -157,10 +188,21 @@ export default function App() {
       }),
     [chatKeyword, contacts]
   );
+  const addFriendCandidates = useMemo(() => addFriendResults, [addFriendResults]);
   const totalUnreadCount = useMemo(
     () => conversations.reduce((sum, item) => sum + Number(item.unread || 0), 0),
     [conversations]
   );
+
+  const sortConversations = (list, pinnedIds = pinnedConversationIds) =>
+    [...list].sort((a, b) => {
+      const pinA = pinnedIds.includes(a.id) ? 1 : 0;
+      const pinB = pinnedIds.includes(b.id) ? 1 : 0;
+      if (pinA !== pinB) return pinB - pinA;
+      const timeA = new Date(a.time || 0).getTime() || 0;
+      const timeB = new Date(b.time || 0).getTime() || 0;
+      return timeB - timeA;
+    });
   const authHeaders = useMemo(
     () =>
       authToken
@@ -181,20 +223,94 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [chatNotice]);
 
+  useEffect(() => {
+    if (!showAddFriendModal || !authToken) return;
+    const timer = setTimeout(() => {
+      searchAddFriends(addFriendKeyword).catch((error) => setMessage(error.message || "搜索失败"));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [showAddFriendModal, addFriendKeyword, authToken]);
+
   const refreshChatPanels = async (currentUserId) => {
     try {
       const [contactsRes, convRes] = await Promise.all([
-        fetch(`${API}/chat/contacts?userId=${currentUserId}`),
+        fetch(`${API}/chat/contacts?userId=${currentUserId}`, { headers: authHeaders }),
         fetch(`${API}/chat/conversations`, { headers: authHeaders })
       ]);
       const contactsData = await contactsRes.json();
       const convData = await convRes.json();
       setContacts(Array.isArray(contactsData.contacts) ? contactsData.contacts : []);
-      setConversations(Array.isArray(convData.conversations) ? convData.conversations : []);
+      const incoming = Array.isArray(convData.conversations) ? convData.conversations : [];
+      const visible = incoming.filter((item) => !hiddenConversationIds.includes(item.id));
+      setConversations(sortConversations(visible));
     } catch (_error) {
       // Keep last successful data if refresh fails briefly.
     }
   };
+
+  const searchAddFriends = async (keyword = "") => {
+    const res = await fetch(`${API}/friends/search?keyword=${encodeURIComponent(keyword)}`, {
+      headers: authHeaders
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "搜索失败");
+    setAddFriendResults(Array.isArray(data.users) ? data.users : []);
+  };
+
+  const loadIncomingRequests = async () => {
+    const res = await fetch(`${API}/friends/requests/incoming`, { headers: authHeaders });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "拉取好友请求失败");
+    const list = Array.isArray(data.requests) ? data.requests : [];
+    setIncomingRequests(list);
+    setIncomingRequestCount(list.length);
+  };
+
+  const sendFriendRequest = async (toUserId, name) => {
+    const res = await fetch(`${API}/friends/requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ toUserId })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "发起请求失败");
+    await searchAddFriends(addFriendKeyword);
+    setChatNotice(data.message || `已向 ${name} 发起加好友请求`);
+  };
+
+  const respondFriendRequest = async (requestId, action) => {
+    const res = await fetch(`${API}/friends/requests/${requestId}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ action })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "处理请求失败");
+    await Promise.all([loadIncomingRequests(), searchAddFriends(addFriendKeyword), refreshChatPanels(user.id)]);
+    setChatNotice(action === "ACCEPT" ? "已通过好友申请" : "已拒绝好友申请");
+  };
+
+  useEffect(() => {
+    if (!authToken) return;
+    loadIncomingRequests().catch(() => setIncomingRequestCount(0));
+  }, [authToken]);
+
+  useEffect(() => {
+    if (!showAddFriendModal || !authToken) return undefined;
+    loadIncomingRequests().catch(() => setIncomingRequestCount(0));
+    const timer = setInterval(() => {
+      loadIncomingRequests().catch(() => setIncomingRequestCount(0));
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [showAddFriendModal, authToken]);
+
+  useEffect(() => {
+    if (tab !== "chat" || !authToken) return undefined;
+    const timer = setInterval(() => {
+      loadIncomingRequests().catch(() => setIncomingRequestCount(0));
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [tab, authToken]);
 
   const refreshActiveMessages = async (_currentUserId, peerId) => {
     try {
@@ -302,6 +418,7 @@ export default function App() {
       const toId = String(message.toUserId);
       const peerId = fromId === uid ? toId : fromId;
       const isActive = peerId === activeConversationIdRef.current;
+      setHiddenConversationIds((prev) => prev.filter((id) => id !== peerId));
       if (isActive) {
         setChatMessages((prev) => {
           if (prev.some((item) => item.id === message.id)) return prev;
@@ -320,30 +437,29 @@ export default function App() {
           const peerName = prev.find((item) => item.id === peerId)?.name || "新朋友";
           setChatNotice(`${peerName} 发来新消息`);
         }
-        if (!exists) {
-          return [
-            {
-              id: peerId,
-              name: "新朋友",
-              avatar: "https://picsum.photos/80/80?chat",
-              preview: message.text,
-              time: message.createdAt,
-              unread: nextUnread
-            },
-            ...prev
-          ];
-        }
-        return prev.map((item) =>
-          item.id === peerId
-            ? {
-                ...item,
+        const next = exists
+          ? prev.map((item) =>
+              item.id === peerId
+                ? {
+                    ...item,
+                    preview: message.text,
+                    time: message.createdAt,
+                    unread: fromId === uid || isActive ? 0 : (item.unread || 0) + 1
+                  }
+                : item
+            )
+          : [
+              {
+                id: peerId,
+                name: "新朋友",
+                avatar: "https://picsum.photos/80/80?chat",
                 preview: message.text,
                 time: message.createdAt,
-                unread:
-                  fromId === uid || isActive ? 0 : (item.unread || 0) + 1
-              }
-            : item
-        );
+                unread: nextUnread
+              },
+              ...prev
+            ];
+        return sortConversations(next);
       });
     });
 
@@ -388,6 +504,31 @@ export default function App() {
 
   const canSubmitLogin =
     agreed && loginForm.account.trim().length > 0 && loginForm.password.trim().length > 0;
+  const canSubmitRegisterBasic =
+    agreed &&
+    (registerForm.phone.trim().length > 0 || (registerPhoneRef.current?.value || "").trim().length > 0) &&
+    (registerForm.password.trim().length >= 6 || (registerPasswordRef.current?.value || "").trim().length >= 6) &&
+    registerForm.smsCode.trim().length === 6;
+
+  useEffect(() => {
+    if (registerForm.smsCode.trim().length === 6) return;
+    setAgreed(false);
+  }, [registerForm.smsCode]);
+
+  useEffect(() => {
+    if (authMode !== "register") return undefined;
+    const timer = setInterval(() => {
+      const phoneVal = String(registerPhoneRef.current?.value || "");
+      const passwordVal = String(registerPasswordRef.current?.value || "");
+      setRegisterForm((prev) => {
+        const nextPhone = prev.phone || phoneVal;
+        const nextPassword = prev.password || passwordVal;
+        if (nextPhone === prev.phone && nextPassword === prev.password) return prev;
+        return { ...prev, phone: nextPhone, password: nextPassword };
+      });
+    }, 250);
+    return () => clearInterval(timer);
+  }, [authMode]);
 
   const onLogin = async (e) => {
     e.preventDefault();
@@ -406,30 +547,64 @@ export default function App() {
     if (!res.ok) return setMessage(data.message || "登录失败");
     setUser(data.user);
     setAuthToken(data.token || "");
-    setMessage(`欢迎回来，${data.user.nickname}`);
+    setNeedsProfileSetup(Boolean(data.needsProfile || !data.user.profileCompleted));
+    setProfileSetupForm(profileSetupInitial);
+    setMessage(data.needsProfile || !data.user.profileCompleted ? "登录成功，请先完善资料" : "");
   };
 
   const onRegister = async (e) => {
     e.preventDefault();
     if (!mustAgree()) return;
     setMessage("");
-    const payload = {
-      ...registerForm,
-      age: Number(registerForm.age),
-      height: Number(registerForm.height),
-      weight: Number(registerForm.weight),
-      photoUrls: [registerForm.photoUrl]
-    };
-    const res = await fetch(`${API}/auth/register`, {
+    const payload = { ...registerForm };
+    const res = await fetch(`${API}/auth/register-basic`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if (!res.ok) return setMessage(data.message || "注册失败");
+    if (!res.ok) {
+      if (res.status === 409) {
+        setAuthMode("login");
+        setLoginForm({ account: registerForm.phone, password: registerForm.password });
+        setMessage("手机号已注册，已切换到登录，点击登录即可进入");
+        return;
+      }
+      setMessage(data.message || "注册失败");
+      if (data.message) window.alert(data.message);
+      return;
+    }
     setUser(data.user);
     setAuthToken(data.token || "");
-    setMessage("注册成功，已自动登录");
+    setNeedsProfileSetup(true);
+    setProfileSetupForm(profileSetupInitial);
+    setMessage("短信验证通过，注册成功，请完善资料");
+  };
+
+  const onCompleteProfile = async (e) => {
+    e.preventDefault();
+    if (!user) return;
+    const { birthYear, birthMonth, birthDay } = profileSetupForm;
+    if (!birthYear || !birthMonth || !birthDay) {
+      return setMessage("请选择完整的出生年月日");
+    }
+    const birthDate = `${birthYear}-${String(birthMonth).padStart(2, "0")}-${String(birthDay).padStart(2, "0")}`;
+    const res = await fetch(`${API}/auth/complete-profile`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`
+      },
+      body: JSON.stringify({
+        ...profileSetupForm,
+        birthDate
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) return setMessage(data.message || "资料提交失败");
+    setUser(data.user);
+    setNeedsProfileSetup(false);
+    setMessage("");
   };
 
   const quickLogin = async (type) => {
@@ -447,6 +622,7 @@ export default function App() {
     if (!res.ok) return setMessage("快捷登录失败，请先注册账号");
     setUser(data.user);
     setAuthToken(data.token || "");
+    setNeedsProfileSetup(Boolean(data.needsProfile || !data.user.profileCompleted));
     setMessage(type === "device" ? "本机号码登录成功" : "微信快捷登录成功");
   };
 
@@ -545,6 +721,8 @@ export default function App() {
   const switchAccount = () => {
     setUser(null);
     setAuthToken("");
+    setNeedsProfileSetup(false);
+    setProfileSetupForm(profileSetupInitial);
     setSession(null);
     setBlindBoxTarget(null);
     setGameState(null);
@@ -552,6 +730,8 @@ export default function App() {
     setChatMessages([]);
     setChatInput("");
     setChatKeyword("");
+    setMyPosts([]);
+    setNewPostText("");
     setMePage("home");
     setMeDetailPage("");
     setAuthMode("login");
@@ -561,6 +741,8 @@ export default function App() {
   const logout = () => {
     setUser(null);
     setAuthToken("");
+    setNeedsProfileSetup(false);
+    setProfileSetupForm(profileSetupInitial);
     setSession(null);
     setBlindBoxTarget(null);
     setGameState(null);
@@ -568,6 +750,8 @@ export default function App() {
     setChatMessages([]);
     setChatInput("");
     setChatKeyword("");
+    setMyPosts([]);
+    setNewPostText("");
     setMePage("home");
     setMeDetailPage("");
     setAuthMode("login");
@@ -576,6 +760,7 @@ export default function App() {
 
   const openConversation = async (item) => {
     if (!user) return;
+    setSwipedConversationId("");
     setActiveConversation(item);
     setChatInput("");
     await refreshActiveMessages(user.id, item.id);
@@ -589,19 +774,111 @@ export default function App() {
     }).catch(() => null);
   };
 
-  const sendChatMessage = async () => {
+  const uploadMedia = async (file, kind) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    try {
+      const res = await fetch(`${API}/chat/upload`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          fileName: file.name,
+          dataUrl,
+          kind
+        }),
+        signal: controller.signal
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "上传失败");
+      return data.url;
+    } catch (error) {
+      if (error.name === "AbortError") {
+        throw new Error("上传超时，请检查网络后重试");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+
+  const compressImageFile = async (file) =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      const reader = new FileReader();
+      reader.onload = () => {
+        img.src = reader.result;
+      };
+      reader.onerror = () => reject(new Error("读取图片失败"));
+      img.onload = async () => {
+        const maxEdge = 1600;
+        const ratio = Math.min(1, maxEdge / Math.max(img.width, img.height));
+        const targetW = Math.max(1, Math.round(img.width * ratio));
+        const targetH = Math.max(1, Math.round(img.height * ratio));
+        const canvas = document.createElement("canvas");
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, targetW, targetH);
+        let quality = 0.85;
+        let blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", quality));
+        while (blob && blob.size > IMAGE_MAX_BYTES && quality > 0.45) {
+          quality -= 0.1;
+          blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", quality));
+        }
+        if (!blob) return reject(new Error("图片压缩失败"));
+        if (blob.size > IMAGE_MAX_BYTES) {
+          return reject(new Error("图片过大，请选择更小的图片"));
+        }
+        resolve(new File([blob], `img-${Date.now()}.jpg`, { type: "image/jpeg" }));
+      };
+      img.onerror = () => reject(new Error("图片解析失败"));
+      reader.readAsDataURL(file);
+    });
+
+  const appendOwnMessage = (message) => {
+    setChatMessages((prev) => [...prev, message]);
+    setConversations((prev) =>
+      sortConversations(
+        prev.map((item) =>
+          item.id === activeConversation.id
+            ? {
+                ...item,
+                preview:
+                  message.kind === "IMAGE"
+                    ? "[图片]"
+                    : message.kind === "AUDIO"
+                      ? "[语音]"
+                      : message.text,
+                time: message.createdAt
+              }
+            : item
+        )
+      )
+    );
+  };
+
+  const sendChatPayload = async (payload) => {
     if (!user || !activeConversation) return;
-    const text = chatInput.trim();
-    if (!text) return;
     const socket = socketRef.current;
     if (socket?.connected) {
       socket.emit("chat:send", {
         toUserId: activeConversation.id,
-        text
+        ...payload
       });
-      setChatInput("");
+      if (payload.kind === "TEXT") setChatInput("");
       return;
     }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
     try {
       const res = await fetch(`${API}/chat/messages`, {
         method: "POST",
@@ -611,23 +888,161 @@ export default function App() {
         },
         body: JSON.stringify({
           toUserId: activeConversation.id,
-          text
-        })
+          ...payload
+        }),
+        signal: controller.signal
       });
       const data = await res.json();
-      if (!res.ok) return setMessage(data.message || "发送失败");
-      setChatMessages((prev) => [...prev, data.message]);
-      setChatInput("");
-      setConversations((prev) =>
-        prev.map((item) =>
-          item.id === activeConversation.id
-            ? { ...item, preview: data.message.text, time: data.message.createdAt }
-            : item
-        )
-      );
-    } catch (_error) {
-      setMessage("发送失败，请稍后重试");
+      if (!res.ok) throw new Error(data.message || "发送失败");
+      appendOwnMessage(data.message);
+      if (payload.kind === "TEXT") setChatInput("");
+    } catch (error) {
+      if (error.name === "AbortError") {
+        throw new Error("发送超时，请稍后重试");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
+  };
+
+  const sendChatMessage = async () => {
+    if (!user || !activeConversation) return;
+    const text = chatInput.trim();
+    if (!text) return;
+    try {
+      await sendChatPayload({ kind: "TEXT", text });
+    } catch (error) {
+      setMessage(error.message || "发送失败，请稍后重试");
+    }
+  };
+
+  const onPickImage = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !activeConversation) return;
+    try {
+      const compressed = await compressImageFile(file);
+      const mediaUrl = await uploadMedia(compressed, "IMAGE");
+      await sendChatPayload({ kind: "IMAGE", mediaUrl });
+    } catch (error) {
+      setMessage(error.message || "图片发送失败");
+    }
+  };
+
+  const onPickProfileAvatar = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file);
+      const mediaUrl = await uploadMedia(compressed, "IMAGE");
+      setProfileForm((prev) => ({ ...prev, avatarUrl: mediaUrl }));
+      setMessage("头像上传成功，记得点击保存资料");
+    } catch (error) {
+      setMessage(error.message || "头像上传失败");
+    }
+  };
+
+  const toggleRecord = async () => {
+    if (!activeConversation) return;
+    if (isRecording && mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      recordChunksRef.current = [];
+      recordStartAtRef.current = Date.now();
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recordChunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(recordChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        const durationSec = Math.max(1, Math.round((Date.now() - recordStartAtRef.current) / 1000));
+        if (blob.size > AUDIO_MAX_BYTES) {
+          setMessage("语音过长，请控制在 8MB 内");
+          return;
+        }
+        const file = new File([blob], `voice-${Date.now()}.webm`, {
+          type: blob.type || "audio/webm"
+        });
+        try {
+          const mediaUrl = await uploadMedia(file, "AUDIO");
+          await sendChatPayload({ kind: "AUDIO", mediaUrl, audioDurationSec: durationSec });
+        } catch (error) {
+          setMessage(error.message || "语音发送失败");
+        }
+      };
+      recorder.start();
+      setIsRecording(true);
+    } catch (_error) {
+      setMessage("无法启用麦克风，请检查浏览器权限");
+    }
+  };
+
+  const onConversationTouchStart = (e, conversationId) => {
+    swipeStartXRef.current = e.touches[0].clientX;
+    if (swipedConversationId && swipedConversationId !== conversationId) {
+      setSwipedConversationId("");
+    }
+  };
+
+  const onConversationTouchEnd = (e, conversationId) => {
+    const delta = e.changedTouches[0].clientX - swipeStartXRef.current;
+    if (delta < -40) {
+      setSwipedConversationId(conversationId);
+    } else if (delta > 30) {
+      setSwipedConversationId("");
+    }
+  };
+
+  const onPinConversation = (conversationId) => {
+    setPinnedConversationIds((prev) =>
+      prev.includes(conversationId) ? prev.filter((id) => id !== conversationId) : [...prev, conversationId]
+    );
+    setConversations((prev) => sortConversations(prev));
+    setSwipedConversationId("");
+  };
+
+  const onDeleteConversation = (conversationId) => {
+    setHiddenConversationIds((prev) => [...new Set([...prev, conversationId])]);
+    setPinnedConversationIds((prev) => prev.filter((id) => id !== conversationId));
+    setConversations((prev) => prev.filter((item) => item.id !== conversationId));
+    if (activeConversation?.id === conversationId) {
+      setActiveConversation(null);
+      setChatMessages([]);
+    }
+    setSwipedConversationId("");
+  };
+
+  const onBatchCleanConversations = () => {
+    const allIds = conversations.map((item) => item.id);
+    if (!allIds.length) return;
+    setHiddenConversationIds((prev) => [...new Set([...prev, ...allIds])]);
+    setPinnedConversationIds([]);
+    setConversations([]);
+    setActiveConversation(null);
+    setChatMessages([]);
+    setSwipedConversationId("");
+    setMessage("已批量清理聊天记录");
+  };
+
+  const publishMyPost = () => {
+    const text = newPostText.trim();
+    if (!text) return;
+    const post = {
+      id: `mine-${Date.now()}`,
+      text,
+      likes: 0,
+      createdAt: "刚刚"
+    };
+    setMyPosts((prev) => [post, ...prev]);
+    setNewPostText("");
   };
 
   if (!user) {
@@ -664,27 +1079,74 @@ export default function App() {
           </form>
         ) : (
           <form className="auth-form register-form" onSubmit={onRegister}>
-            <input placeholder="手机号" value={registerForm.phone} onChange={(e) => setRegisterForm((prev) => ({ ...prev, phone: e.target.value }))} required />
-            <input placeholder="密码(至少6位)" type="password" value={registerForm.password} onChange={(e) => setRegisterForm((prev) => ({ ...prev, password: e.target.value }))} required />
-            <input placeholder="昵称" value={registerForm.nickname} onChange={(e) => setRegisterForm((prev) => ({ ...prev, nickname: e.target.value }))} required />
-            <select value={registerForm.gender} onChange={(e) => setRegisterForm((prev) => ({ ...prev, gender: e.target.value }))}>
-              <option value="MALE">男</option>
-              <option value="FEMALE">女</option>
-            </select>
-            <input placeholder="年龄" value={registerForm.age} onChange={(e) => setRegisterForm((prev) => ({ ...prev, age: e.target.value }))} required />
-            <input placeholder="家乡" value={registerForm.hometown} onChange={(e) => setRegisterForm((prev) => ({ ...prev, hometown: e.target.value }))} required />
-            <input placeholder="现居地" value={registerForm.currentCity} onChange={(e) => setRegisterForm((prev) => ({ ...prev, currentCity: e.target.value }))} required />
-            <input placeholder="爱好(用逗号分隔)" value={registerForm.hobbies} onChange={(e) => setRegisterForm((prev) => ({ ...prev, hobbies: e.target.value }))} required />
-            <input placeholder="对另一半要求" value={registerForm.partnerExpectation} onChange={(e) => setRegisterForm((prev) => ({ ...prev, partnerExpectation: e.target.value }))} required />
-            <button className="login-main-btn" type="submit">
-              注册并登录
+            <input
+              ref={registerPhoneRef}
+              placeholder="手机号"
+              autoComplete="tel"
+              value={registerForm.phone}
+              onInput={(e) => setRegisterForm((prev) => ({ ...prev, phone: e.target.value }))}
+              onChange={(e) => setRegisterForm((prev) => ({ ...prev, phone: e.target.value }))}
+              required
+            />
+            <input
+              ref={registerPasswordRef}
+              placeholder="密码(至少6位)"
+              type="password"
+              autoComplete="new-password"
+              value={registerForm.password}
+              onInput={(e) => setRegisterForm((prev) => ({ ...prev, password: e.target.value }))}
+              onChange={(e) => setRegisterForm((prev) => ({ ...prev, password: e.target.value }))}
+              required
+            />
+            <div
+              className="sms-code-wrap"
+              onClick={() => document.getElementById("sms-code-input")?.focus()}
+            >
+              <input
+                id="sms-code-input"
+                className="sms-code-hidden-input"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                value={registerForm.smsCode}
+                onChange={(e) =>
+                  setRegisterForm((prev) => ({
+                    ...prev,
+                    smsCode: e.target.value.replace(/\D/g, "").slice(0, 6)
+                  }))
+                }
+                required
+              />
+              <div className="sms-code-grid">
+                {Array.from({ length: 6 }).map((_, idx) => (
+                  <span
+                    key={`sms-box-${idx}`}
+                    className={`sms-code-cell ${registerForm.smsCode[idx] ? "filled" : ""}`}
+                  >
+                    {registerForm.smsCode[idx] || ""}
+                  </span>
+                ))}
+              </div>
+              <small>短信验证码（测试码：123456）</small>
+            </div>
+            <button
+              className={`login-main-btn ${canSubmitRegisterBasic ? "active" : ""}`}
+              type="submit"
+              disabled={!canSubmitRegisterBasic}
+            >
+              验证并注册
             </button>
           </form>
         )}
 
         <div className="agree-row">
           <label>
-            <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={agreed}
+              disabled={authMode === "register" && registerForm.smsCode.trim().length !== 6}
+              onChange={(e) => setAgreed(e.target.checked)}
+            />
             我已阅读并同意《盲盒用户协议》和《盲盒隐私政策》
           </label>
         </div>
@@ -718,6 +1180,95 @@ export default function App() {
   return (
     <div className="main-app">
       {chatNotice && <div className="chat-notice-banner">{chatNotice}</div>}
+      {needsProfileSetup && (
+        <div className="profile-setup-overlay">
+          <form className="profile-setup-card" onSubmit={onCompleteProfile}>
+            <h3>完善新用户资料</h3>
+            <p>资料仅用于匹配推荐，提交后即可正常使用。</p>
+            <div className="birth-select-row">
+              <select
+                value={profileSetupForm.birthYear}
+                onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, birthYear: e.target.value }))}
+                required
+              >
+                <option value="">出生年</option>
+                {Array.from({ length: 43 }, (_, idx) => 1980 + idx).map((year) => (
+                  <option key={`year-${year}`} value={year}>
+                    {year}年
+                  </option>
+                ))}
+              </select>
+              <select
+                value={profileSetupForm.birthMonth}
+                onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, birthMonth: e.target.value }))}
+                required
+              >
+                <option value="">月</option>
+                {Array.from({ length: 12 }, (_, idx) => idx + 1).map((month) => (
+                  <option key={`month-${month}`} value={month}>
+                    {month}月
+                  </option>
+                ))}
+              </select>
+              <select
+                value={profileSetupForm.birthDay}
+                onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, birthDay: e.target.value }))}
+                required
+              >
+                <option value="">日</option>
+                {Array.from({ length: 31 }, (_, idx) => idx + 1).map((day) => (
+                  <option key={`day-${day}`} value={day}>
+                    {day}日
+                  </option>
+                ))}
+              </select>
+            </div>
+            <input
+              placeholder="用户昵称"
+              value={profileSetupForm.nickname}
+              onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, nickname: e.target.value }))}
+              required
+            />
+            <input
+              placeholder="家乡"
+              value={profileSetupForm.hometown}
+              onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, hometown: e.target.value }))}
+              required
+            />
+            <input
+              placeholder="现居地"
+              value={profileSetupForm.currentCity}
+              onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, currentCity: e.target.value }))}
+              required
+            />
+            <input
+              placeholder="收入（如 10k-20k）"
+              value={profileSetupForm.income}
+              onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, income: e.target.value }))}
+              required
+            />
+            <input
+              placeholder="行业"
+              value={profileSetupForm.industry}
+              onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, industry: e.target.value }))}
+              required
+            />
+            <input
+              placeholder="爱好（用逗号分隔）"
+              value={profileSetupForm.hobbies}
+              onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, hobbies: e.target.value }))}
+              required
+            />
+            <input
+              placeholder="对另一半的要求"
+              value={profileSetupForm.partnerExpectation}
+              onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, partnerExpectation: e.target.value }))}
+              required
+            />
+            <button type="submit">提交资料</button>
+          </form>
+        </div>
+      )}
       <header className={`main-header ${tab === "me" ? "me-header" : ""}`}>
         {tab === "me" ? (
           <>
@@ -762,7 +1313,7 @@ export default function App() {
           <>
             <div className="avatar-dot">{user.nickname.slice(0, 1).toUpperCase()}</div>
             <h1>盲盒星球</h1>
-            <button className="header-btn">筛选</button>
+            <div className="header-placeholder" />
           </>
         )}
       </header>
@@ -878,44 +1429,80 @@ export default function App() {
       {tab === "chat" && (
         <section className="main-content chat-page">
           {activeConversation ? (
-            <div className="chat-detail-page">
-              <div className="chat-detail-header">
-                <button className="chat-detail-back" onClick={() => setActiveConversation(null)}>
-                  返回
-                </button>
-                <strong>{activeConversation.name}</strong>
-                <button className="chat-detail-more" onClick={() => setMessage("会话设置功能开发中")}>
-                  ⋯
-                </button>
+            <>
+              <div className="chat-detail-page">
+                <div className="chat-detail-header">
+                  <button className="chat-detail-back" onClick={() => setActiveConversation(null)}>
+                    返回
+                  </button>
+                  <strong>{activeConversation.name}</strong>
+                  <button className="chat-detail-more" onClick={() => setMessage("会话设置功能开发中")}>
+                    ⋯
+                  </button>
+                </div>
+                <div className="chat-detail-list">
+                  {chatMessages.length === 0 ? (
+                    <p className="feed-tip">还没有消息，打个招呼吧</p>
+                  ) : (
+                    chatMessages.map((msg) => (
+                      <div
+                        key={msg.id}
+                        className={`chat-bubble ${String(msg.fromUserId) === String(user.id) ? "me-bubble" : "other-bubble"}`}
+                      >
+                        {msg.kind === "IMAGE" ? (
+                          <img
+                            src={`${API}${msg.mediaUrl}`}
+                            alt="图片消息"
+                            className="chat-image"
+                            onClick={() => window.open(`${API}${msg.mediaUrl}`, "_blank")}
+                          />
+                        ) : msg.kind === "AUDIO" ? (
+                          <div className="chat-audio-wrap">
+                            <div className="audio-wave">
+                              <span />
+                              <span />
+                              <span />
+                              <span />
+                              <span />
+                              <span />
+                            </div>
+                            <audio controls preload="metadata" src={`${API}${msg.mediaUrl}`} />
+                            <span>{msg.audioDurationSec ? `${msg.audioDurationSec}s` : "语音"}</span>
+                          </div>
+                        ) : (
+                          msg.text
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="chat-detail-input-wrap">
+                  <label className="chat-media-btn" title="发送图片">
+                    🖼
+                    <input type="file" accept="image/*" onChange={onPickImage} hidden />
+                  </label>
+                  <button
+                    type="button"
+                    className={`chat-media-btn ${isRecording ? "recording-btn" : ""}`}
+                    onClick={toggleRecord}
+                    title={isRecording ? "结束录音并发送" : "录音"}
+                  >
+                    {isRecording ? "■" : "🎤"}
+                  </button>
+                  <input
+                    placeholder="输入消息..."
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") sendChatMessage();
+                    }}
+                  />
+                  <button type="button" onClick={sendChatMessage}>
+                    发送
+                  </button>
+                </div>
               </div>
-              <div className="chat-detail-list">
-                {chatMessages.length === 0 ? (
-                  <p className="feed-tip">还没有消息，打个招呼吧</p>
-                ) : (
-                  chatMessages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className={`chat-bubble ${String(msg.fromUserId) === String(user.id) ? "me-bubble" : "other-bubble"}`}
-                    >
-                      {msg.text}
-                    </div>
-                  ))
-                )}
-              </div>
-              <div className="chat-detail-input-wrap">
-                <input
-                  placeholder="输入消息..."
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") sendChatMessage();
-                  }}
-                />
-                <button type="button" onClick={sendChatMessage}>
-                  发送
-                </button>
-              </div>
-            </div>
+            </>
           ) : (
             <>
               <div className="chat-top-tabs">
@@ -941,29 +1528,82 @@ export default function App() {
                   value={chatKeyword}
                   onChange={(e) => setChatKeyword(e.target.value)}
                 />
-                <button className="chat-add-btn" onClick={() => setMessage("发起新聊天功能开发中")}>
+                <button
+                  className="chat-add-btn"
+                  onClick={() => {
+                    setAddFriendKeyword("");
+                    setShowAddFriendModal(true);
+                    loadIncomingRequests().catch(() => setIncomingRequests([]));
+                  }}
+                >
                   ＋
+                  {incomingRequestCount > 0 && (
+                    <span className="chat-add-badge">{incomingRequestCount > 99 ? "99+" : incomingRequestCount}</span>
+                  )}
                 </button>
               </div>
               {chatMode === "chat" ? (
                 <div className="chat-list">
-                  {filteredConversations.map((item) => (
+                  {incomingRequestCount > 0 && (
                     <button
-                      key={item.id}
-                      className="chat-item chat-item-button"
                       type="button"
-                      onClick={() => openConversation(item)}
+                      className="chat-system-item"
+                      onClick={() => {
+                        setAddFriendKeyword("");
+                        setShowAddFriendModal(true);
+                        loadIncomingRequests().catch(() => setIncomingRequests([]));
+                      }}
                     >
-                      <img src={item.avatar} alt={item.name} className="chat-avatar" />
-                      <div className="chat-main">
-                        <div className="chat-name-row">
-                          <strong>{item.name}</strong>
-                          <span>{formatChatTime(item.time)}</span>
-                        </div>
-                        <p>{item.preview}</p>
+                      <div className="chat-system-icon">好友</div>
+                      <div className="chat-system-main">
+                        <strong>新的好友申请</strong>
+                        <p>{incomingRequestCount} 条待处理，点击查看并处理</p>
                       </div>
-                      {item.unread > 0 && <span className="chat-unread">{item.unread > 9 ? "9+" : item.unread}</span>}
+                      <span className="chat-unread">
+                        {incomingRequestCount > 99 ? "99+" : incomingRequestCount}
+                      </span>
                     </button>
+                  )}
+                  {filteredConversations.map((item) => (
+                    <div
+                      key={item.id}
+                      className={`chat-swipe-row ${swipedConversationId === item.id ? "open" : ""}`}
+                      onTouchStart={(e) => onConversationTouchStart(e, item.id)}
+                      onTouchEnd={(e) => onConversationTouchEnd(e, item.id)}
+                    >
+                      <div className="chat-swipe-actions">
+                        <button type="button" className="clean-btn" onClick={onBatchCleanConversations}>
+                          批量清理
+                        </button>
+                        <button type="button" className="pin-btn" onClick={() => onPinConversation(item.id)}>
+                          {pinnedConversationIds.includes(item.id) ? "取消置顶" : "置顶"}
+                        </button>
+                        <button type="button" className="delete-btn" onClick={() => onDeleteConversation(item.id)}>
+                          删除
+                        </button>
+                      </div>
+                      <button
+                        className="chat-item chat-item-button chat-swipe-content"
+                        type="button"
+                        onClick={() => {
+                          if (swipedConversationId === item.id) {
+                            setSwipedConversationId("");
+                            return;
+                          }
+                          openConversation(item);
+                        }}
+                      >
+                        <img src={resolveAssetUrl(item.avatar)} alt={item.name} className="chat-avatar" />
+                        <div className="chat-main">
+                          <div className="chat-name-row">
+                            <strong>{item.name}</strong>
+                            <span>{formatChatTime(item.time)}</span>
+                          </div>
+                          <p>{item.preview}</p>
+                        </div>
+                        {item.unread > 0 && <span className="chat-unread">{item.unread > 9 ? "9+" : item.unread}</span>}
+                      </button>
+                    </div>
                   ))}
                   {filteredConversations.length === 0 && <p className="feed-tip">暂无匹配聊天记录</p>}
                 </div>
@@ -971,7 +1611,7 @@ export default function App() {
                 <div className="contact-list">
                   {filteredContacts.map((item) => (
                     <div key={item.id} className="contact-item">
-                      <img src={item.avatar} alt={item.name} className="chat-avatar" />
+                      <img src={resolveAssetUrl(item.avatar)} alt={item.name} className="chat-avatar" />
                       <div className="contact-main">
                         <strong>{item.name}</strong>
                         <span>{item.status}</span>
@@ -1033,7 +1673,7 @@ export default function App() {
             <div className="profile-edit-page">
               <div className="status-card profile-editor-page">
                 <div className="profile-editor-avatar-row">
-                  <img className="profile-avatar" src={profileForm.avatarUrl || userAvatar} alt={user.nickname} />
+                  <img className="profile-avatar" src={resolveAssetUrl(profileForm.avatarUrl || userAvatar)} alt={user.nickname} />
                   <p>点击保存后将更新资料页封面和头像</p>
                 </div>
                 <div className="profile-editor">
@@ -1042,8 +1682,12 @@ export default function App() {
                     value={profileForm.nickname}
                     onChange={(e) => setProfileForm((prev) => ({ ...prev, nickname: e.target.value }))}
                   />
+                  <label className="upload-avatar-btn">
+                    上传头像
+                    <input type="file" accept="image/*" onChange={onPickProfileAvatar} hidden />
+                  </label>
                   <input
-                    placeholder="头像/封面地址（相册第一张）"
+                    placeholder="头像/封面地址（可选）"
                     value={profileForm.avatarUrl}
                     onChange={(e) => setProfileForm((prev) => ({ ...prev, avatarUrl: e.target.value }))}
                   />
@@ -1104,13 +1748,24 @@ export default function App() {
               </div>
 
               <div className="status-card my-stats">
-                <p>用户ID：{user.id}</p>
+                <p>用户ID：{toTenDigitId(user.id)}</p>
                 <p>个人签名：{user.partnerExpectation || "做一个有趣的人"}</p>
                 <p>会员状态：{isMembershipValid ? "有效会员" : "免费用户"}</p>
               </div>
 
               <h3 className="section-title">我的动态</h3>
+              <div className="post-composer">
+                <input
+                  placeholder="写点什么，发布到我的动态..."
+                  value={newPostText}
+                  onChange={(e) => setNewPostText(e.target.value)}
+                />
+                <button type="button" onClick={publishMyPost}>
+                  发布动态
+                </button>
+              </div>
               <div className="my-post-list">
+                {myPosts.length === 0 && <p className="feed-tip">你还没有发布动态</p>}
                 {myPosts.map((post) => (
                   <div className="post dark-post" key={post.id}>
                     <p>{post.text}</p>
@@ -1125,7 +1780,113 @@ export default function App() {
         </section>
       )}
 
-      {message && <p className="msg">{message}</p>}
+      {message && tab !== "chat" && <p className="msg">{message}</p>}
+      {showAddFriendModal && (
+        <div className="profile-setup-overlay" onClick={() => setShowAddFriendModal(false)}>
+          <div className="profile-setup-card add-friend-card" onClick={(e) => e.stopPropagation()}>
+            <h3>添加通讯录好友</h3>
+            <p>按昵称、手机号、10位用户ID 搜索全部用户。</p>
+            <input
+              placeholder="搜索昵称 / 手机号 / 10位用户ID"
+              value={addFriendKeyword}
+              onChange={(e) => setAddFriendKeyword(e.target.value)}
+            />
+            {incomingRequests.length > 0 && (
+              <div className="add-friend-requests">
+                <p>待处理好友请求</p>
+                {incomingRequests.map((req) => (
+                  <div className="contact-item" key={`req-${req.id}`}>
+                    <img src={resolveAssetUrl(req.avatar)} alt={req.name} className="chat-avatar" />
+                    <div className="contact-main">
+                      <strong>{req.name}</strong>
+                      <span>{req.currentCity ? `${req.currentCity} · 在线` : "在线"}</span>
+                      <span>ID: {req.uid10}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await respondFriendRequest(req.id, "ACCEPT");
+                        } catch (error) {
+                          setChatNotice(error.message || "处理好友请求失败");
+                        }
+                      }}
+                    >
+                      同意
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await respondFriendRequest(req.id, "REJECT");
+                        } catch (error) {
+                          setChatNotice(error.message || "处理好友请求失败");
+                        }
+                      }}
+                    >
+                      拒绝
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="add-friend-list">
+              {addFriendCandidates.length === 0 && <p className="feed-tip">没有匹配到可添加用户</p>}
+              {addFriendCandidates.map((item) => (
+                <div className="contact-item" key={`add-${item.id}`}>
+                  <img src={resolveAssetUrl(item.avatar)} alt={item.name} className="chat-avatar" />
+                  <div className="contact-main">
+                    <strong>{item.name}</strong>
+                    <span>{item.currentCity ? `${item.currentCity} · 在线` : "在线"}</span>
+                    <span>ID: {item.uid10 || toTenDigitId(item.id)}</span>
+                  </div>
+                  {item.isFriend ? (
+                    <button type="button" disabled>
+                      已是好友
+                    </button>
+                  ) : item.requestStatus === "PENDING" && item.requestDirection === "OUTGOING" ? (
+                    <button
+                      type="button"
+                      onClick={() => setChatNotice("申请已发送，等对方在 + 里同意即可")}
+                    >
+                      已发送
+                    </button>
+                  ) : item.requestStatus === "PENDING" && item.requestDirection === "INCOMING" ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await respondFriendRequest(item.requestId, "ACCEPT");
+                        } catch (error) {
+                          setChatNotice(error.message || "处理好友请求失败");
+                        }
+                      }}
+                    >
+                      通过
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await sendFriendRequest(item.id, item.name);
+                        } catch (error) {
+                          setChatNotice(error.message || "发起好友请求失败");
+                        }
+                      }}
+                    >
+                      添加
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={() => setShowAddFriendModal(false)}>
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
 
       <button className="fab" onClick={() => setTab("planet")}>
         开盲盒

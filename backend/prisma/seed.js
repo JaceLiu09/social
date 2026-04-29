@@ -37,9 +37,40 @@ function buildVirtualUser(index, existingPhones) {
     weight: male ? randomInt(62, 82) : randomInt(45, 60),
     hometown: hometownPool[index % hometownPool.length],
     currentCity: cityPool[index % cityPool.length],
+    income: "8k-15k",
+    industry: "互联网",
     hobbies: hobbiesPool[index % hobbiesPool.length],
     partnerExpectation: "真诚沟通，三观契合",
+    profileCompleted: true,
     photoUrls: JSON.stringify([`https://picsum.photos/300/300?${photoSeed}`])
+  };
+}
+
+function buildNamedFriendUser(nickname, index, existingPhones) {
+  const profiles = [
+    { gender: "MALE", hometown: "南京", currentCity: "上海", hobbies: "跑步,电影,咖啡" },
+    { gender: "MALE", hometown: "西安", currentCity: "深圳", hobbies: "健身,旅行,摄影" },
+    { gender: "FEMALE", hometown: "苏州", currentCity: "杭州", hobbies: "探店,羽毛球,音乐" },
+    { gender: "FEMALE", hometown: "青岛", currentCity: "北京", hobbies: "阅读,徒步,烘焙" },
+    { gender: "MALE", hometown: "重庆", currentCity: "广州", hobbies: "篮球,唱歌,桌游" }
+  ];
+  const profile = profiles[index % profiles.length];
+  return {
+    phone: randomPhone(existingPhones),
+    password: DEFAULT_PASSWORD,
+    nickname,
+    gender: profile.gender,
+    age: randomInt(22, 30),
+    height: profile.gender === "MALE" ? randomInt(170, 186) : randomInt(158, 172),
+    weight: profile.gender === "MALE" ? randomInt(62, 82) : randomInt(45, 60),
+    hometown: profile.hometown,
+    currentCity: profile.currentCity,
+    income: "10k-20k",
+    industry: "互联网",
+    hobbies: profile.hobbies,
+    partnerExpectation: "真诚沟通，三观契合",
+    profileCompleted: true,
+    photoUrls: JSON.stringify([`https://picsum.photos/300/300?${300 + index}`])
   };
 }
 
@@ -55,8 +86,11 @@ async function main() {
       weight: 50,
       hometown: "成都",
       currentCity: "深圳",
+      income: "15k-25k",
+      industry: "互联网",
       hobbies: "旅行,电影,摄影",
       partnerExpectation: "三观契合，有责任感",
+      profileCompleted: true,
       photoUrls: JSON.stringify(["https://picsum.photos/300/300?1"])
     },
     {
@@ -69,8 +103,11 @@ async function main() {
       weight: 72,
       hometown: "武汉",
       currentCity: "广州",
+      income: "10k-20k",
+      industry: "产品",
       hobbies: "篮球,音乐,露营",
       partnerExpectation: "善良，愿意沟通",
+      profileCompleted: true,
       photoUrls: JSON.stringify(["https://picsum.photos/300/300?2"])
     },
     {
@@ -83,8 +120,11 @@ async function main() {
       weight: 49,
       hometown: "杭州",
       currentCity: "上海",
+      income: "12k-18k",
+      industry: "设计",
       hobbies: "拍照,探店,旅行",
       partnerExpectation: "温柔靠谱，有上进心",
+      profileCompleted: true,
       photoUrls: JSON.stringify(["https://picsum.photos/300/300?3"])
     }
   ];
@@ -92,11 +132,22 @@ async function main() {
 
   const existing = await prisma.user.findMany({ select: { phone: true, nickname: true } });
   const existingPhones = new Set(existing.map((item) => item.phone));
-  const existingVirtualCount = existing.filter((item) => item.nickname.startsWith("guest")).length;
+  const existingByNickname = new Set(existing.map((item) => item.nickname));
+
+  const namedFriends = ["alan", "phil", "juni", "dace", "jay"];
+  const missingNamed = namedFriends.filter((nickname) => !existingByNickname.has(nickname));
+  if (missingNamed.length > 0) {
+    const namedUsers = missingNamed.map((nickname, idx) => buildNamedFriendUser(nickname, idx, existingPhones));
+    await prisma.user.createMany({ data: namedUsers, skipDuplicates: true });
+  }
+
+  const usersAfterNamed = await prisma.user.findMany({ select: { phone: true, nickname: true } });
+  const phonesAfterNamed = new Set(usersAfterNamed.map((item) => item.phone));
+  const existingVirtualCount = usersAfterNamed.filter((item) => item.nickname.startsWith("guest")).length;
   const missingVirtual = Math.max(0, VIRTUAL_USER_COUNT - existingVirtualCount);
   if (missingVirtual > 0) {
     const startIndex = existingVirtualCount;
-    const virtualUsers = Array.from({ length: missingVirtual }, (_, idx) => buildVirtualUser(startIndex + idx, existingPhones));
+    const virtualUsers = Array.from({ length: missingVirtual }, (_, idx) => buildVirtualUser(startIndex + idx, phonesAfterNamed));
     await prisma.user.createMany({ data: virtualUsers, skipDuplicates: true });
   }
 }
