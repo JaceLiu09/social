@@ -195,6 +195,14 @@ body {
   padding: 14px 12px 92px;
 }
 
+.main-app.chat-detail-mode {
+  padding-bottom: 8px;
+}
+
+.main-app.chat-detail-mode .fab {
+  display: none;
+}
+
 .chat-notice-banner {
   position: fixed;
   top: 10px;
@@ -281,6 +289,16 @@ body {
 }
 
 .birth-select-row select {
+  height: 40px;
+  border: 1px solid #e4e8f3;
+  border-radius: 10px;
+  padding: 0 10px;
+  background: #f8f9fd;
+  color: #3e4762;
+}
+
+.gender-select-row select {
+  width: 100%;
   height: 40px;
   border: 1px solid #e4e8f3;
   border-radius: 10px;
@@ -710,6 +728,162 @@ body {
   margin: 0 0 6px;
 }
 
+.game-card button {
+  margin-top: 4px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #edf3ff;
+  color: #2f5bd5;
+  font-size: 12px;
+}
+
+.werewolf-card {
+  max-width: 640px;
+}
+
+.werewolf-menu {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.werewolf-mode-wrap {
+  display: grid;
+  gap: 10px;
+}
+
+.werewolf-seats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.werewolf-seats .seat {
+  border: 1px solid #e4e9f6;
+  border-radius: 10px;
+  background: #f8fafe;
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.werewolf-seats .seat.filled {
+  border-color: #b8d2ff;
+  background: #eef5ff;
+}
+
+.werewolf-seats .seat strong {
+  font-size: 12px;
+  color: #5f6b8e;
+}
+
+.werewolf-seats .seat span {
+  font-size: 13px;
+  color: #293556;
+}
+
+.werewolf-seats .seat button {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #dce8ff;
+  color: #2e4ea1;
+  font-size: 11px;
+}
+
+.werewolf-invite-list {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #eaf0fa;
+  border-radius: 12px;
+}
+
+.werewolf-judge-sheet {
+  max-height: 62vh;
+  overflow: auto;
+  border: 1px solid #e6edf9;
+  border-radius: 12px;
+  padding: 10px;
+  background: #f9fbff;
+}
+
+.werewolf-role-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.werewolf-role-grid span {
+  display: block;
+  border: 1px solid #dbe6fb;
+  border-radius: 8px;
+  background: #eef4ff;
+  color: #2f467d;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.werewolf-script-list {
+  display: grid;
+  gap: 6px;
+}
+
+.werewolf-script-list p {
+  margin: 0;
+  color: #3a4568;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.tacit-card {
+  max-width: 680px;
+}
+
+.tacit-question-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #232d4c;
+}
+
+.tacit-answer-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.tacit-answer-card {
+  border: 1px solid #e6ecfb;
+  border-radius: 10px;
+  background: #f8faff;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.tacit-answer-card strong {
+  color: #2a3761;
+}
+
+.tacit-answer-card button {
+  width: 100%;
+  text-align: left;
+  background: #edf3ff;
+  color: #3251a5;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.tacit-answer-card button.active-choice {
+  background: #2f5bd5;
+  color: #fff;
+}
+
+.tacit-score {
+  margin: 0;
+  font-size: 22px;
+  color: #2443a0;
+}
+
 .card {
   background: #fff;
   border-radius: 12px;
@@ -823,7 +997,9 @@ button:hover {
 }
 
 .chat-page.chat-page-detail {
-  padding-bottom: 16px;
+  padding-bottom: 0;
+  height: calc(100dvh - 170px);
+  min-height: calc(100dvh - 170px);
 }
 
 .chat-top-tabs {
@@ -1127,7 +1303,8 @@ button:hover {
   overflow: hidden;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  min-height: calc(100dvh - 240px);
+  min-height: 0;
+  height: 100%;
 }
 
 .chat-detail-header {
@@ -1179,6 +1356,16 @@ button:hover {
   border-radius: 10px;
   display: block;
   cursor: pointer;
+}
+
+.chat-image-missing {
+  display: inline-block;
+  font-size: 12px;
+  color: #7b839d;
+  background: #eef2fb;
+  border: 1px solid #dde4f4;
+  border-radius: 10px;
+  padding: 8px 10px;
 }
 
 .chat-audio-wrap {

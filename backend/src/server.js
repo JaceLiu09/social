@@ -70,6 +70,29 @@ function previewText(message) {
   return message.text || "";
 }
 
+const TACIT_CHALLENGE_QUESTION_BANK = [
+  { prompt: "周末更想怎么放松？", optionA: "宅家追剧", optionB: "出门逛吃" },
+  { prompt: "约会更想去哪？", optionA: "海边散步", optionB: "城市夜景" },
+  { prompt: "聊天更喜欢？", optionA: "秒回高频", optionB: "慢聊走心" },
+  { prompt: "旅行更倾向？", optionA: "详细规划", optionB: "说走就走" },
+  { prompt: "吃火锅你选？", optionA: "清汤", optionB: "麻辣" },
+  { prompt: "对礼物的偏好？", optionA: "实用型", optionB: "仪式感" },
+  { prompt: "早起还是熬夜？", optionA: "早起型", optionB: "夜猫子" },
+  { prompt: "消息语气更像？", optionA: "直接简洁", optionB: "可爱表情包" },
+  { prompt: "遇到分歧会？", optionA: "先冷静再聊", optionB: "当场说开" },
+  { prompt: "看电影优先？", optionA: "剧情片", optionB: "喜剧片" },
+  { prompt: "假期更想？", optionA: "睡到自然醒", optionB: "早起打卡景点" },
+  { prompt: "点奶茶会选？", optionA: "三分糖", optionB: "全糖加料" },
+  { prompt: "宠物更喜欢？", optionA: "猫", optionB: "狗" },
+  { prompt: "聚会角色更像？", optionA: "活跃气氛", optionB: "安静观察" },
+  { prompt: "下雨天更想？", optionA: "窝在家听歌", optionB: "穿雨衣去散步" },
+  { prompt: "手机电量低于20%会？", optionA: "立刻充电", optionB: "再撑一会" },
+  { prompt: "拍照时更偏向？", optionA: "抓拍自然", optionB: "摆拍精致" },
+  { prompt: "节日安排更想？", optionA: "两人独处", optionB: "朋友局热闹" },
+  { prompt: "吃饭速度更常见？", optionA: "慢慢吃", optionB: "很快解决" },
+  { prompt: "听歌偏好？", optionA: "循环老歌", optionB: "追新歌单" }
+];
+
 function toTenDigitId(input) {
   const raw = String(input || "");
   let hash = 0n;
@@ -86,6 +109,154 @@ async function getFriendIds(userId) {
     }
   });
   return list.map((item) => (item.userAId === userId ? item.userBId : item.userAId));
+}
+
+async function getWerewolfRoomPayload(roomId) {
+  const room = await prisma.werewolfRoom.findUnique({
+    where: { id: roomId },
+    include: {
+      members: {
+        include: { user: true },
+        orderBy: { createdAt: "asc" }
+      }
+    }
+  });
+  if (!room) return null;
+  const acceptedCount = room.members.filter((m) => m.status === "ACCEPTED" || m.status === "HOST").length;
+  const status =
+    room.status === "IN_GAME" || room.status === "CLOSED"
+      ? room.status
+      : acceptedCount >= room.minStartPlayers
+        ? "READY"
+        : "WAITING";
+  if (status !== room.status) {
+    await prisma.werewolfRoom.update({ where: { id: room.id }, data: { status } });
+    room.status = status;
+  }
+  return {
+    id: room.id,
+    type: room.type,
+    status: room.status,
+    ownerUserId: room.ownerUserId,
+    maxSeats: room.maxSeats,
+    minStartPlayers: room.minStartPlayers,
+    acceptedCount,
+    members: room.members.map((m) => ({
+      id: m.id,
+      userId: m.userId,
+      name: m.user.nickname,
+      avatar: m.user.avatarUrl || "",
+      status: m.status,
+      invitedByUserId: m.invitedByUserId
+    }))
+  };
+}
+
+function emitWerewolfRoomUpdateToUsers(userIds, payload) {
+  userIds.forEach((uid) => {
+    const sockets = userSockets.get(String(uid));
+    if (!sockets?.size) return;
+    sockets.forEach((socketId) => io.to(socketId).emit("werewolf:room:update", payload));
+  });
+}
+
+function sampleTacitQuestions(count = 10) {
+  return [...TACIT_CHALLENGE_QUESTION_BANK].sort(() => Math.random() - 0.5).slice(0, count);
+}
+
+async function seedTacitQuestionsIfMissing(roomId) {
+  const exists = await prisma.tacitQuestion.count({ where: { roomId } });
+  if (exists > 0) return;
+  const questions = sampleTacitQuestions(10);
+  await prisma.tacitQuestion.createMany({
+    data: questions.map((item, idx) => ({
+      roomId,
+      sortOrder: idx,
+      prompt: item.prompt,
+      optionA: item.optionA,
+      optionB: item.optionB
+    }))
+  });
+}
+
+async function getTacitRoomPayload(roomId) {
+  const room = await prisma.tacitRoom.findUnique({
+    where: { id: roomId },
+    include: {
+      members: {
+        include: { user: true },
+        orderBy: { createdAt: "asc" }
+      },
+      questions: {
+        include: { answers: true },
+        orderBy: { sortOrder: "asc" }
+      }
+    }
+  });
+  if (!room) return null;
+  const acceptedMembers = room.members.filter((m) => m.status === "HOST" || m.status === "ACCEPTED");
+  let computedStatus = room.status;
+  if (room.status !== "FINISHED" && room.status !== "CLOSED") {
+    if (acceptedMembers.length >= 2 && room.questions.length > 0) computedStatus = "IN_PROGRESS";
+    else computedStatus = "WAITING";
+  }
+  let score = 0;
+  let finishedCount = 0;
+  const questions = room.questions.map((q) => {
+    const choices = {};
+    q.answers.forEach((a) => {
+      choices[a.userId] = a.choice;
+    });
+    const memberChoices = acceptedMembers.map((m) => choices[m.userId]).filter(Boolean);
+    const isMatched = memberChoices.length >= 2 && memberChoices[0] === memberChoices[1];
+    const isDone = memberChoices.length >= 2;
+    if (isMatched) score += 10;
+    if (isDone) finishedCount += 1;
+    return {
+      id: q.id,
+      sortOrder: q.sortOrder,
+      prompt: q.prompt,
+      optionA: q.optionA,
+      optionB: q.optionB,
+      choices,
+      matched: isMatched,
+      done: isDone
+    };
+  });
+  if (computedStatus !== "FINISHED" && room.questions.length > 0 && finishedCount >= room.questions.length) {
+    computedStatus = "FINISHED";
+  }
+  if (computedStatus !== room.status) {
+    await prisma.tacitRoom.update({ where: { id: room.id }, data: { status: computedStatus } });
+    room.status = computedStatus;
+  }
+  return {
+    id: room.id,
+    type: room.type,
+    status: room.status,
+    ownerUserId: room.ownerUserId,
+    acceptedCount: acceptedMembers.length,
+    questionCount: room.questions.length,
+    finishedCount,
+    score,
+    members: room.members.map((m) => ({
+      id: m.id,
+      userId: m.userId,
+      name: m.user.nickname,
+      avatar: m.user.avatarUrl || "",
+      status: m.status,
+      invitedByUserId: m.invitedByUserId
+    })),
+    questions
+  };
+}
+
+function emitTacitRoomUpdateToUsers(userIds, payload) {
+  userIds.forEach((uid) => {
+    const sockets = userSockets.get(String(uid));
+    if (!sockets?.size) return;
+    sockets.forEach((socketId) => io.to(socketId).emit("tacit:room:update", payload));
+  });
 }
 
 const DEFAULT_PASSWORD = "123456";
@@ -744,6 +915,507 @@ app.post("/friends/requests/:id/respond", async (req, res) => {
     return res.json({ ok: true });
   } catch (_error) {
     return res.status(500).json({ message: "处理好友请求失败" });
+  }
+});
+
+app.post("/werewolf/match/enqueue", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+
+    const existingMember = await prisma.werewolfRoomMember.findFirst({
+      where: {
+        userId,
+        room: { status: { in: ["WAITING", "READY", "IN_GAME"] } }
+      }
+    });
+    if (existingMember) return res.json({ ok: true, roomId: existingMember.roomId, matched: true });
+
+    await prisma.werewolfMatchQueue.upsert({
+      where: { userId },
+      update: { updatedAt: new Date() },
+      create: { userId }
+    });
+
+    const queued = await prisma.werewolfMatchQueue.findMany({
+      orderBy: { createdAt: "asc" },
+      take: 6
+    });
+    if (queued.length < 6) return res.json({ ok: true, matched: false, queuedCount: queued.length });
+
+    const userIds = queued.map((q) => q.userId);
+    const room = await prisma.werewolfRoom.create({
+      data: {
+        type: "MATCH",
+        status: "READY",
+        ownerUserId: userIds[0],
+        maxSeats: 6,
+        minStartPlayers: 6
+      }
+    });
+    await prisma.werewolfRoomMember.createMany({
+      data: userIds.map((uid, idx) => ({
+        roomId: room.id,
+        userId: uid,
+        status: idx === 0 ? "HOST" : "ACCEPTED",
+        invitedByUserId: idx === 0 ? null : userIds[0]
+      }))
+    });
+    await prisma.werewolfMatchQueue.deleteMany({ where: { userId: { in: userIds } } });
+    const payload = await getWerewolfRoomPayload(room.id);
+    emitWerewolfRoomUpdateToUsers(userIds, payload);
+    return res.json({ ok: true, matched: true, roomId: room.id, room: payload });
+  } catch (_error) {
+    return res.status(500).json({ message: "匹配失败，请稍后重试" });
+  }
+});
+
+app.get("/werewolf/match/status", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const member = await prisma.werewolfRoomMember.findFirst({
+      where: {
+        userId,
+        room: { status: { in: ["WAITING", "READY", "IN_GAME"] } }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    if (!member) return res.json({ matched: false });
+    const room = await getWerewolfRoomPayload(member.roomId);
+    return res.json({ matched: true, roomId: member.roomId, room });
+  } catch (_error) {
+    return res.status(500).json({ message: "查询匹配状态失败" });
+  }
+});
+
+app.post("/werewolf/rooms", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const room = await prisma.werewolfRoom.create({
+      data: {
+        type: "FRIEND",
+        status: "WAITING",
+        ownerUserId: userId,
+        maxSeats: 12,
+        minStartPlayers: 6
+      }
+    });
+    await prisma.werewolfRoomMember.create({
+      data: {
+        roomId: room.id,
+        userId,
+        status: "HOST"
+      }
+    });
+    const payload = await getWerewolfRoomPayload(room.id);
+    emitWerewolfRoomUpdateToUsers([userId], payload);
+    return res.json({ room: payload });
+  } catch (_error) {
+    return res.status(500).json({ message: "创建好友房失败" });
+  }
+});
+
+app.get("/werewolf/rooms/:id", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const room = await getWerewolfRoomPayload(req.params.id);
+    if (!room) return res.status(404).json({ message: "房间不存在" });
+    const joined = room.members.some((m) => m.userId === userId);
+    if (!joined) return res.status(403).json({ message: "你不在该房间中" });
+    return res.json({ room });
+  } catch (_error) {
+    return res.status(500).json({ message: "拉取房间失败" });
+  }
+});
+
+app.get("/werewolf/invitations", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const invites = await prisma.werewolfRoomMember.findMany({
+      where: {
+        userId,
+        status: "PENDING",
+        room: {
+          type: "FRIEND",
+          status: { in: ["WAITING", "READY"] }
+        }
+      },
+      include: {
+        room: {
+          include: {
+            owner: true
+          }
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    return res.json({
+      invitations: invites.map((item) => ({
+        roomId: item.roomId,
+        ownerUserId: item.room.ownerUserId,
+        ownerName: item.room.owner.nickname,
+        ownerAvatar: item.room.owner.avatarUrl || "",
+        status: item.status,
+        createdAt: item.createdAt.toISOString()
+      }))
+    });
+  } catch (_error) {
+    return res.status(500).json({ message: "拉取邀请失败" });
+  }
+});
+
+app.post("/werewolf/rooms/:id/invite", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const inviteeUserId = String(req.body.userId || "");
+    if (!inviteeUserId || inviteeUserId === userId) return res.status(400).json({ message: "无效邀请对象" });
+    const roomId = req.params.id;
+    const room = await prisma.werewolfRoom.findUnique({ where: { id: roomId } });
+    if (!room || room.type !== "FRIEND") return res.status(404).json({ message: "好友房不存在" });
+    if (room.ownerUserId !== userId) return res.status(403).json({ message: "仅房主可邀请" });
+
+    const hostMember = await prisma.werewolfRoomMember.findFirst({ where: { roomId, userId, status: "HOST" } });
+    if (!hostMember) return res.status(403).json({ message: "你不是房主" });
+    const memberCount = await prisma.werewolfRoomMember.count({ where: { roomId } });
+    if (memberCount >= room.maxSeats) return res.status(400).json({ message: "房间已满（最多12人）" });
+
+    const friendIds = new Set(await getFriendIds(userId));
+    if (!friendIds.has(inviteeUserId)) return res.status(400).json({ message: "只能邀请你的好友" });
+
+    await prisma.werewolfRoomMember.upsert({
+      where: { roomId_userId: { roomId, userId: inviteeUserId } },
+      update: { status: "PENDING", invitedByUserId: userId },
+      create: { roomId, userId: inviteeUserId, status: "PENDING", invitedByUserId: userId }
+    });
+    const payload = await getWerewolfRoomPayload(roomId);
+    const inviter = await prisma.user.findUnique({ where: { id: userId } });
+    const inviteSockets = userSockets.get(inviteeUserId);
+    if (inviteSockets?.size) {
+      inviteSockets.forEach((socketId) => {
+        io.to(socketId).emit("werewolf:invite", {
+          roomId,
+          ownerName: inviter?.nickname || "好友",
+          ownerAvatar: inviter?.avatarUrl || ""
+        });
+      });
+    }
+    emitWerewolfRoomUpdateToUsers(payload.members.map((m) => m.userId), payload);
+    return res.json({ room: payload });
+  } catch (_error) {
+    return res.status(500).json({ message: "邀请失败" });
+  }
+});
+
+app.post("/werewolf/rooms/:id/respond", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const action = String(req.body.action || "").toUpperCase();
+    if (!["ACCEPT", "DECLINE"].includes(action)) return res.status(400).json({ message: "无效操作" });
+    const roomId = req.params.id;
+    const member = await prisma.werewolfRoomMember.findUnique({
+      where: { roomId_userId: { roomId, userId } }
+    });
+    if (!member) return res.status(404).json({ message: "你不在该房间内" });
+    if (member.status === "HOST") return res.json({ ok: true });
+    await prisma.werewolfRoomMember.update({
+      where: { roomId_userId: { roomId, userId } },
+      data: { status: action === "ACCEPT" ? "ACCEPTED" : "DECLINED" }
+    });
+    const payload = await getWerewolfRoomPayload(roomId);
+    emitWerewolfRoomUpdateToUsers(payload.members.map((m) => m.userId), payload);
+    return res.json({ room: payload });
+  } catch (_error) {
+    return res.status(500).json({ message: "处理邀请失败" });
+  }
+});
+
+app.post("/werewolf/rooms/:id/start", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const roomId = req.params.id;
+    const room = await prisma.werewolfRoom.findUnique({ where: { id: roomId } });
+    if (!room) return res.status(404).json({ message: "房间不存在" });
+    if (room.ownerUserId !== userId) return res.status(403).json({ message: "仅房主可开局" });
+    const payload = await getWerewolfRoomPayload(roomId);
+    if (!payload) return res.status(404).json({ message: "房间不存在" });
+    if (payload.acceptedCount < room.minStartPlayers) {
+      return res.status(400).json({ message: "至少6名玩家同意后才能开始" });
+    }
+    await prisma.werewolfRoom.update({ where: { id: roomId }, data: { status: "IN_GAME" } });
+    const next = await getWerewolfRoomPayload(roomId);
+    emitWerewolfRoomUpdateToUsers(next.members.map((m) => m.userId), next);
+    return res.json({ room: next });
+  } catch (_error) {
+    return res.status(500).json({ message: "开局失败" });
+  }
+});
+
+app.post("/tacit/match/enqueue", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const existingMember = await prisma.tacitRoomMember.findFirst({
+      where: {
+        userId,
+        room: { status: { in: ["WAITING", "IN_PROGRESS", "FINISHED"] } }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    if (existingMember) {
+      const room = await getTacitRoomPayload(existingMember.roomId);
+      return res.json({ matched: true, roomId: existingMember.roomId, room });
+    }
+    await prisma.tacitMatchQueue.upsert({
+      where: { userId },
+      update: {},
+      create: { userId }
+    });
+    const queued = await prisma.tacitMatchQueue.findMany({
+      orderBy: { createdAt: "asc" },
+      take: 2
+    });
+    if (queued.length < 2) return res.json({ matched: false, queuedCount: queued.length });
+    const userIds = queued.map((q) => q.userId);
+    const room = await prisma.tacitRoom.create({
+      data: {
+        type: "MATCH",
+        status: "IN_PROGRESS",
+        ownerUserId: userIds[0]
+      }
+    });
+    await prisma.tacitRoomMember.createMany({
+      data: userIds.map((uid, idx) => ({
+        roomId: room.id,
+        userId: uid,
+        status: idx === 0 ? "HOST" : "ACCEPTED",
+        invitedByUserId: idx === 0 ? null : userIds[0]
+      }))
+    });
+    await seedTacitQuestionsIfMissing(room.id);
+    await prisma.tacitMatchQueue.deleteMany({ where: { userId: { in: userIds } } });
+    const payload = await getTacitRoomPayload(room.id);
+    emitTacitRoomUpdateToUsers(userIds, payload);
+    return res.json({ matched: true, roomId: room.id, room: payload });
+  } catch (_error) {
+    return res.status(500).json({ message: "默契匹配失败，请稍后重试" });
+  }
+});
+
+app.get("/tacit/match/status", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const member = await prisma.tacitRoomMember.findFirst({
+      where: {
+        userId,
+        room: { status: { in: ["WAITING", "IN_PROGRESS", "FINISHED"] } }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    if (!member) return res.json({ matched: false });
+    const room = await getTacitRoomPayload(member.roomId);
+    return res.json({ matched: true, roomId: member.roomId, room });
+  } catch (_error) {
+    return res.status(500).json({ message: "查询默契匹配状态失败" });
+  }
+});
+
+app.post("/tacit/rooms", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const room = await prisma.tacitRoom.create({
+      data: {
+        type: "FRIEND",
+        status: "WAITING",
+        ownerUserId: userId
+      }
+    });
+    await prisma.tacitRoomMember.create({
+      data: {
+        roomId: room.id,
+        userId,
+        status: "HOST"
+      }
+    });
+    const payload = await getTacitRoomPayload(room.id);
+    emitTacitRoomUpdateToUsers([userId], payload);
+    return res.json({ room: payload });
+  } catch (_error) {
+    return res.status(500).json({ message: "创建默契挑战好友房失败" });
+  }
+});
+
+app.get("/tacit/rooms/:id", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const room = await getTacitRoomPayload(req.params.id);
+    if (!room) return res.status(404).json({ message: "房间不存在" });
+    const joined = room.members.some((m) => m.userId === userId);
+    if (!joined) return res.status(403).json({ message: "你不在该房间中" });
+    return res.json({ room });
+  } catch (_error) {
+    return res.status(500).json({ message: "拉取默契挑战房间失败" });
+  }
+});
+
+app.get("/tacit/invitations", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const invites = await prisma.tacitRoomMember.findMany({
+      where: {
+        userId,
+        status: "PENDING",
+        room: {
+          type: "FRIEND",
+          status: "WAITING"
+        }
+      },
+      include: {
+        room: {
+          include: { owner: true }
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    return res.json({
+      invitations: invites.map((item) => ({
+        roomId: item.roomId,
+        ownerUserId: item.room.ownerUserId,
+        ownerName: item.room.owner.nickname,
+        ownerAvatar: item.room.owner.avatarUrl || "",
+        status: item.status,
+        createdAt: item.createdAt.toISOString()
+      }))
+    });
+  } catch (_error) {
+    return res.status(500).json({ message: "拉取默契挑战邀请失败" });
+  }
+});
+
+app.post("/tacit/rooms/:id/invite", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const inviteeUserId = String(req.body.userId || "");
+    if (!inviteeUserId || inviteeUserId === userId) return res.status(400).json({ message: "无效邀请对象" });
+    const roomId = req.params.id;
+    const room = await prisma.tacitRoom.findUnique({ where: { id: roomId } });
+    if (!room || room.type !== "FRIEND") return res.status(404).json({ message: "好友房不存在" });
+    if (room.ownerUserId !== userId) return res.status(403).json({ message: "仅房主可邀请" });
+    const acceptedCount = await prisma.tacitRoomMember.count({
+      where: { roomId, status: { in: ["HOST", "ACCEPTED"] } }
+    });
+    if (acceptedCount >= 2) return res.status(400).json({ message: "本局仅支持两名玩家" });
+    const friendIds = new Set(await getFriendIds(userId));
+    if (!friendIds.has(inviteeUserId)) return res.status(400).json({ message: "只能邀请你的好友" });
+    await prisma.tacitRoomMember.upsert({
+      where: { roomId_userId: { roomId, userId: inviteeUserId } },
+      update: { status: "PENDING", invitedByUserId: userId },
+      create: { roomId, userId: inviteeUserId, status: "PENDING", invitedByUserId: userId }
+    });
+    const payload = await getTacitRoomPayload(roomId);
+    const inviter = await prisma.user.findUnique({ where: { id: userId } });
+    const inviteSockets = userSockets.get(inviteeUserId);
+    if (inviteSockets?.size) {
+      inviteSockets.forEach((socketId) => {
+        io.to(socketId).emit("tacit:invite", {
+          roomId,
+          ownerName: inviter?.nickname || "好友",
+          ownerAvatar: inviter?.avatarUrl || ""
+        });
+      });
+    }
+    emitTacitRoomUpdateToUsers(payload.members.map((m) => m.userId), payload);
+    return res.json({ room: payload });
+  } catch (_error) {
+    return res.status(500).json({ message: "邀请失败" });
+  }
+});
+
+app.post("/tacit/rooms/:id/respond", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const action = String(req.body.action || "").toUpperCase();
+    if (!["ACCEPT", "DECLINE"].includes(action)) return res.status(400).json({ message: "无效操作" });
+    const roomId = req.params.id;
+    const member = await prisma.tacitRoomMember.findUnique({
+      where: { roomId_userId: { roomId, userId } }
+    });
+    if (!member) return res.status(404).json({ message: "你不在该房间内" });
+    if (member.status !== "HOST") {
+      await prisma.tacitRoomMember.update({
+        where: { roomId_userId: { roomId, userId } },
+        data: { status: action === "ACCEPT" ? "ACCEPTED" : "DECLINED" }
+      });
+    }
+    if (action === "ACCEPT") await seedTacitQuestionsIfMissing(roomId);
+    const payload = await getTacitRoomPayload(roomId);
+    emitTacitRoomUpdateToUsers(payload.members.map((m) => m.userId), payload);
+    return res.json({ room: payload });
+  } catch (_error) {
+    return res.status(500).json({ message: "处理邀请失败" });
+  }
+});
+
+app.post("/tacit/rooms/:id/start", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const roomId = req.params.id;
+    const room = await prisma.tacitRoom.findUnique({ where: { id: roomId } });
+    if (!room) return res.status(404).json({ message: "房间不存在" });
+    if (room.ownerUserId !== userId) return res.status(403).json({ message: "仅房主可开始" });
+    const acceptedCount = await prisma.tacitRoomMember.count({
+      where: { roomId, status: { in: ["HOST", "ACCEPTED"] } }
+    });
+    if (acceptedCount < 2) return res.status(400).json({ message: "需要2名玩家同意后才能开始" });
+    await seedTacitQuestionsIfMissing(roomId);
+    await prisma.tacitRoom.update({ where: { id: roomId }, data: { status: "IN_PROGRESS" } });
+    const payload = await getTacitRoomPayload(roomId);
+    emitTacitRoomUpdateToUsers(payload.members.map((m) => m.userId), payload);
+    return res.json({ room: payload });
+  } catch (_error) {
+    return res.status(500).json({ message: "开始失败" });
+  }
+});
+
+app.post("/tacit/rooms/:id/answer", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const roomId = req.params.id;
+    const questionId = String(req.body.questionId || "");
+    const choice = String(req.body.choice || "").toUpperCase();
+    if (!questionId || !["A", "B"].includes(choice)) return res.status(400).json({ message: "参数不完整" });
+    const member = await prisma.tacitRoomMember.findUnique({
+      where: { roomId_userId: { roomId, userId } }
+    });
+    if (!member || !["HOST", "ACCEPTED"].includes(member.status)) {
+      return res.status(403).json({ message: "你当前不可作答" });
+    }
+    const question = await prisma.tacitQuestion.findUnique({ where: { id: questionId } });
+    if (!question || question.roomId !== roomId) return res.status(404).json({ message: "题目不存在" });
+    await prisma.tacitAnswer.upsert({
+      where: { questionId_userId: { questionId, userId } },
+      update: { choice, answeredAt: new Date() },
+      create: { roomId, questionId, memberId: member.id, userId, choice }
+    });
+    const payload = await getTacitRoomPayload(roomId);
+    emitTacitRoomUpdateToUsers(payload.members.map((m) => m.userId), payload);
+    return res.json({ room: payload });
+  } catch (_error) {
+    return res.status(500).json({ message: "提交答案失败" });
   }
 });
 

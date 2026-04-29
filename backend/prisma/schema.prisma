@@ -36,6 +36,13 @@ model User {
   recvMessages       ChatMessage[]  @relation("ChatMessageReceiver")
   sentFriendRequests FriendRequest[] @relation("FriendRequestSender")
   recvFriendRequests FriendRequest[] @relation("FriendRequestReceiver")
+  werewolfRoomsOwned WerewolfRoom[] @relation("WerewolfRoomOwner")
+  werewolfRoomMembers WerewolfRoomMember[]
+  werewolfQueueEntries WerewolfMatchQueue[]
+  tacitRoomsOwned TacitRoom[] @relation("TacitRoomOwner")
+  tacitRoomMembers TacitRoomMember[]
+  tacitQueueEntries TacitMatchQueue[]
+  tacitAnswers TacitAnswer[]
 }
 
 model MatchSession {
@@ -105,6 +112,123 @@ model FriendRequest {
   @@index([toUserId, status])
 }
 
+model WerewolfRoom {
+  id              String              @id @default(cuid())
+  type            WerewolfRoomType
+  status          WerewolfRoomStatus  @default(WAITING)
+  ownerUserId     String
+  maxSeats        Int                 @default(12)
+  minStartPlayers Int                 @default(6)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  owner   User                 @relation("WerewolfRoomOwner", fields: [ownerUserId], references: [id])
+  members WerewolfRoomMember[]
+
+  @@index([ownerUserId, status])
+}
+
+model WerewolfRoomMember {
+  id              String                   @id @default(cuid())
+  roomId          String
+  userId          String
+  status          WerewolfRoomMemberStatus @default(PENDING)
+  invitedByUserId String?
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+
+  room WerewolfRoom @relation(fields: [roomId], references: [id])
+  user User         @relation(fields: [userId], references: [id])
+
+  @@unique([roomId, userId])
+  @@index([userId, status])
+}
+
+model WerewolfMatchQueue {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model TacitRoom {
+  id          String          @id @default(cuid())
+  type        TacitRoomType
+  status      TacitRoomStatus @default(WAITING)
+  ownerUserId String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  owner     User             @relation("TacitRoomOwner", fields: [ownerUserId], references: [id])
+  members   TacitRoomMember[]
+  questions TacitQuestion[]
+  answers   TacitAnswer[]
+
+  @@index([ownerUserId, status])
+}
+
+model TacitRoomMember {
+  id              String                @id @default(cuid())
+  roomId          String
+  userId          String
+  status          TacitRoomMemberStatus @default(PENDING)
+  invitedByUserId String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  room    TacitRoom    @relation(fields: [roomId], references: [id])
+  user    User         @relation(fields: [userId], references: [id])
+  answers TacitAnswer[]
+
+  @@unique([roomId, userId])
+  @@index([userId, status])
+}
+
+model TacitQuestion {
+  id        String   @id @default(cuid())
+  roomId    String
+  sortOrder Int
+  prompt    String
+  optionA   String
+  optionB   String
+  createdAt DateTime @default(now())
+
+  room    TacitRoom     @relation(fields: [roomId], references: [id])
+  answers TacitAnswer[]
+
+  @@unique([roomId, sortOrder])
+  @@index([roomId])
+}
+
+model TacitAnswer {
+  id           String  @id @default(cuid())
+  roomId       String
+  questionId   String
+  memberId     String
+  userId       String
+  choice       String
+  answeredAt   DateTime @default(now())
+
+  room     TacitRoom       @relation(fields: [roomId], references: [id])
+  question TacitQuestion   @relation(fields: [questionId], references: [id])
+  member   TacitRoomMember @relation(fields: [memberId], references: [id])
+  user     User            @relation(fields: [userId], references: [id])
+
+  @@unique([questionId, userId])
+  @@index([roomId, questionId])
+}
+
+model TacitMatchQueue {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
 enum Gender {
   MALE
   FEMALE
@@ -122,4 +246,42 @@ enum MessageKind {
   TEXT
   IMAGE
   AUDIO
+}
+
+enum WerewolfRoomType {
+  MATCH
+  FRIEND
+}
+
+enum WerewolfRoomStatus {
+  WAITING
+  READY
+  IN_GAME
+  CLOSED
+}
+
+enum WerewolfRoomMemberStatus {
+  HOST
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+enum TacitRoomType {
+  MATCH
+  FRIEND
+}
+
+enum TacitRoomStatus {
+  WAITING
+  IN_PROGRESS
+  FINISHED
+  CLOSED
+}
+
+enum TacitRoomMemberStatus {
+  HOST
+  PENDING
+  ACCEPTED
+  DECLINED
 }

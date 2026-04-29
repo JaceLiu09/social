@@ -55,6 +55,15 @@ function resolveAssetUrl(url) {
   return url;
 }
 
+function resolveMediaUrl(url) {
+  if (!url) return "";
+  const raw = String(url || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("/uploads/")) return `${API}${raw}`;
+  if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("data:")) return raw;
+  return "";
+}
+
 function toTenDigitId(input) {
   const raw = String(input || "");
   let hash = 0n;
@@ -84,6 +93,40 @@ const profileSetupInitial = {
   partnerExpectation: "",
   avatarUrl: ""
 };
+
+const WEREWOLF_ROLE_CONFIG = {
+  6: { wolf: 2, seer: 1, witch: 0, hunter: 1, idiot: 0, villager: 2 },
+  7: { wolf: 2, seer: 1, witch: 1, hunter: 1, idiot: 0, villager: 2 },
+  8: { wolf: 3, seer: 1, witch: 1, hunter: 1, idiot: 0, villager: 2 },
+  9: { wolf: 3, seer: 1, witch: 1, hunter: 1, idiot: 0, villager: 3 },
+  10: { wolf: 3, seer: 1, witch: 1, hunter: 1, idiot: 0, villager: 4 },
+  11: { wolf: 4, seer: 1, witch: 1, hunter: 1, idiot: 0, villager: 4 },
+  12: { wolf: 4, seer: 1, witch: 1, hunter: 1, idiot: 1, villager: 4 }
+};
+
+function buildWerewolfRulePack(playerCount, modeLabel) {
+  const count = Math.max(6, Math.min(12, Number(playerCount) || 6));
+  const role = WEREWOLF_ROLE_CONFIG[count] || WEREWOLF_ROLE_CONFIG[6];
+  const baseRule = count <= 7
+    ? "屠城（杀光好人 / 狼人），无警长"
+    : "屠边（杀光神 / 民），有警长（1.5票）";
+  return {
+    count,
+    modeLabel,
+    role,
+    baseRule,
+    script: [
+      "开局：游戏开始，请确认身份，全部闭眼。",
+      "黑夜：狼人睁眼选击杀；预言家查验；女巫看死讯后可救/毒。",
+      "天亮：公布死讯（首夜死有遗言、白天被推有遗言，其余无）。",
+      count >= 8 ? "警长竞选：上警发言，未上警投票，警长1.5票可移交警徽。" : "本局无警长环节。",
+      "白天发言：从指定号开始顺时针发言，不许插话。",
+      "投票放逐：统计票型，出局玩家遗言。",
+      "狼人可自爆：白天立刻结束，直接进入天黑。",
+      "结束判定：好人胜利 / 狼人胜利。"
+    ]
+  };
+}
 
 export default function App() {
   const [tab, setTab] = useState("planet");
@@ -128,6 +171,21 @@ export default function App() {
   const [addFriendResults, setAddFriendResults] = useState([]);
   const [incomingRequests, setIncomingRequests] = useState([]);
   const [incomingRequestCount, setIncomingRequestCount] = useState(0);
+  const [showWerewolfModal, setShowWerewolfModal] = useState(false);
+  const [werewolfMode, setWerewolfMode] = useState("menu");
+  const [werewolfRoomMembers, setWerewolfRoomMembers] = useState([]);
+  const [werewolfRoomId, setWerewolfRoomId] = useState("");
+  const [werewolfRulePack, setWerewolfRulePack] = useState(null);
+  const [werewolfInvitations, setWerewolfInvitations] = useState([]);
+  const [showWerewolfInvitePanel, setShowWerewolfInvitePanel] = useState(false);
+  const [werewolfInviteCooldowns, setWerewolfInviteCooldowns] = useState({});
+  const [isWerewolfMatching, setIsWerewolfMatching] = useState(false);
+  const [showTacitModal, setShowTacitModal] = useState(false);
+  const [tacitMode, setTacitMode] = useState("menu");
+  const [tacitRoomId, setTacitRoomId] = useState("");
+  const [tacitRoom, setTacitRoom] = useState(null);
+  const [tacitInvitations, setTacitInvitations] = useState([]);
+  const [isTacitMatching, setIsTacitMatching] = useState(false);
   const [myPosts, setMyPosts] = useState([]);
   const [newPostText, setNewPostText] = useState("");
   const [isRecording, setIsRecording] = useState(false);
@@ -137,6 +195,7 @@ export default function App() {
   const swipeStartXRef = useRef(0);
   const swipeActiveIdRef = useRef("");
   const hiddenConversationIdsRef = useRef([]);
+  const [brokenImageIds, setBrokenImageIds] = useState([]);
   const mediaRecorderRef = useRef(null);
   const recordChunksRef = useRef([]);
   const recordStartAtRef = useRef(0);
@@ -151,6 +210,8 @@ export default function App() {
   const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
   const AUDIO_MAX_BYTES = 8 * 1024 * 1024;
   const UPLOAD_TIMEOUT_MS = 20000;
+  const werewolfPollingRef = useRef(null);
+  const tacitPollingRef = useRef(null);
 
   const friendlinessPercent = session?.friendliness ?? 0;
   const profilePhotos = useMemo(() => {
@@ -192,9 +253,37 @@ export default function App() {
     [chatKeyword, contacts]
   );
   const addFriendCandidates = useMemo(() => addFriendResults, [addFriendResults]);
+  const invitedMemberCount = useMemo(
+    () => Math.max(0, werewolfRoomMembers.filter((item) => item.id !== user?.id).length),
+    [werewolfRoomMembers, user]
+  );
+  const acceptedMemberCount = useMemo(
+    () => werewolfRoomMembers.filter((item) => item.accepted).length,
+    [werewolfRoomMembers]
+  );
   const totalUnreadCount = useMemo(
     () => conversations.reduce((sum, item) => sum + Number(item.unread || 0), 0),
     [conversations]
+  );
+  const currentWerewolfMember = useMemo(
+    () => werewolfRoomMembers.find((item) => item.id === user?.id) || null,
+    [werewolfRoomMembers, user]
+  );
+  const tacitAcceptedMembers = useMemo(
+    () => (tacitRoom?.members || []).filter((m) => m.status === "HOST" || m.status === "ACCEPTED"),
+    [tacitRoom]
+  );
+  const tacitCurrentQuestion = useMemo(
+    () => (tacitRoom?.questions || []).find((q) => !q.done) || (tacitRoom?.questions || [])[0] || null,
+    [tacitRoom]
+  );
+  const tacitMyChoice = useMemo(
+    () => (user?.id && tacitCurrentQuestion?.choices ? tacitCurrentQuestion.choices[user.id] || "" : ""),
+    [tacitCurrentQuestion, user]
+  );
+  const tacitPeerMember = useMemo(
+    () => tacitAcceptedMembers.find((m) => m.userId !== user?.id) || null,
+    [tacitAcceptedMembers, user]
   );
 
   const sortConversations = (list, pinnedIds = pinnedConversationIds) =>
@@ -480,6 +569,33 @@ export default function App() {
       });
     });
 
+    socket.on("werewolf:room:update", (room) => {
+      applyWerewolfRoom(room);
+      if (room?.status === "IN_GAME") {
+        const mode = room.type === "MATCH" ? "多人匹配" : "好友房";
+        setWerewolfRulePack(buildWerewolfRulePack(room.acceptedCount || 6, mode));
+        setWerewolfMode("judge");
+      }
+    });
+    socket.on("werewolf:invite", (invite) => {
+      if (invite?.ownerName) {
+        setChatNotice(`${invite.ownerName} 邀请你加入狼人杀好友房`);
+      }
+      loadWerewolfInvitations().catch(() => null);
+    });
+    socket.on("tacit:room:update", (room) => {
+      if (!room?.id) return;
+      setTacitRoomId(room.id);
+      setTacitRoom(room);
+      if (room.status === "WAITING") setTacitMode("room");
+      if (room.status === "IN_PROGRESS") setTacitMode("playing");
+      if (room.status === "FINISHED") setTacitMode("result");
+    });
+    socket.on("tacit:invite", (invite) => {
+      if (invite?.ownerName) setChatNotice(`${invite.ownerName} 邀请你加入二选一默契挑战`);
+      loadTacitInvitations().catch(() => null);
+    });
+
     return () => {
       socket.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
@@ -507,6 +623,34 @@ export default function App() {
     }, 1500);
     return () => clearInterval(timer);
   }, [activeConversation, tab, user]);
+
+  useEffect(
+    () => () => {
+      if (werewolfPollingRef.current) {
+        clearInterval(werewolfPollingRef.current);
+        werewolfPollingRef.current = null;
+      }
+      if (tacitPollingRef.current) {
+        clearInterval(tacitPollingRef.current);
+        tacitPollingRef.current = null;
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setWerewolfInviteCooldowns((prev) => {
+        const next = {};
+        Object.entries(prev).forEach(([uid, expireAt]) => {
+          if (Number(expireAt) > now) next[uid] = Number(expireAt);
+        });
+        return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const isMembershipValid = useMemo(() => {
     if (!user?.membershipExpireAt || user.membershipType === "FREE") return false;
@@ -1089,6 +1233,328 @@ export default function App() {
     setMessage("已批量清理聊天记录");
   };
 
+  const openWerewolfMenu = () => {
+    setWerewolfRoomMembers([]);
+    setWerewolfRoomId("");
+    setWerewolfRulePack(null);
+    setWerewolfMode("menu");
+    setShowWerewolfModal(true);
+    loadWerewolfInvitations().catch(() => setWerewolfInvitations([]));
+  };
+
+  const openTacitMenu = () => {
+    setTacitMode("menu");
+    setTacitRoom(null);
+    setTacitRoomId("");
+    setShowTacitModal(true);
+    loadTacitInvitations().catch(() => setTacitInvitations([]));
+  };
+
+  const applyTacitRoom = (room) => {
+    if (!room) return;
+    setTacitRoomId(room.id || "");
+    setTacitRoom(room);
+    if (room.status === "WAITING") setTacitMode("room");
+    if (room.status === "IN_PROGRESS") setTacitMode("playing");
+    if (room.status === "FINISHED") setTacitMode("result");
+  };
+
+  const loadTacitInvitations = async () => {
+    const res = await fetch(`${API}/tacit/invitations`, { headers: authHeaders });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "拉取默契挑战邀请失败");
+    setTacitInvitations(Array.isArray(data.invitations) ? data.invitations : []);
+  };
+
+  const ensureTacitFriendRoom = async () => {
+    if (tacitRoomId) return tacitRoomId;
+    const res = await fetch(`${API}/tacit/rooms`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "创建默契挑战好友房失败");
+    applyTacitRoom(data.room);
+    return data.room.id;
+  };
+
+  const startTacitMatch = () => {
+    if (isTacitMatching || tacitPollingRef.current) return;
+    setIsTacitMatching(true);
+    fetch(`${API}/tacit/match/enqueue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders }
+    })
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.message || "匹配失败");
+        if (data.matched && data.room) {
+          applyTacitRoom(data.room);
+          setIsTacitMatching(false);
+          return;
+        }
+        setTacitMode("match");
+        tacitPollingRef.current = window.setInterval(async () => {
+          try {
+            const statusRes = await fetch(`${API}/tacit/match/status`, { headers: authHeaders });
+            const statusData = await statusRes.json();
+            if (statusData?.matched && statusData.room) {
+              clearInterval(tacitPollingRef.current);
+              tacitPollingRef.current = null;
+              setIsTacitMatching(false);
+              applyTacitRoom(statusData.room);
+            }
+          } catch (_error) {}
+        }, 2000);
+      })
+      .catch((error) => {
+        setChatNotice(error.message || "匹配失败");
+        setIsTacitMatching(false);
+      });
+  };
+
+  const inviteTacitFriend = (friend) => {
+    ensureTacitFriendRoom()
+      .then((roomId) =>
+        fetch(`${API}/tacit/rooms/${roomId}/invite`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders },
+          body: JSON.stringify({ userId: friend.id })
+        })
+      )
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.message || "邀请失败");
+        applyTacitRoom(data.room);
+        setChatNotice(`已邀请 ${friend.name} 参与默契挑战`);
+      })
+      .catch((error) => setChatNotice(error.message || "邀请失败"));
+  };
+
+  const respondTacitInvite = async (action) => {
+    if (!tacitRoomId) return;
+    const res = await fetch(`${API}/tacit/rooms/${tacitRoomId}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ action })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "处理邀请失败");
+    applyTacitRoom(data.room);
+  };
+
+  const startTacitRoomGame = async () => {
+    if (!tacitRoomId) return;
+    const res = await fetch(`${API}/tacit/rooms/${tacitRoomId}/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "开始失败");
+    applyTacitRoom(data.room);
+  };
+
+  const chooseTacitAnswer = async (value) => {
+    if (!tacitRoomId || !tacitCurrentQuestion) return;
+    const res = await fetch(`${API}/tacit/rooms/${tacitRoomId}/answer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ questionId: tacitCurrentQuestion.id, choice: value })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "提交答案失败");
+    applyTacitRoom(data.room);
+  };
+
+  const enterTacitInvitationRoom = async (roomId) => {
+    const res = await fetch(`${API}/tacit/rooms/${roomId}`, { headers: authHeaders });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "进入房间失败");
+    applyTacitRoom(data.room);
+  };
+
+  const replayTacitRound = () => {
+    if (!tacitRoom?.type) return;
+    if (tacitRoom.type === "MATCH") {
+      startTacitMatch();
+      return;
+    }
+    setTacitRoom(null);
+    setTacitRoomId("");
+    setTacitMode("invite");
+  };
+
+  const closeTacitModal = () => {
+    setShowTacitModal(false);
+    setTacitMode("menu");
+    setTacitRoom(null);
+    setTacitRoomId("");
+    setIsTacitMatching(false);
+    if (tacitPollingRef.current) {
+      clearInterval(tacitPollingRef.current);
+      tacitPollingRef.current = null;
+    }
+  };
+
+  const enterWerewolfMatch = () => {
+    setWerewolfMode("match");
+    setIsWerewolfMatching(false);
+  };
+
+  const enterWerewolfRoom = () => {
+    setWerewolfMode("room");
+    setShowWerewolfInvitePanel(false);
+    ensureWerewolfFriendRoom().catch((error) => setChatNotice(error.message || "创建好友房失败"));
+  };
+
+  const applyWerewolfRoom = (room) => {
+    if (!room) return;
+    setWerewolfRoomId(room.id || "");
+    setWerewolfRoomMembers(
+      Array.isArray(room.members)
+        ? room.members.map((m) => ({
+            id: m.userId,
+            name: m.name,
+            accepted: m.status === "ACCEPTED" || m.status === "HOST",
+            owner: m.status === "HOST",
+            status: m.status
+          }))
+        : []
+    );
+  };
+
+  const ensureWerewolfFriendRoom = async () => {
+    if (werewolfRoomId) return werewolfRoomId;
+    const res = await fetch(`${API}/werewolf/rooms`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "创建好友房失败");
+    applyWerewolfRoom(data.room);
+    return data.room.id;
+  };
+
+  const loadWerewolfInvitations = async () => {
+    const res = await fetch(`${API}/werewolf/invitations`, { headers: authHeaders });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "拉取狼人杀邀请失败");
+    setWerewolfInvitations(Array.isArray(data.invitations) ? data.invitations : []);
+  };
+
+  const startWerewolfMatching = () => {
+    if (isWerewolfMatching || werewolfPollingRef.current) return;
+    setIsWerewolfMatching(true);
+    fetch(`${API}/werewolf/match/enqueue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders }
+    })
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.message || "匹配失败");
+        if (data.matched && data.room) {
+          applyWerewolfRoom(data.room);
+          setWerewolfRulePack(buildWerewolfRulePack(6, "多人匹配"));
+          setWerewolfMode("judge");
+          setIsWerewolfMatching(false);
+          return;
+        }
+        werewolfPollingRef.current = window.setInterval(async () => {
+          try {
+            const statusRes = await fetch(`${API}/werewolf/match/status`, { headers: authHeaders });
+            const statusData = await statusRes.json();
+            if (!statusRes.ok) throw new Error(statusData.message || "查询匹配状态失败");
+            if (statusData.matched && statusData.room) {
+              applyWerewolfRoom(statusData.room);
+              setWerewolfRulePack(buildWerewolfRulePack(6, "多人匹配"));
+              setWerewolfMode("judge");
+              setIsWerewolfMatching(false);
+              clearInterval(werewolfPollingRef.current);
+              werewolfPollingRef.current = null;
+            }
+          } catch (_error) {
+            // keep polling for transient errors
+          }
+        }, 2000);
+      })
+      .catch((error) => {
+        setChatNotice(error.message || "匹配失败");
+        setIsWerewolfMatching(false);
+      });
+  };
+
+  const startWerewolfRoomGame = () => {
+    if (!werewolfRoomId) return;
+    fetch(`${API}/werewolf/rooms/${werewolfRoomId}/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders }
+    })
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.message || "开局失败");
+        applyWerewolfRoom(data.room);
+        setWerewolfRulePack(buildWerewolfRulePack(data.room.acceptedCount || acceptedMemberCount, "好友房"));
+        setWerewolfMode("judge");
+      })
+      .catch((error) => setChatNotice(error.message || "开局失败"));
+  };
+
+  const inviteWerewolfFriend = (friend) => {
+    const now = Date.now();
+    const expireAt = Number(werewolfInviteCooldowns[friend.id] || 0);
+    if (expireAt > now) return;
+    setWerewolfInviteCooldowns((prev) => ({ ...prev, [friend.id]: now + 30000 }));
+    ensureWerewolfFriendRoom()
+      .then((roomId) =>
+        fetch(`${API}/werewolf/rooms/${roomId}/invite`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders },
+          body: JSON.stringify({ userId: friend.id })
+        })
+      )
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.message || "邀请失败");
+        applyWerewolfRoom(data.room);
+        setChatNotice(`已邀请 ${friend.name}，30秒后可再次邀请`);
+      })
+      .catch((error) => {
+        setWerewolfInviteCooldowns((prev) => ({ ...prev, [friend.id]: 0 }));
+        setChatNotice(error.message || "邀请失败");
+      });
+  };
+
+  const respondWerewolfInvite = async (action) => {
+    if (!werewolfRoomId) return;
+    const res = await fetch(`${API}/werewolf/rooms/${werewolfRoomId}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ action })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "处理邀请失败");
+    applyWerewolfRoom(data.room);
+  };
+
+  const closeWerewolfModal = () => {
+    setShowWerewolfModal(false);
+    setShowWerewolfInvitePanel(false);
+    setWerewolfInviteCooldowns({});
+    setIsWerewolfMatching(false);
+    if (werewolfPollingRef.current) {
+      clearInterval(werewolfPollingRef.current);
+      werewolfPollingRef.current = null;
+    }
+  };
+
+  const enterWerewolfInvitationRoom = async (roomId) => {
+    const res = await fetch(`${API}/werewolf/rooms/${roomId}`, { headers: authHeaders });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "进入房间失败");
+    applyWerewolfRoom(data.room);
+    setWerewolfMode("room");
+  };
+
   const publishMyPost = () => {
     const text = newPostText.trim();
     if (!text) return;
@@ -1113,7 +1579,7 @@ export default function App() {
             <img key={avatar.src} src={avatar.src} alt={avatar.alt} />
           ))}
         </div>
-        <p className="hero-text">帮你找到附近灵魂最契合的人</p>
+        <p className="hero-text">来盲盒开出属于你的隐藏款</p>
 
         {authMode === "login" ? (
           <form className="auth-form" onSubmit={onLogin}>
@@ -1235,7 +1701,7 @@ export default function App() {
   }
 
   return (
-    <div className="main-app">
+    <div className={`main-app ${tab === "chat" && activeConversation ? "chat-detail-mode" : ""}`}>
       {chatNotice && <div className="chat-notice-banner">{chatNotice}</div>}
       {needsProfileSetup && (
         <div className="profile-setup-overlay">
@@ -1243,15 +1709,6 @@ export default function App() {
             <h3>完善新用户资料</h3>
             <p>资料仅用于匹配推荐，提交后即可正常使用。</p>
             <div className="birth-select-row">
-              <select
-                value={profileSetupForm.gender}
-                onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, gender: e.target.value }))}
-                required
-              >
-                <option value="">性别</option>
-                <option value="MALE">男</option>
-                <option value="FEMALE">女</option>
-              </select>
               <select
                 value={profileSetupForm.birthYear}
                 onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, birthYear: e.target.value }))}
@@ -1287,6 +1744,17 @@ export default function App() {
                     {day}日
                   </option>
                 ))}
+              </select>
+            </div>
+            <div className="gender-select-row">
+              <select
+                value={profileSetupForm.gender}
+                onChange={(e) => setProfileSetupForm((prev) => ({ ...prev, gender: e.target.value }))}
+                required
+              >
+                <option value="">性别</option>
+                <option value="MALE">男</option>
+                <option value="FEMALE">女</option>
               </select>
             </div>
             <input
@@ -1417,20 +1885,26 @@ export default function App() {
           <h3 className="section-title">配对玩游戏</h3>
           <div className="game-grid">
             <div className="game-card">
-              <h4>碰碰球友</h4>
+              <h4>猜句子接龙</h4>
               <p>15.1万人正在玩</p>
             </div>
             <div className="game-card">
-              <h4>蛇蛇大作战</h4>
+              <h4>狼人杀</h4>
               <p>5.5万人正在玩</p>
+              <button type="button" onClick={openWerewolfMenu}>
+                进入
+              </button>
             </div>
             <div className="game-card">
               <h4>脑力配对</h4>
               <p>1.5万人正在玩</p>
             </div>
             <div className="game-card">
-              <h4>看谁跳得远</h4>
+              <h4>二选一默契挑战</h4>
               <p>6.5万人正在玩</p>
+              <button type="button" onClick={openTacitMenu}>
+                进入
+              </button>
             </div>
           </div>
 
@@ -1516,12 +1990,19 @@ export default function App() {
                         className={`chat-bubble ${String(msg.fromUserId) === String(user.id) ? "me-bubble" : "other-bubble"}`}
                       >
                         {msg.kind === "IMAGE" ? (
-                          <img
-                            src={`${API}${msg.mediaUrl}`}
-                            alt="图片消息"
-                            className="chat-image"
-                            onClick={() => window.open(`${API}${msg.mediaUrl}`, "_blank")}
-                          />
+                          resolveMediaUrl(msg.mediaUrl) && !brokenImageIds.includes(msg.id) ? (
+                            <img
+                              src={resolveMediaUrl(msg.mediaUrl)}
+                              alt=""
+                              className="chat-image"
+                              onClick={() => window.open(resolveMediaUrl(msg.mediaUrl), "_blank")}
+                              onError={() =>
+                                setBrokenImageIds((prev) => (prev.includes(msg.id) ? prev : [...prev, msg.id]))
+                              }
+                            />
+                          ) : (
+                            <span className="chat-image-missing">图片已失效</span>
+                          )
                         ) : msg.kind === "AUDIO" ? (
                           <div className="chat-audio-wrap">
                             <div className="audio-wave">
@@ -1532,7 +2013,7 @@ export default function App() {
                               <span />
                               <span />
                             </div>
-                            <audio controls preload="metadata" src={`${API}${msg.mediaUrl}`} />
+                            <audio controls preload="metadata" src={resolveMediaUrl(msg.mediaUrl)} />
                             <span>{msg.audioDurationSec ? `${msg.audioDurationSec}s` : "语音"}</span>
                           </div>
                         ) : (
@@ -1961,6 +2442,354 @@ export default function App() {
               ))}
             </div>
             <button type="button" onClick={() => setShowAddFriendModal(false)}>
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showWerewolfModal && (
+        <div className="profile-setup-overlay" onClick={closeWerewolfModal}>
+          <div className="profile-setup-card werewolf-card" onClick={(e) => e.stopPropagation()}>
+            <h3>狼人杀</h3>
+            {werewolfMode === "menu" && (
+              <div className="werewolf-mode-wrap">
+                <div className="werewolf-menu">
+                  <button type="button" onClick={enterWerewolfMatch}>
+                    多人匹配
+                  </button>
+                  <button type="button" onClick={enterWerewolfRoom}>
+                    好友房邀请
+                  </button>
+                </div>
+                {werewolfInvitations.length > 0 && (
+                  <div className="werewolf-invite-list">
+                    {werewolfInvitations.map((item) => (
+                      <div key={`ww-invite-${item.roomId}`} className="contact-item">
+                        <img src={resolveAssetUrl(item.ownerAvatar)} alt={item.ownerName} className="chat-avatar" />
+                        <div className="contact-main">
+                          <strong>{item.ownerName}</strong>
+                          <span>邀请你加入狼人杀好友房</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            enterWerewolfInvitationRoom(item.roomId).catch((e) =>
+                              setChatNotice(e.message || "进入房间失败")
+                            )
+                          }
+                        >
+                          进入
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {werewolfMode === "match" && (
+              <div className="werewolf-mode-wrap">
+                <p>多人匹配模式（固定6人）</p>
+                <p className="feed-tip">
+                  {isWerewolfMatching ? "匹配中，请稍候..." : "点击下方按钮进入狼人等待匹配"}
+                </p>
+                <button type="button" onClick={startWerewolfMatching} disabled={isWerewolfMatching}>
+                  {isWerewolfMatching ? "匹配中..." : "开始匹配"}
+                </button>
+                <button type="button" onClick={() => setWerewolfMode("menu")}>
+                  菜单
+                </button>
+              </div>
+            )}
+            {werewolfMode === "room" && (
+              <div className="werewolf-mode-wrap">
+                <p>
+                  好友房（{werewolfRoomMembers.length}/12） · 已同意 {acceptedMemberCount} 人
+                </p>
+                <div className="werewolf-seats">
+                  {Array.from({ length: 12 }, (_, idx) => {
+                    const member = werewolfRoomMembers[idx];
+                    return (
+                      <div key={`seat-${idx + 1}`} className={`seat ${member ? "filled" : ""}`}>
+                        <strong>{`#${idx + 1}`}</strong>
+                        <span>{member ? member.name : "空位"}</span>
+                        {member && !member.owner && <button type="button">{member.status || "PENDING"}</button>}
+                      </div>
+                    );
+                  })}
+                </div>
+                {showWerewolfInvitePanel && (
+                  <div className="werewolf-invite-list">
+                    {contacts.map((item) => {
+                      const member = werewolfRoomMembers.find((m) => m.id === item.id);
+                      const cooldownLeft = Math.max(
+                        0,
+                        Math.ceil((Number(werewolfInviteCooldowns[item.id] || 0) - Date.now()) / 1000)
+                      );
+                      const roomFull = invitedMemberCount >= 11;
+                      const disabled = roomFull || Boolean(member) || cooldownLeft > 0;
+                      let label = "邀请";
+                      if (member?.status === "PENDING") label = "已邀请";
+                      else if (member?.status === "ACCEPTED") label = "已同意";
+                      else if (cooldownLeft > 0) label = `已邀请(${cooldownLeft}s)`;
+                      else if (roomFull) label = "已满";
+                      return (
+                        <div key={`invite-${item.id}`} className="contact-item">
+                          <img src={resolveAssetUrl(item.avatar)} alt={item.name} className="chat-avatar" />
+                          <div className="contact-main">
+                            <strong>{item.name}</strong>
+                            <span>{item.status}</span>
+                          </div>
+                          <button type="button" disabled={disabled} onClick={() => inviteWerewolfFriend(item)}>
+                            {label}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  disabled={acceptedMemberCount < 6}
+                  onClick={startWerewolfRoomGame}
+                >
+                  {acceptedMemberCount < 6 ? "至少6名玩家同意后开始" : "开始游戏"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    ensureWerewolfFriendRoom().catch((e) => setChatNotice(e.message));
+                    setShowWerewolfInvitePanel((prev) => !prev);
+                  }}
+                >
+                  {showWerewolfInvitePanel ? "收起邀请列表" : "邀请好友"}
+                </button>
+                {currentWerewolfMember && !currentWerewolfMember.owner && !currentWerewolfMember.accepted && (
+                  <div className="werewolf-menu">
+                    <button
+                      type="button"
+                      onClick={() => respondWerewolfInvite("ACCEPT").catch((e) => setChatNotice(e.message))}
+                    >
+                      同意邀请
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => respondWerewolfInvite("DECLINE").catch((e) => setChatNotice(e.message))}
+                    >
+                      拒绝邀请
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {werewolfMode === "judge" && werewolfRulePack && (
+              <div className="werewolf-mode-wrap werewolf-judge-sheet">
+                <p>
+                  法官一页纸 · {werewolfRulePack.modeLabel} · {werewolfRulePack.count}人局
+                </p>
+                <div className="werewolf-role-grid">
+                  <span>狼人 x {werewolfRulePack.role.wolf}</span>
+                  <span>预言家 x {werewolfRulePack.role.seer}</span>
+                  <span>女巫 x {werewolfRulePack.role.witch}</span>
+                  <span>猎人 x {werewolfRulePack.role.hunter}</span>
+                  <span>白痴 x {werewolfRulePack.role.idiot}</span>
+                  <span>平民 x {werewolfRulePack.role.villager}</span>
+                </div>
+                <p>统一规则：{werewolfRulePack.baseRule}</p>
+                <p>补充规则：女巫不能自救/一晚一药；猎人被毒不能开枪；白痴翻牌免死且失去投票权。</p>
+                <div className="werewolf-script-list">
+                  {werewolfRulePack.script.map((line, idx) => (
+                    <p key={`script-${idx}`}>{idx + 1}. {line}</p>
+                  ))}
+                </div>
+                <button type="button" onClick={() => setChatNotice("狼人杀已开局，法官可按一页纸主持")}>
+                  确认开局
+                </button>
+                <button type="button" onClick={() => setWerewolfMode("menu")}>
+                  返回菜单
+                </button>
+              </div>
+            )}
+            <button type="button" onClick={closeWerewolfModal}>
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showTacitModal && (
+        <div className="profile-setup-overlay" onClick={closeTacitModal}>
+          <div className="profile-setup-card werewolf-card tacit-card" onClick={(e) => e.stopPropagation()}>
+            <h3>二选一默契挑战</h3>
+            {tacitMode === "menu" && (
+              <div className="werewolf-mode-wrap">
+                <p>每局 10 题，同一个答案 +10 分，用来测你们的默契值。</p>
+                <div className="werewolf-menu">
+                  <button type="button" onClick={startTacitMatch}>
+                    匹配
+                  </button>
+                  <button type="button" onClick={() => setTacitMode("invite")}>
+                    邀请好友
+                  </button>
+                </div>
+                {tacitInvitations.length > 0 && (
+                  <div className="werewolf-invite-list">
+                    {tacitInvitations.map((item) => (
+                      <div key={`tacit-invite-${item.roomId}`} className="contact-item">
+                        <img src={resolveAssetUrl(item.ownerAvatar)} alt={item.ownerName} className="chat-avatar" />
+                        <div className="contact-main">
+                          <strong>{item.ownerName}</strong>
+                          <span>邀请你加入二选一默契挑战</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            enterTacitInvitationRoom(item.roomId).catch((e) =>
+                              setChatNotice(e.message || "进入房间失败")
+                            )
+                          }
+                        >
+                          进入
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {tacitMode === "match" && (
+              <div className="werewolf-mode-wrap">
+                <p>匹配模式（2人）</p>
+                <p className="feed-tip">{isTacitMatching ? "匹配中，请稍候..." : "点击按钮开始匹配"}</p>
+                <button type="button" onClick={startTacitMatch} disabled={isTacitMatching}>
+                  {isTacitMatching ? "匹配中..." : "开始匹配"}
+                </button>
+                <button type="button" onClick={() => setTacitMode("menu")}>
+                  菜单
+                </button>
+              </div>
+            )}
+            {tacitMode === "invite" && (
+              <div className="werewolf-mode-wrap">
+                <p>选择一个好友开始 10 题默契挑战</p>
+                <div className="werewolf-invite-list">
+                  {contacts.map((item) => (
+                    <div key={`tacit-${item.id}`} className="contact-item">
+                      <img src={resolveAssetUrl(item.avatar)} alt={item.name} className="chat-avatar" />
+                      <div className="contact-main">
+                        <strong>{item.name}</strong>
+                        <span>{item.status}</span>
+                      </div>
+                      <button type="button" onClick={() => inviteTacitFriend(item)}>
+                        邀请
+                      </button>
+                    </div>
+                  ))}
+                  {contacts.length === 0 && <p className="feed-tip">通讯录暂无好友，先去添加好友吧</p>}
+                </div>
+                <button type="button" onClick={() => setTacitMode("menu")}>
+                  返回菜单
+                </button>
+              </div>
+            )}
+            {tacitMode === "room" && tacitRoom && (
+              <div className="werewolf-mode-wrap">
+                <p>好友房（已同意 {tacitRoom.acceptedCount || 0}/2）</p>
+                <div className="werewolf-seats">
+                  {Array.from({ length: 2 }, (_, idx) => {
+                    const member = tacitRoom.members[idx];
+                    return (
+                      <div key={`tacit-seat-${idx + 1}`} className={`seat ${member ? "filled" : ""}`}>
+                        <strong>{`#${idx + 1}`}</strong>
+                        <span>{member ? member.name : "空位"}</span>
+                        {member && member.userId !== user?.id && <span>{member.status}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  disabled={(tacitRoom.acceptedCount || 0) < 2}
+                  onClick={() => startTacitRoomGame().catch((e) => setChatNotice(e.message || "开始失败"))}
+                >
+                  {(tacitRoom.acceptedCount || 0) < 2 ? "需要2名玩家同意" : "开始挑战"}
+                </button>
+                {tacitRoom.members.some((m) => m.userId === user?.id && m.status === "PENDING") && (
+                  <div className="werewolf-menu">
+                    <button
+                      type="button"
+                      onClick={() => respondTacitInvite("ACCEPT").catch((e) => setChatNotice(e.message))}
+                    >
+                      同意邀请
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => respondTacitInvite("DECLINE").catch((e) => setChatNotice(e.message))}
+                    >
+                      拒绝邀请
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {tacitMode === "playing" && tacitCurrentQuestion && (
+              <div className="werewolf-mode-wrap">
+                <p>
+                  第 {Number(tacitCurrentQuestion.sortOrder || 0) + 1} / {tacitRoom?.questionCount || 10} 题 · 当前默契值{" "}
+                  {tacitRoom?.score || 0}
+                </p>
+                <p className="tacit-question-title">{tacitCurrentQuestion.prompt}</p>
+                <div className="tacit-answer-grid">
+                  <div className="tacit-answer-card">
+                    <strong>{user?.nickname || "我"}</strong>
+                    <button
+                      type="button"
+                      className={tacitMyChoice === "A" ? "active-choice" : ""}
+                      onClick={() => chooseTacitAnswer("A").catch((e) => setChatNotice(e.message || "提交失败"))}
+                    >
+                      A. {tacitCurrentQuestion.optionA}
+                    </button>
+                    <button
+                      type="button"
+                      className={tacitMyChoice === "B" ? "active-choice" : ""}
+                      onClick={() => chooseTacitAnswer("B").catch((e) => setChatNotice(e.message || "提交失败"))}
+                    >
+                      B. {tacitCurrentQuestion.optionB}
+                    </button>
+                  </div>
+                  <div className="tacit-answer-card">
+                    <strong>{tacitPeerMember?.name || "对方"}</strong>
+                    <p className="feed-tip">
+                      {tacitPeerMember && tacitCurrentQuestion.choices?.[tacitPeerMember.userId] ? "已作答" : "等待对方作答"}
+                    </p>
+                  </div>
+                </div>
+                {tacitCurrentQuestion.done && (
+                  <p className="feed-tip">{tacitCurrentQuestion.matched ? "本题默契+10" : "本题未加分"}</p>
+                )}
+                {!tacitCurrentQuestion.done && <p className="feed-tip">双方都作答后自动进入下一题</p>}
+              </div>
+            )}
+            {tacitMode === "result" && tacitRoom && (
+              <div className="werewolf-mode-wrap">
+                <p>挑战完成</p>
+                <h4 className="tacit-score">默契值：{tacitRoom.score || 0} / 100</h4>
+                <p className="feed-tip">
+                  {(tacitRoom.score || 0) >= 80
+                    ? "默契爆表，简直心有灵犀！"
+                    : (tacitRoom.score || 0) >= 50
+                      ? "默契不错，再玩几局会更合拍。"
+                      : "默契值还有提升空间，继续互相了解吧。"}
+                </p>
+                <button type="button" onClick={() => replayTacitRound()}>
+                  再来一局
+                </button>
+                <button type="button" onClick={() => setTacitMode("menu")}>
+                  返回菜单
+                </button>
+              </div>
+            )}
+            <button type="button" onClick={closeTacitModal}>
               关闭
             </button>
           </div>
