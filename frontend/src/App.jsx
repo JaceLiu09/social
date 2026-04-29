@@ -1221,10 +1221,10 @@ export default function App() {
         </div>
 
         <div className="quick-login-row">
-          <button className="quick-btn" onClick={() => quickLogin("device")} type="button">
+          <button className="quick-btn" type="button" disabled title="功能暂未开放">
             本机号码一键登录
           </button>
-          <button className="quick-btn wechat" onClick={() => quickLogin("wechat")} type="button">
+          <button className="quick-btn wechat" type="button" disabled title="功能暂未开放">
             微信登录
           </button>
         </div>
