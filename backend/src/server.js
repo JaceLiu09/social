@@ -756,6 +756,8 @@ app.get("/chat/conversations", async (req, res) => {
 
     // Only peers with real messages (not "every other user in DB") — avoids rows where
     // preview/time looked like another person's thread and caused confusion.
+    const friendIds = new Set(await getFriendIds(userId));
+    if (!friendIds.size) return res.json({ conversations: [] });
     const recent = await prisma.chatMessage.findMany({
       where: {
         OR: [{ fromUserId: userId }, { toUserId: userId }]
@@ -767,6 +769,7 @@ app.get("/chat/conversations", async (req, res) => {
     const peerOrder = [];
     for (const m of recent) {
       const peerId = m.fromUserId === userId ? m.toUserId : m.fromUserId;
+      if (!friendIds.has(peerId)) continue;
       if (lastByPeer.has(peerId)) continue;
       lastByPeer.set(peerId, m);
       peerOrder.push(peerId);
@@ -812,6 +815,8 @@ app.get("/chat/messages", async (req, res) => {
     if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
     const peerId = String(req.query.peerId || "");
     if (!peerId) return res.status(400).json({ message: "缺少 peerId" });
+    const friendIds = new Set(await getFriendIds(userId));
+    if (!friendIds.has(peerId)) return res.json({ messages: [] });
     const messages = await prisma.chatMessage.findMany({
       where: pairWhere(userId, peerId),
       orderBy: { createdAt: "asc" },
@@ -840,6 +845,8 @@ app.post("/chat/read", async (req, res) => {
     if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
     const { peerId } = req.body;
     if (!peerId) return res.status(400).json({ message: "参数不完整" });
+    const friendIds = new Set(await getFriendIds(userId));
+    if (!friendIds.has(String(peerId))) return res.json({ ok: true });
     await prisma.chatMessage.updateMany({
       where: {
         fromUserId: String(peerId),

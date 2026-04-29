@@ -135,6 +135,7 @@ export default function App() {
   const [hiddenConversationIds, setHiddenConversationIds] = useState([]);
   const [swipedConversationId, setSwipedConversationId] = useState("");
   const swipeStartXRef = useRef(0);
+  const swipeActiveIdRef = useRef("");
   const mediaRecorderRef = useRef(null);
   const recordChunksRef = useRef([]);
   const recordStartAtRef = useRef(0);
@@ -1016,6 +1017,7 @@ export default function App() {
 
   const onConversationTouchStart = (e, conversationId) => {
     swipeStartXRef.current = e.touches[0].clientX;
+    swipeActiveIdRef.current = conversationId;
     if (swipedConversationId && swipedConversationId !== conversationId) {
       setSwipedConversationId("");
     }
@@ -1028,6 +1030,26 @@ export default function App() {
     } else if (delta > 30) {
       setSwipedConversationId("");
     }
+    swipeActiveIdRef.current = "";
+  };
+
+  const onConversationMouseDown = (e, conversationId) => {
+    swipeStartXRef.current = e.clientX;
+    swipeActiveIdRef.current = conversationId;
+    if (swipedConversationId && swipedConversationId !== conversationId) {
+      setSwipedConversationId("");
+    }
+  };
+
+  const onConversationMouseUp = (e, conversationId) => {
+    if (swipeActiveIdRef.current !== conversationId) return;
+    const delta = e.clientX - swipeStartXRef.current;
+    if (delta < -40) {
+      setSwipedConversationId(conversationId);
+    } else if (delta > 30) {
+      setSwipedConversationId("");
+    }
+    swipeActiveIdRef.current = "";
   };
 
   const onPinConversation = (conversationId) => {
@@ -1608,6 +1630,11 @@ export default function App() {
                       className={`chat-swipe-row ${swipedConversationId === item.id ? "open" : ""}`}
                       onTouchStart={(e) => onConversationTouchStart(e, item.id)}
                       onTouchEnd={(e) => onConversationTouchEnd(e, item.id)}
+                      onMouseDown={(e) => onConversationMouseDown(e, item.id)}
+                      onMouseUp={(e) => onConversationMouseUp(e, item.id)}
+                      onMouseLeave={() => {
+                        swipeActiveIdRef.current = "";
+                      }}
                     >
                       <div className="chat-swipe-actions">
                         <button type="button" className="clean-btn" onClick={onBatchCleanConversations}>
