@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import { prisma } from "./prisma.js";
+import { sampleTacitQuestionsForRound } from "./tacitQuestionBank.js";
 import {
   FRIENDLINESS_PER_ROUND,
   MALE_UNLOCK_FEE,
@@ -31,6 +32,7 @@ const __dirname = path.dirname(__filename);
 const uploadRoot = path.join(__dirname, "../uploads");
 const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
 const AUDIO_MAX_BYTES = 8 * 1024 * 1024;
+const tacitBotAnswerTimers = new Map();
 
 function getPairKey(a, b) {
   return [a, b].sort().join(":");
@@ -69,29 +71,6 @@ function previewText(message) {
   if (message.kind === "AUDIO") return "[语音]";
   return message.text || "";
 }
-
-const TACIT_CHALLENGE_QUESTION_BANK = [
-  { prompt: "周末更想怎么放松？", optionA: "宅家追剧", optionB: "出门逛吃" },
-  { prompt: "约会更想去哪？", optionA: "海边散步", optionB: "城市夜景" },
-  { prompt: "聊天更喜欢？", optionA: "秒回高频", optionB: "慢聊走心" },
-  { prompt: "旅行更倾向？", optionA: "详细规划", optionB: "说走就走" },
-  { prompt: "吃火锅你选？", optionA: "清汤", optionB: "麻辣" },
-  { prompt: "对礼物的偏好？", optionA: "实用型", optionB: "仪式感" },
-  { prompt: "早起还是熬夜？", optionA: "早起型", optionB: "夜猫子" },
-  { prompt: "消息语气更像？", optionA: "直接简洁", optionB: "可爱表情包" },
-  { prompt: "遇到分歧会？", optionA: "先冷静再聊", optionB: "当场说开" },
-  { prompt: "看电影优先？", optionA: "剧情片", optionB: "喜剧片" },
-  { prompt: "假期更想？", optionA: "睡到自然醒", optionB: "早起打卡景点" },
-  { prompt: "点奶茶会选？", optionA: "三分糖", optionB: "全糖加料" },
-  { prompt: "宠物更喜欢？", optionA: "猫", optionB: "狗" },
-  { prompt: "聚会角色更像？", optionA: "活跃气氛", optionB: "安静观察" },
-  { prompt: "下雨天更想？", optionA: "窝在家听歌", optionB: "穿雨衣去散步" },
-  { prompt: "手机电量低于20%会？", optionA: "立刻充电", optionB: "再撑一会" },
-  { prompt: "拍照时更偏向？", optionA: "抓拍自然", optionB: "摆拍精致" },
-  { prompt: "节日安排更想？", optionA: "两人独处", optionB: "朋友局热闹" },
-  { prompt: "吃饭速度更常见？", optionA: "慢慢吃", optionB: "很快解决" },
-  { prompt: "听歌偏好？", optionA: "循环老歌", optionB: "追新歌单" }
-];
 
 function toTenDigitId(input) {
   const raw = String(input || "");
@@ -160,14 +139,10 @@ function emitWerewolfRoomUpdateToUsers(userIds, payload) {
   });
 }
 
-function sampleTacitQuestions(count = 10) {
-  return [...TACIT_CHALLENGE_QUESTION_BANK].sort(() => Math.random() - 0.5).slice(0, count);
-}
-
 async function seedTacitQuestionsIfMissing(roomId) {
   const exists = await prisma.tacitQuestion.count({ where: { roomId } });
   if (exists > 0) return;
-  const questions = sampleTacitQuestions(10);
+  const questions = sampleTacitQuestionsForRound({ icebreakerCount: 5, valueCount: 5 });
   await prisma.tacitQuestion.createMany({
     data: questions.map((item, idx) => ({
       roomId,
@@ -177,6 +152,66 @@ async function seedTacitQuestionsIfMissing(roomId) {
       optionB: item.optionB
     }))
   });
+}
+
+function getTacitBotDelayMs(userId) {
+  const seed = Array.from(String(userId || "")).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  return 2000 + (seed % 5) * 1000; // 2s~6s
+}
+
+async function completeTacitMatchWithBotIfNeeded(userId) {
+  const queueEntry = await prisma.tacitMatchQueue.findUnique({ where: { userId } });
+  if (!queueEntry) return null;
+  const waitedMs = Date.now() - new Date(queueEntry.createdAt).getTime();
+  if (waitedMs < getTacitBotDelayMs(userId)) return null;
+
+  const matchRoomMember = await prisma.tacitRoomMember.findFirst({
+    where: {
+      userId,
+      room: {
+        type: "MATCH",
+        status: { in: ["WAITING", "IN_PROGRESS"] }
+      }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  if (matchRoomMember) {
+    return getTacitRoomPayload(matchRoomMember.roomId);
+  }
+
+  const currentUser = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { gender: true }
+  });
+  const targetGender = currentUser?.gender === "MALE" ? "FEMALE" : "MALE";
+  const candidates = await prisma.user.findMany({
+    where: {
+      id: { not: userId },
+      phone: { startsWith: "fake" },
+      gender: targetGender
+    },
+    take: 200
+  });
+  const bot = candidates[Math.floor(Math.random() * candidates.length)] || null;
+  if (!bot) return null;
+
+  const room = await prisma.tacitRoom.create({
+    data: {
+      type: "MATCH",
+      status: "IN_PROGRESS",
+      ownerUserId: userId
+    }
+  });
+  await prisma.tacitRoomMember.createMany({
+    data: [
+      { roomId: room.id, userId, status: "HOST", invitedByUserId: null },
+      { roomId: room.id, userId: bot.id, status: "ACCEPTED", invitedByUserId: userId }
+    ]
+  });
+  await seedTacitQuestionsIfMissing(room.id);
+  await prisma.tacitMatchQueue.deleteMany({ where: { userId } });
+  scheduleTacitBotAnswer(room.id).catch(() => {});
+  return getTacitRoomPayload(room.id);
 }
 
 async function getTacitRoomPayload(roomId) {
@@ -259,18 +294,89 @@ function emitTacitRoomUpdateToUsers(userIds, payload) {
   });
 }
 
+function randomBotAnswerDelayMs() {
+  return 2000 + Math.floor(Math.random() * 5000);
+}
+
+function randomTacitChoice() {
+  return Math.random() > 0.5 ? "A" : "B";
+}
+
+async function scheduleTacitBotAnswer(roomId) {
+  const room = await prisma.tacitRoom.findUnique({
+    where: { id: roomId },
+    include: {
+      members: {
+        include: { user: true }
+      },
+      questions: {
+        orderBy: { sortOrder: "asc" },
+        include: { answers: true }
+      }
+    }
+  });
+  if (!room || room.type !== "MATCH" || room.status !== "IN_PROGRESS") return;
+  const botMember =
+    room.members.find((m) => String(m.user?.nickname || "").startsWith("guest")) ||
+    room.members.find((m) => String(m.user?.phone || "").startsWith("fake")) ||
+    room.members.find((m) => m.status === "ACCEPTED");
+  if (!botMember) return;
+
+  const botUserId = String(botMember.userId);
+  const currentQuestion = room.questions.find((q) => {
+    const acceptedMembers = room.members.filter((m) => m.status === "HOST" || m.status === "ACCEPTED");
+    const answeredCount = acceptedMembers.filter((m) => q.answers.some((a) => a.userId === m.userId)).length;
+    return answeredCount < 2;
+  });
+  if (!currentQuestion) return;
+  const answeredByBot = currentQuestion.answers.some((a) => a.userId === botUserId);
+  if (answeredByBot) return;
+
+  const timerKey = `${roomId}:${currentQuestion.id}:${botUserId}`;
+  if (tacitBotAnswerTimers.has(timerKey)) return;
+
+  const timer = setTimeout(async () => {
+    tacitBotAnswerTimers.delete(timerKey);
+    try {
+      const choice = randomTacitChoice();
+      await prisma.tacitAnswer.upsert({
+        where: { questionId_userId: { questionId: currentQuestion.id, userId: botUserId } },
+        update: { choice, answeredAt: new Date() },
+        create: {
+          roomId,
+          questionId: currentQuestion.id,
+          memberId: botMember.id,
+          userId: botUserId,
+          choice
+        }
+      });
+      const payload = await getTacitRoomPayload(roomId);
+      if (payload) emitTacitRoomUpdateToUsers(payload.members.map((m) => m.userId), payload);
+      await scheduleTacitBotAnswer(roomId);
+    } catch (_error) {}
+  }, randomBotAnswerDelayMs());
+
+  tacitBotAnswerTimers.set(timerKey, timer);
+}
+
 const DEFAULT_PASSWORD = "123456";
 const VIRTUAL_USER_COUNT = 12;
+const FAKE_BOT_COUNT_PER_GENDER = 100;
 
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function randomPhone(existingPhones) {
+function randomPhone(existingPhones, prefix = "19") {
   let phone = "";
   do {
-    const suffix = String(randomInt(0, 999999999)).padStart(9, "0");
-    phone = `19${suffix}`;
+    if (prefix.startsWith("fake")) {
+      const suffix = String(randomInt(0, 99999999)).padStart(8, "0");
+      phone = `${prefix}${suffix}`;
+    } else {
+      const suffix = String(randomInt(0, 999999999)).padStart(9, "0");
+      phone = `${prefix}${suffix}`;
+    }
   } while (existingPhones.has(phone));
   existingPhones.add(phone);
   return phone;
@@ -301,6 +407,49 @@ function buildVirtualUser(index, existingPhones) {
     partnerExpectation: "真诚沟通，三观契合",
     profileCompleted: true,
     photoUrls: JSON.stringify([`https://picsum.photos/300/300?${photoSeed}`])
+  };
+}
+
+async function loadAvatarUrlsByFolder(folder) {
+  try {
+    const dir = path.join(__dirname, `../../frontend/public/avatars/${folder}`);
+    const files = await fs.readdir(dir);
+    return files
+      .filter((name) => /\.(jpg|jpeg|png|webp|gif)$/i.test(name))
+      .sort()
+      .map((name) => `http://localhost:5173/avatars/${folder}/${name}`);
+  } catch (_error) {
+    return [];
+  }
+}
+
+function buildFakeBotUser({ index, gender, avatarUrls, existingPhones }) {
+  const male = gender === "MALE";
+  const cityPool = ["上海", "深圳", "广州", "杭州", "成都", "北京", "重庆", "南京"];
+  const hometownPool = ["苏州", "武汉", "西安", "长沙", "青岛", "郑州", "厦门", "天津"];
+  const incomes = ["6k-10k", "8k-15k", "10k-20k", "15k-25k"];
+  const industries = ["互联网", "设计", "运营", "教育", "金融", "医疗", "传媒", "制造业"];
+  const hobbiesPool = male
+    ? ["篮球,健身,电影", "跑步,摄影,咖啡", "露营,自驾,音乐", "羽毛球,桌游,旅行"]
+    : ["旅行,探店,摄影", "阅读,瑜伽,电影", "烘焙,插花,音乐", "羽毛球,徒步,美食"];
+  const avatar = avatarUrls.length ? avatarUrls[index % avatarUrls.length] : `https://picsum.photos/300/300?fake-${gender}-${index}`;
+  return {
+    phone: randomPhone(existingPhones, `fake${male ? "m" : "f"}`),
+    password: DEFAULT_PASSWORD,
+    nickname: `隐藏款${male ? "男" : "女"}${String(index + 1).padStart(3, "0")}`,
+    gender,
+    age: randomInt(18, 28),
+    height: male ? randomInt(168, 186) : randomInt(155, 172),
+    weight: male ? randomInt(58, 82) : randomInt(43, 62),
+    hometown: hometownPool[index % hometownPool.length],
+    currentCity: cityPool[index % cityPool.length],
+    income: incomes[index % incomes.length],
+    industry: industries[index % industries.length],
+    hobbies: hobbiesPool[index % hobbiesPool.length],
+    partnerExpectation: "真诚沟通，彼此尊重，共同成长",
+    profileCompleted: true,
+    avatarUrl: avatar,
+    photoUrls: JSON.stringify([avatar])
   };
 }
 
@@ -411,6 +560,53 @@ async function ensureDefaultUsers() {
     const virtualUsers = Array.from({ length: missingVirtual }, (_, idx) => buildVirtualUser(startIndex + idx, allPhones));
     await prisma.user.createMany({
       data: virtualUsers,
+      skipDuplicates: true
+    });
+  }
+
+  const [maleAvatarUrls, femaleAvatarUrls] = await Promise.all([
+    loadAvatarUrlsByFolder("male"),
+    loadAvatarUrlsByFolder("female")
+  ]);
+  const existingFakeBots = await prisma.user.findMany({
+    where: {
+      OR: [{ phone: { startsWith: "fakem" } }, { phone: { startsWith: "fakef" } }]
+    },
+    select: { phone: true, gender: true }
+  });
+  const fakePhoneSeed = new Set([
+    ...allPhones,
+    ...existingFakeBots.map((u) => u.phone)
+  ]);
+  const maleExisting = existingFakeBots.filter((u) => u.gender === "MALE").length;
+  const femaleExisting = existingFakeBots.filter((u) => u.gender === "FEMALE").length;
+  const maleMissing = Math.max(0, FAKE_BOT_COUNT_PER_GENDER - maleExisting);
+  const femaleMissing = Math.max(0, FAKE_BOT_COUNT_PER_GENDER - femaleExisting);
+
+  if (maleMissing > 0) {
+    await prisma.user.createMany({
+      data: Array.from({ length: maleMissing }, (_, idx) =>
+        buildFakeBotUser({
+          index: maleExisting + idx,
+          gender: "MALE",
+          avatarUrls: maleAvatarUrls,
+          existingPhones: fakePhoneSeed
+        })
+      ),
+      skipDuplicates: true
+    });
+  }
+
+  if (femaleMissing > 0) {
+    await prisma.user.createMany({
+      data: Array.from({ length: femaleMissing }, (_, idx) =>
+        buildFakeBotUser({
+          index: femaleExisting + idx,
+          gender: "FEMALE",
+          avatarUrls: femaleAvatarUrls,
+          existingPhones: fakePhoneSeed
+        })
+      ),
       skipDuplicates: true
     });
   }
@@ -1164,7 +1360,10 @@ app.post("/tacit/match/enqueue", async (req, res) => {
     const existingMember = await prisma.tacitRoomMember.findFirst({
       where: {
         userId,
-        room: { status: { in: ["WAITING", "IN_PROGRESS", "FINISHED"] } }
+        room: {
+          type: "MATCH",
+          status: { in: ["WAITING", "IN_PROGRESS"] }
+        }
       },
       orderBy: { createdAt: "desc" }
     });
@@ -1202,6 +1401,7 @@ app.post("/tacit/match/enqueue", async (req, res) => {
     await prisma.tacitMatchQueue.deleteMany({ where: { userId: { in: userIds } } });
     const payload = await getTacitRoomPayload(room.id);
     emitTacitRoomUpdateToUsers(userIds, payload);
+    scheduleTacitBotAnswer(room.id).catch(() => {});
     return res.json({ matched: true, roomId: room.id, room: payload });
   } catch (_error) {
     return res.status(500).json({ message: "默契匹配失败，请稍后重试" });
@@ -1215,11 +1415,18 @@ app.get("/tacit/match/status", async (req, res) => {
     const member = await prisma.tacitRoomMember.findFirst({
       where: {
         userId,
-        room: { status: { in: ["WAITING", "IN_PROGRESS", "FINISHED"] } }
+        room: {
+          type: "MATCH",
+          status: { in: ["WAITING", "IN_PROGRESS"] }
+        }
       },
       orderBy: { createdAt: "desc" }
     });
-    if (!member) return res.json({ matched: false });
+    if (!member) {
+      const botRoom = await completeTacitMatchWithBotIfNeeded(userId);
+      if (botRoom) return res.json({ matched: true, roomId: botRoom.id, room: botRoom });
+      return res.json({ matched: false });
+    }
     const room = await getTacitRoomPayload(member.roomId);
     return res.json({ matched: true, roomId: member.roomId, room });
   } catch (_error) {
@@ -1413,6 +1620,7 @@ app.post("/tacit/rooms/:id/answer", async (req, res) => {
     });
     const payload = await getTacitRoomPayload(roomId);
     emitTacitRoomUpdateToUsers(payload.members.map((m) => m.userId), payload);
+    scheduleTacitBotAnswer(roomId).catch(() => {});
     return res.json({ room: payload });
   } catch (_error) {
     return res.status(500).json({ message: "提交答案失败" });

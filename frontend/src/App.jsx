@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
+import avatarManifest from "./avatarManifest.json";
 
 const API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
 const MALE_SYMBOL_AVATAR = `data:image/svg+xml;utf8,${encodeURIComponent(
@@ -22,10 +23,17 @@ const settingItems = [
   "社交礼仪分",
   "盲盒币充值"
 ];
-const localAvatarPool = Array.from({ length: 91 }, (_, idx) => ({
-  src: `/avatars/avatar-${String(idx + 1).padStart(3, "0")}.jpg`,
-  alt: `头像${idx + 1}`
+const maleAvatarPool = (avatarManifest.male || []).map((src, idx) => ({
+  src,
+  gender: "MALE",
+  alt: `男生头像${idx + 1}`
 }));
+const femaleAvatarPool = (avatarManifest.female || []).map((src, idx) => ({
+  src,
+  gender: "FEMALE",
+  alt: `女生头像${idx + 1}`
+}));
+const localAvatarPool = [...maleAvatarPool, ...femaleAvatarPool];
 
 function sampleItems(list, count) {
   return [...list]
@@ -51,6 +59,7 @@ function formatChatTime(value) {
 function resolveAssetUrl(url) {
   if (!url) return MALE_SYMBOL_AVATAR;
   if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) return url;
+  if (url.startsWith("/avatars/")) return url;
   if (url.startsWith("/")) return `${API}${url}`;
   return url;
 }
@@ -185,6 +194,12 @@ export default function App() {
   const [tacitRoomId, setTacitRoomId] = useState("");
   const [tacitRoom, setTacitRoom] = useState(null);
   const [tacitInvitations, setTacitInvitations] = useState([]);
+  const [tacitDraftChoice, setTacitDraftChoice] = useState("");
+  const [tacitConfirming, setTacitConfirming] = useState(false);
+  const [tacitSubmittedQuestionId, setTacitSubmittedQuestionId] = useState("");
+  const [tacitCountdownSec, setTacitCountdownSec] = useState(30);
+  const [showMembershipGate, setShowMembershipGate] = useState(false);
+  const [membershipSubmitting, setMembershipSubmitting] = useState(false);
   const [isTacitMatching, setIsTacitMatching] = useState(false);
   const [myPosts, setMyPosts] = useState([]);
   const [newPostText, setNewPostText] = useState("");
@@ -212,6 +227,7 @@ export default function App() {
   const UPLOAD_TIMEOUT_MS = 20000;
   const werewolfPollingRef = useRef(null);
   const tacitPollingRef = useRef(null);
+  const tacitAutoSubmitRef = useRef("");
 
   const friendlinessPercent = session?.friendliness ?? 0;
   const profilePhotos = useMemo(() => {
@@ -281,20 +297,26 @@ export default function App() {
     () => (user?.id && tacitCurrentQuestion?.choices ? tacitCurrentQuestion.choices[user.id] || "" : ""),
     [tacitCurrentQuestion, user]
   );
+  const tacitDisplayChoice = tacitMyChoice || tacitDraftChoice;
+  const tacitHasSubmitted = Boolean(tacitMyChoice) || tacitSubmittedQuestionId === tacitCurrentQuestion?.id;
   const tacitPeerMember = useMemo(
     () => tacitAcceptedMembers.find((m) => m.userId !== user?.id) || null,
     [tacitAcceptedMembers, user]
   );
-
-  const sortConversations = (list, pinnedIds = pinnedConversationIds) =>
-    [...list].sort((a, b) => {
-      const pinA = pinnedIds.includes(a.id) ? 1 : 0;
-      const pinB = pinnedIds.includes(b.id) ? 1 : 0;
-      if (pinA !== pinB) return pinB - pinA;
-      const timeA = new Date(a.time || 0).getTime() || 0;
-      const timeB = new Date(b.time || 0).getTime() || 0;
-      return timeB - timeA;
-    });
+  const tacitPeerDisplay = useMemo(() => {
+    if (!tacitPeerMember) return null;
+    const isMatchBot = tacitRoom?.type === "MATCH";
+    if (!isMatchBot) {
+      return {
+        name: tacitPeerMember.name || "对方",
+        avatar: tacitPeerMember.avatar || ""
+      };
+    }
+    return {
+      name: "你的隐藏款",
+      avatar: tacitPeerMember.avatar || ""
+    };
+  }, [tacitPeerMember, tacitRoom?.type]);
   const authHeaders = useMemo(
     () =>
       authToken
@@ -305,6 +327,90 @@ export default function App() {
     [authToken]
   );
 
+  useEffect(() => {
+    if (!tacitCurrentQuestion) {
+      setTacitDraftChoice("");
+      setTacitConfirming(false);
+      setTacitSubmittedQuestionId("");
+      setTacitCountdownSec(30);
+      return;
+    }
+    if (tacitMyChoice) {
+      setTacitDraftChoice(tacitMyChoice);
+      setTacitConfirming(false);
+      setTacitSubmittedQuestionId(tacitCurrentQuestion.id);
+      setTacitCountdownSec(30);
+      return;
+    }
+    setTacitDraftChoice("");
+    setTacitConfirming(false);
+    setTacitSubmittedQuestionId("");
+    setTacitCountdownSec(30);
+  }, [tacitCurrentQuestion?.id, tacitMyChoice]);
+
+  useEffect(() => {
+    tacitAutoSubmitRef.current = "";
+  }, [tacitCurrentQuestion?.id]);
+
+  useEffect(() => {
+    if (!showTacitModal || tacitMode !== "playing" || !tacitRoomId) return undefined;
+    const pullRoom = async () => {
+      try {
+        const res = await fetch(`${API}/tacit/rooms/${tacitRoomId}`, { headers: authHeaders });
+        const data = await res.json();
+        if (res.ok && data?.room) applyTacitRoom(data.room);
+      } catch (_error) {}
+    };
+    pullRoom();
+    const timer = window.setInterval(pullRoom, 1000);
+    return () => clearInterval(timer);
+  }, [showTacitModal, tacitMode, tacitRoomId, authHeaders]);
+
+  useEffect(() => {
+    if (!tacitCurrentQuestion || tacitMode !== "playing") return undefined;
+    if (tacitCountdownSec <= 0) {
+      if (tacitAutoSubmitRef.current === tacitCurrentQuestion.id) return undefined;
+      tacitAutoSubmitRef.current = tacitCurrentQuestion.id;
+      if (!tacitHasSubmitted) {
+        const autoChoice = tacitDraftChoice || (Math.random() > 0.5 ? "A" : "B");
+        setTacitDraftChoice(autoChoice);
+        setTacitSubmittedQuestionId(tacitCurrentQuestion.id);
+        chooseTacitAnswer(autoChoice).catch(() => {
+          setTacitSubmittedQuestionId("");
+        });
+      } else {
+        fetch(`${API}/tacit/rooms/${tacitRoomId}`, { headers: authHeaders })
+          .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+          .then(({ ok, data }) => {
+            if (ok && data?.room) applyTacitRoom(data.room);
+          })
+          .catch(() => {});
+      }
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setTacitCountdownSec((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [
+    tacitMode,
+    tacitCurrentQuestion?.id,
+    tacitHasSubmitted,
+    tacitCountdownSec,
+    tacitDraftChoice,
+    tacitRoomId,
+    authHeaders
+  ]);
+
+  const sortConversations = (list, pinnedIds = pinnedConversationIds) =>
+    [...list].sort((a, b) => {
+      const pinA = pinnedIds.includes(a.id) ? 1 : 0;
+      const pinB = pinnedIds.includes(b.id) ? 1 : 0;
+      if (pinA !== pinB) return pinB - pinA;
+      const timeA = new Date(a.time || 0).getTime() || 0;
+      const timeB = new Date(b.time || 0).getTime() || 0;
+      return timeB - timeA;
+    });
   useEffect(() => {
     activeConversationIdRef.current = activeConversation?.id || "";
   }, [activeConversation]);
@@ -1281,6 +1387,7 @@ export default function App() {
   const startTacitMatch = () => {
     if (isTacitMatching || tacitPollingRef.current) return;
     setIsTacitMatching(true);
+    setTacitMode("match");
     fetch(`${API}/tacit/match/enqueue`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders }
@@ -1293,7 +1400,6 @@ export default function App() {
           setIsTacitMatching(false);
           return;
         }
-        setTacitMode("match");
         tacitPollingRef.current = window.setInterval(async () => {
           try {
             const statusRes = await fetch(`${API}/tacit/match/status`, { headers: authHeaders });
@@ -1366,6 +1472,54 @@ export default function App() {
     applyTacitRoom(data.room);
   };
 
+  const confirmTacitAnswer = async () => {
+    if (!tacitDraftChoice || tacitMyChoice) return;
+    if (tacitCurrentQuestion?.id) setTacitSubmittedQuestionId(tacitCurrentQuestion.id);
+    setTacitConfirming(true);
+    try {
+      await chooseTacitAnswer(tacitDraftChoice);
+    } catch (error) {
+      setTacitSubmittedQuestionId("");
+      throw error;
+    } finally {
+      setTacitConfirming(false);
+    }
+  };
+
+  const subscribeMembership = async (plan) => {
+    if (!user?.id) return;
+    setMembershipSubmitting(true);
+    try {
+      const res = await fetch(`${API}/membership/subscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id, plan })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "开通会员失败");
+      setUser(data.user || user);
+      setShowMembershipGate(false);
+      setChatNotice(`会员开通成功，已支付 ${data.paid} 元`);
+    } catch (error) {
+      setChatNotice(error.message || "开通会员失败");
+    } finally {
+      setMembershipSubmitting(false);
+    }
+  };
+
+  const onTacitAddFriend = async () => {
+    if (!tacitPeerMember?.userId) return;
+    if (!isMembershipValid) {
+      setShowMembershipGate(true);
+      return;
+    }
+    try {
+      await sendFriendRequest(tacitPeerMember.userId, tacitPeerMember.name || "对方");
+    } catch (error) {
+      setChatNotice(error.message || "发起好友请求失败");
+    }
+  };
+
   const enterTacitInvitationRoom = async (roomId) => {
     const res = await fetch(`${API}/tacit/rooms/${roomId}`, { headers: authHeaders });
     const data = await res.json();
@@ -1373,15 +1527,15 @@ export default function App() {
     applyTacitRoom(data.room);
   };
 
-  const replayTacitRound = () => {
-    if (!tacitRoom?.type) return;
-    if (tacitRoom.type === "MATCH") {
-      startTacitMatch();
-      return;
-    }
+  const inviteTacitReplay = () => {
+    setShowMembershipGate(true);
+  };
+
+  const rematchTacitRound = () => {
     setTacitRoom(null);
     setTacitRoomId("");
-    setTacitMode("invite");
+    setTacitMode("match");
+    startTacitMatch();
   };
 
   const closeTacitModal = () => {
@@ -1576,7 +1730,15 @@ export default function App() {
 
         <div className="hero-avatars">
           {heroAvatarList.map((avatar) => (
-            <img key={avatar.src} src={avatar.src} alt={avatar.alt} />
+            <img
+              key={avatar.src}
+              src={resolveAssetUrl(avatar.src)}
+              alt=""
+              onError={(e) => {
+                e.currentTarget.onerror = null;
+                e.currentTarget.src = MALE_SYMBOL_AVATAR;
+              }}
+            />
           ))}
         </div>
         <p className="hero-text">来盲盒开出属于你的隐藏款</p>
@@ -2738,27 +2900,37 @@ export default function App() {
                   第 {Number(tacitCurrentQuestion.sortOrder || 0) + 1} / {tacitRoom?.questionCount || 10} 题 · 当前默契值{" "}
                   {tacitRoom?.score || 0}
                 </p>
+                <p className="feed-tip">本题剩余作答时间：{tacitCountdownSec}s</p>
                 <p className="tacit-question-title">{tacitCurrentQuestion.prompt}</p>
                 <div className="tacit-answer-grid">
                   <div className="tacit-answer-card">
                     <strong>{user?.nickname || "我"}</strong>
                     <button
                       type="button"
-                      className={tacitMyChoice === "A" ? "active-choice" : ""}
-                      onClick={() => chooseTacitAnswer("A").catch((e) => setChatNotice(e.message || "提交失败"))}
+                      className={tacitDisplayChoice === "A" ? "active-choice" : ""}
+                      disabled={tacitHasSubmitted}
+                      onClick={() => setTacitDraftChoice("A")}
                     >
                       A. {tacitCurrentQuestion.optionA}
                     </button>
                     <button
                       type="button"
-                      className={tacitMyChoice === "B" ? "active-choice" : ""}
-                      onClick={() => chooseTacitAnswer("B").catch((e) => setChatNotice(e.message || "提交失败"))}
+                      className={tacitDisplayChoice === "B" ? "active-choice" : ""}
+                      disabled={tacitHasSubmitted}
+                      onClick={() => setTacitDraftChoice("B")}
                     >
                       B. {tacitCurrentQuestion.optionB}
                     </button>
+                    <button
+                      type="button"
+                      disabled={tacitHasSubmitted || !tacitDraftChoice || tacitConfirming}
+                      onClick={() => confirmTacitAnswer().catch((e) => setChatNotice(e.message || "提交失败"))}
+                    >
+                      {tacitHasSubmitted ? "已确认" : tacitConfirming ? "确认中..." : "确认"}
+                    </button>
                   </div>
                   <div className="tacit-answer-card">
-                    <strong>{tacitPeerMember?.name || "对方"}</strong>
+                    <strong>{tacitPeerDisplay?.name || "对方"}</strong>
                     <p className="feed-tip">
                       {tacitPeerMember && tacitCurrentQuestion.choices?.[tacitPeerMember.userId] ? "已作答" : "等待对方作答"}
                     </p>
@@ -2767,7 +2939,7 @@ export default function App() {
                 {tacitCurrentQuestion.done && (
                   <p className="feed-tip">{tacitCurrentQuestion.matched ? "本题默契+10" : "本题未加分"}</p>
                 )}
-                {!tacitCurrentQuestion.done && <p className="feed-tip">双方都作答后自动进入下一题</p>}
+                {!tacitCurrentQuestion.done && <p className="feed-tip">双方确认后自动进入下一题</p>}
               </div>
             )}
             {tacitMode === "result" && tacitRoom && (
@@ -2781,8 +2953,27 @@ export default function App() {
                       ? "默契不错，再玩几局会更合拍。"
                       : "默契值还有提升空间，继续互相了解吧。"}
                 </p>
-                <button type="button" onClick={() => replayTacitRound()}>
-                  再来一局
+                {tacitPeerMember && (
+                  <div className="contact-item">
+                    <img
+                      src={resolveAssetUrl(tacitPeerDisplay?.avatar || tacitPeerMember.avatar)}
+                      alt={tacitPeerDisplay?.name || tacitPeerMember.name}
+                      className="chat-avatar"
+                    />
+                    <div className="contact-main">
+                      <strong>{tacitPeerDisplay?.name || tacitPeerMember.name || "对方玩家"}</strong>
+                      <span>本局对手 · 点击可添加好友</span>
+                    </div>
+                    <button type="button" onClick={() => onTacitAddFriend()}>
+                      添加
+                    </button>
+                  </div>
+                )}
+                <button type="button" onClick={() => inviteTacitReplay()}>
+                  邀请再来一局
+                </button>
+                <button type="button" onClick={() => rematchTacitRound()}>
+                  重新匹配
                 </button>
                 <button type="button" onClick={() => setTacitMode("menu")}>
                   返回菜单
@@ -2791,6 +2982,28 @@ export default function App() {
             )}
             <button type="button" onClick={closeTacitModal}>
               关闭
+            </button>
+          </div>
+        </div>
+      )}
+      {showMembershipGate && (
+        <div className="profile-setup-overlay" onClick={() => setShowMembershipGate(false)}>
+          <div className="profile-setup-card" onClick={(e) => e.stopPropagation()}>
+            <h3>开通会员后可邀请再来一局</h3>
+            <p>当前账号是免费用户，开通会员后可邀请对方继续下一局并添加好友。</p>
+            <div className="werewolf-menu">
+              <button type="button" disabled={membershipSubmitting} onClick={() => subscribeMembership("MONTH")}>
+                月卡 ¥29
+              </button>
+              <button type="button" disabled={membershipSubmitting} onClick={() => subscribeMembership("QUARTER")}>
+                季卡 ¥79
+              </button>
+              <button type="button" disabled={membershipSubmitting} onClick={() => subscribeMembership("YEAR")}>
+                年卡 ¥269
+              </button>
+            </div>
+            <button type="button" onClick={() => setShowMembershipGate(false)}>
+              先不添加
             </button>
           </div>
         </div>
