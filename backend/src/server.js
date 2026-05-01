@@ -417,7 +417,7 @@ async function loadAvatarUrlsByFolder(folder) {
     return files
       .filter((name) => /\.(jpg|jpeg|png|webp|gif)$/i.test(name))
       .sort()
-      .map((name) => `http://localhost:5173/avatars/${folder}/${name}`);
+      .map((name) => `/avatars/${folder}/${name}`);
   } catch (_error) {
     return [];
   }
@@ -1357,6 +1357,11 @@ app.post("/tacit/match/enqueue", async (req, res) => {
   try {
     const userId = getAuthUserId(req);
     if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const currentUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { gender: true }
+    });
+    if (!currentUser) return res.status(401).json({ message: "未登录或登录态失效" });
     const existingMember = await prisma.tacitRoomMember.findFirst({
       where: {
         userId,
@@ -1376,12 +1381,27 @@ app.post("/tacit/match/enqueue", async (req, res) => {
       update: {},
       create: { userId }
     });
+    const targetGender = currentUser.gender === "MALE" ? "FEMALE" : "MALE";
     const queued = await prisma.tacitMatchQueue.findMany({
       orderBy: { createdAt: "asc" },
-      take: 2
+      include: {
+        user: {
+          select: {
+            id: true,
+            gender: true
+          }
+        }
+      },
+      take: 100
     });
-    if (queued.length < 2) return res.json({ matched: false, queuedCount: queued.length });
-    const userIds = queued.map((q) => q.userId);
+    const meInQueue = queued.find((item) => item.userId === userId) || null;
+    const partnerInQueue =
+      queued.find((item) => item.userId !== userId && item.user?.gender === targetGender) || null;
+    if (!meInQueue || !partnerInQueue) return res.json({ matched: false, queuedCount: queued.length });
+    const pair = [meInQueue, partnerInQueue].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+    const userIds = pair.map((q) => q.userId);
     const room = await prisma.tacitRoom.create({
       data: {
         type: "MATCH",
