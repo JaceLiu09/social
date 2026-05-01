@@ -1604,7 +1604,7 @@ app.post("/werewolf/rooms/:id/start", async (req, res) => {
       if (needBots > 0) {
         const botUsers = await prisma.user.findMany({
           where: {
-            OR: [{ phone: { startsWith: "fakem" } }, { phone: { startsWith: "fakef" } }],
+            phone: { startsWith: "fake" },
             id: { notIn: participantIds }
           },
           take: needBots
