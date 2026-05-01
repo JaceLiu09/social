@@ -1454,6 +1454,58 @@ app.get("/tacit/match/status", async (req, res) => {
   }
 });
 
+app.post("/tacit/match/cancel", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    await prisma.tacitMatchQueue.deleteMany({ where: { userId } });
+    return res.json({ ok: true });
+  } catch (_error) {
+    return res.status(500).json({ message: "取消默契匹配失败" });
+  }
+});
+
+app.post("/tacit/session/reset", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+
+    await prisma.tacitMatchQueue.deleteMany({ where: { userId } });
+    const activeMembers = await prisma.tacitRoomMember.findMany({
+      where: {
+        userId,
+        room: {
+          status: { in: ["WAITING", "IN_PROGRESS"] }
+        }
+      },
+      select: { roomId: true }
+    });
+    const roomIds = [...new Set(activeMembers.map((item) => item.roomId).filter(Boolean))];
+    for (const roomId of roomIds) {
+      await prisma.tacitRoom.updateMany({
+        where: {
+          id: roomId,
+          status: { in: ["WAITING", "IN_PROGRESS"] }
+        },
+        data: { status: "CLOSED" }
+      });
+      await prisma.tacitRoomMember.updateMany({
+        where: {
+          roomId,
+          userId,
+          status: { in: ["PENDING", "ACCEPTED"] }
+        },
+        data: { status: "DECLINED" }
+      });
+      const payload = await getTacitRoomPayload(roomId);
+      if (payload) emitTacitRoomUpdateToUsers(payload.members.map((m) => m.userId), payload);
+    }
+    return res.json({ ok: true });
+  } catch (_error) {
+    return res.status(500).json({ message: "重置默契挑战会话失败" });
+  }
+});
+
 app.post("/tacit/rooms", async (req, res) => {
   try {
     const userId = getAuthUserId(req);
@@ -1491,6 +1543,43 @@ app.get("/tacit/rooms/:id", async (req, res) => {
     return res.json({ room });
   } catch (_error) {
     return res.status(500).json({ message: "拉取默契挑战房间失败" });
+  }
+});
+
+app.post("/tacit/rooms/:id/leave", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const roomId = req.params.id;
+    const room = await prisma.tacitRoom.findUnique({
+      where: { id: roomId },
+      include: { members: true }
+    });
+    if (!room) return res.status(404).json({ message: "房间不存在" });
+    const me = room.members.find((m) => m.userId === userId);
+    if (!me) return res.status(403).json({ message: "你不在该房间中" });
+
+    await prisma.tacitMatchQueue.deleteMany({ where: { userId } });
+    if (!["FINISHED", "CLOSED"].includes(room.status)) {
+      await prisma.tacitRoom.update({
+        where: { id: roomId },
+        data: { status: "CLOSED" }
+      });
+    }
+    await prisma.tacitRoomMember.updateMany({
+      where: {
+        roomId,
+        userId,
+        status: { in: ["PENDING", "ACCEPTED"] }
+      },
+      data: { status: "DECLINED" }
+    });
+
+    const payload = await getTacitRoomPayload(roomId);
+    if (payload) emitTacitRoomUpdateToUsers(payload.members.map((m) => m.userId), payload);
+    return res.json({ ok: true, room: payload });
+  } catch (_error) {
+    return res.status(500).json({ message: "退出默契挑战失败" });
   }
 });
 

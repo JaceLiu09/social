@@ -1391,39 +1391,50 @@ export default function App() {
     return data.room.id;
   };
 
-  const startTacitMatch = () => {
+  const resetTacitSessionRemote = async () => {
+    try {
+      await fetch(`${API}/tacit/session/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders }
+      });
+    } catch (_error) {}
+  };
+
+  const startTacitMatch = async () => {
     if (isTacitMatching || tacitPollingRef.current) return;
+    await resetTacitSessionRemote();
+    setTacitRoom(null);
+    setTacitRoomId("");
     setIsTacitMatching(true);
     setTacitMode("match");
-    fetch(`${API}/tacit/match/enqueue`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders }
-    })
-      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok) throw new Error(data.message || "匹配失败");
-        if (data.matched && data.room) {
-          applyTacitRoom(data.room);
-          setIsTacitMatching(false);
-          return;
-        }
-        tacitPollingRef.current = window.setInterval(async () => {
-          try {
-            const statusRes = await fetch(`${API}/tacit/match/status`, { headers: authHeaders });
-            const statusData = await statusRes.json();
-            if (statusData?.matched && statusData.room) {
-              clearInterval(tacitPollingRef.current);
-              tacitPollingRef.current = null;
-              setIsTacitMatching(false);
-              applyTacitRoom(statusData.room);
-            }
-          } catch (_error) {}
-        }, 2000);
-      })
-      .catch((error) => {
-        setChatNotice(error.message || "匹配失败");
-        setIsTacitMatching(false);
+    try {
+      const res = await fetch(`${API}/tacit/match/enqueue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders }
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "匹配失败");
+      if (data.matched && data.room) {
+        applyTacitRoom(data.room);
+        setIsTacitMatching(false);
+        return;
+      }
+      tacitPollingRef.current = window.setInterval(async () => {
+        try {
+          const statusRes = await fetch(`${API}/tacit/match/status`, { headers: authHeaders });
+          const statusData = await statusRes.json();
+          if (statusData?.matched && statusData.room) {
+            clearInterval(tacitPollingRef.current);
+            tacitPollingRef.current = null;
+            setIsTacitMatching(false);
+            applyTacitRoom(statusData.room);
+          }
+        } catch (_error) {}
+      }, 2000);
+    } catch (error) {
+      setChatNotice(error.message || "匹配失败");
+      setIsTacitMatching(false);
+    }
   };
 
   const inviteTacitFriend = (friend) => {
@@ -1545,7 +1556,7 @@ export default function App() {
     startTacitMatch();
   };
 
-  const closeTacitModal = () => {
+  const resetTacitSessionState = () => {
     setShowTacitModal(false);
     setTacitMode("menu");
     setTacitRoom(null);
@@ -1555,6 +1566,15 @@ export default function App() {
       clearInterval(tacitPollingRef.current);
       tacitPollingRef.current = null;
     }
+  };
+  const closeTacitModal = async () => {
+    const hasActiveRound = Boolean(tacitRoomId) || isTacitMatching || tacitMode !== "menu";
+    if (hasActiveRound) {
+      const confirmed = window.confirm("确定退出本轮游戏吗？退出后将清空本轮进度并需要重新匹配。");
+      if (!confirmed) return;
+    }
+    await resetTacitSessionRemote();
+    resetTacitSessionState();
   };
 
   const enterWerewolfMatch = () => {
