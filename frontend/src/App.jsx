@@ -61,10 +61,11 @@ function formatChatTime(value) {
 function resolveAssetUrl(url) {
   if (!url) return MALE_SYMBOL_AVATAR;
   if (url.startsWith("data:")) return url;
+  const currentOrigin = `${window.location.protocol}//${window.location.host}`;
   if (url.startsWith("http://localhost:5173/avatars/") || url.startsWith("https://localhost:5173/avatars/")) {
-    return url.replace(/^https?:\/\/localhost:5173/, API);
+    return url.replace(/^https?:\/\/localhost:5173/, currentOrigin);
   }
-  if (url.startsWith("/avatars/")) return `${API}${url}`;
+  if (url.startsWith("/avatars/")) return url;
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
   if (url.startsWith("/")) return `${API}${url}`;
   return url;
