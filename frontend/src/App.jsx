@@ -196,6 +196,9 @@ export default function App() {
   const [showWerewolfInvitePanel, setShowWerewolfInvitePanel] = useState(false);
   const [werewolfInviteCooldowns, setWerewolfInviteCooldowns] = useState({});
   const [isWerewolfMatching, setIsWerewolfMatching] = useState(false);
+  const [werewolfGame, setWerewolfGame] = useState(null);
+  const [werewolfSpeechDraft, setWerewolfSpeechDraft] = useState("");
+  const [werewolfActionLoading, setWerewolfActionLoading] = useState(false);
   const [showTacitModal, setShowTacitModal] = useState(false);
   const [tacitMode, setTacitMode] = useState("menu");
   const [tacitRoomId, setTacitRoomId] = useState("");
@@ -372,6 +375,18 @@ export default function App() {
     const timer = window.setInterval(pullRoom, 1000);
     return () => clearInterval(timer);
   }, [showTacitModal, tacitMode, tacitRoomId, authHeaders]);
+
+  useEffect(() => {
+    if (!showWerewolfModal || werewolfMode !== "playing" || !werewolfRoomId) return undefined;
+    const pullRoom = async () => {
+      try {
+        await refreshWerewolfRoom();
+      } catch (_error) {}
+    };
+    pullRoom();
+    const timer = window.setInterval(pullRoom, 1500);
+    return () => clearInterval(timer);
+  }, [showWerewolfModal, werewolfMode, werewolfRoomId, authHeaders]);
 
   useEffect(() => {
     if (!tacitCurrentQuestion || tacitMode !== "playing") return undefined;
@@ -684,7 +699,9 @@ export default function App() {
 
     socket.on("werewolf:room:update", (room) => {
       applyWerewolfRoom(room);
-      if (room?.status === "IN_GAME") {
+      if (room?.game) {
+        setWerewolfMode("playing");
+      } else if (room?.status === "IN_GAME") {
         const mode = room.type === "MATCH" ? "多人匹配" : "好友房";
         setWerewolfRulePack(buildWerewolfRulePack(room.acceptedCount || 6, mode));
         setWerewolfMode("judge");
@@ -1602,6 +1619,7 @@ export default function App() {
           }))
         : []
     );
+    setWerewolfGame(room.game || null);
   };
 
   const ensureWerewolfFriendRoom = async () => {
@@ -1675,9 +1693,38 @@ export default function App() {
         if (!ok) throw new Error(data.message || "开局失败");
         applyWerewolfRoom(data.room);
         setWerewolfRulePack(buildWerewolfRulePack(data.room.acceptedCount || acceptedMemberCount, "好友房"));
-        setWerewolfMode("judge");
+        setWerewolfMode(data.room?.game ? "playing" : "judge");
       })
       .catch((error) => setChatNotice(error.message || "开局失败"));
+  };
+
+  const submitWerewolfAction = async (payload) => {
+    if (!werewolfRoomId) return;
+    setWerewolfActionLoading(true);
+    try {
+      const res = await fetch(`${API}/werewolf/rooms/${werewolfRoomId}/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "操作失败");
+      applyWerewolfRoom(data.room);
+      setWerewolfMode("playing");
+      if (payload.type === "speak") setWerewolfSpeechDraft("");
+    } catch (error) {
+      setChatNotice(error.message || "操作失败");
+    } finally {
+      setWerewolfActionLoading(false);
+    }
+  };
+
+  const refreshWerewolfRoom = async () => {
+    if (!werewolfRoomId) return;
+    const res = await fetch(`${API}/werewolf/rooms/${werewolfRoomId}`, { headers: authHeaders });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "刷新狼人杀房间失败");
+    applyWerewolfRoom(data.room);
   };
 
   const inviteWerewolfFriend = (friend) => {
@@ -1722,6 +1769,9 @@ export default function App() {
     setShowWerewolfInvitePanel(false);
     setWerewolfInviteCooldowns({});
     setIsWerewolfMatching(false);
+    setWerewolfGame(null);
+    setWerewolfSpeechDraft("");
+    setWerewolfActionLoading(false);
     if (werewolfPollingRef.current) {
       clearInterval(werewolfPollingRef.current);
       werewolfPollingRef.current = null;
@@ -1733,7 +1783,7 @@ export default function App() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || "进入房间失败");
     applyWerewolfRoom(data.room);
-    setWerewolfMode("room");
+    setWerewolfMode(data.room?.game ? "playing" : "room");
   };
 
   const publishMyPost = () => {
@@ -2771,6 +2821,77 @@ export default function App() {
                 )}
               </div>
             )}
+            {werewolfMode === "playing" && werewolfGame && (
+              <div className="werewolf-mode-wrap werewolf-judge-sheet">
+                <p>
+                  第 {werewolfGame.day} 天 · {werewolfGame.phase === "NIGHT" ? "夜晚阶段" : werewolfGame.phase === "DAY_SPEECH" ? "白天发言" : werewolfGame.phase === "DAY_VOTE" ? "白天投票" : "游戏结束"}
+                </p>
+                <p className="feed-tip">
+                  你的身份：{werewolfGame.myRole || "未知"}
+                  {werewolfGame.winner ? ` · 胜利阵营：${werewolfGame.winner === "WOLF" ? "狼人" : "好人"}` : ""}
+                </p>
+                <div className="werewolf-role-grid">
+                  {werewolfGame.players.map((item) => (
+                    <span key={`ww-player-${item.userId}`}>
+                      {item.name} · {item.alive ? "存活" : "出局"}
+                      {item.role ? ` · ${item.role}` : ""}
+                    </span>
+                  ))}
+                </div>
+                <div className="werewolf-script-list">
+                  {werewolfGame.logs.map((line) => (
+                    <p key={line.id}>{line.text}</p>
+                  ))}
+                </div>
+                {werewolfGame.actions?.canNightKill && (
+                  <div className="werewolf-menu">
+                    {werewolfGame.actions.allowedTargets.map((item) => (
+                      <button
+                        key={`kill-${item.userId}`}
+                        type="button"
+                        disabled={werewolfActionLoading}
+                        onClick={() => submitWerewolfAction({ type: "night-kill", targetUserId: item.userId })}
+                      >
+                        夜杀 {item.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {werewolfGame.actions?.canSpeak && (
+                  <div className="werewolf-menu">
+                    <input
+                      value={werewolfSpeechDraft}
+                      onChange={(e) => setWerewolfSpeechDraft(e.target.value)}
+                      placeholder="输入你的发言"
+                    />
+                    <button
+                      type="button"
+                      disabled={werewolfActionLoading}
+                      onClick={() => submitWerewolfAction({ type: "speak", text: werewolfSpeechDraft })}
+                    >
+                      提交发言
+                    </button>
+                  </div>
+                )}
+                {werewolfGame.actions?.canVote && (
+                  <div className="werewolf-menu">
+                    {werewolfGame.actions.allowedTargets.map((item) => (
+                      <button
+                        key={`vote-${item.userId}`}
+                        type="button"
+                        disabled={werewolfActionLoading}
+                        onClick={() => submitWerewolfAction({ type: "vote", targetUserId: item.userId })}
+                      >
+                        投票 {item.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {!werewolfGame.winner && !werewolfGame.actions?.canNightKill && !werewolfGame.actions?.canSpeak && !werewolfGame.actions?.canVote && (
+                  <p className="feed-tip">等待其他玩家行动中...</p>
+                )}
+              </div>
+            )}
             {werewolfMode === "judge" && werewolfRulePack && (
               <div className="werewolf-mode-wrap werewolf-judge-sheet">
                 <p>
@@ -2791,7 +2912,7 @@ export default function App() {
                     <p key={`script-${idx}`}>{idx + 1}. {line}</p>
                   ))}
                 </div>
-                <button type="button" onClick={() => setChatNotice("狼人杀已开局，法官可按一页纸主持")}>
+                <button type="button" onClick={startWerewolfRoomGame}>
                   确认开局
                 </button>
                 <button type="button" onClick={() => setWerewolfMode("menu")}>
