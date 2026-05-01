@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import avatarManifest from "./avatarManifest.json";
 
-const API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+const ENV_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").trim();
+const DEFAULT_API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:4000`;
+const API = (ENV_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/$/, "");
 const MALE_SYMBOL_AVATAR = `data:image/svg+xml;utf8,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
     <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#46d5e6"/><stop offset="1" stop-color="#4f86ea"/></linearGradient></defs>
