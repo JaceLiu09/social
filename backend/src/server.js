@@ -1367,41 +1367,50 @@ app.post("/werewolf/match/enqueue", async (req, res) => {
         room: { status: { in: ["WAITING", "READY", "IN_GAME"] } }
       }
     });
-    if (existingMember) return res.json({ ok: true, roomId: existingMember.roomId, matched: true });
+    if (existingMember) {
+      const payload = await getWerewolfRoomPayload(existingMember.roomId, userId);
+      return res.json({ ok: true, roomId: existingMember.roomId, matched: true, room: payload });
+    }
 
-    await prisma.werewolfMatchQueue.upsert({
-      where: { userId },
-      update: { updatedAt: new Date() },
-      create: { userId }
+    await prisma.werewolfMatchQueue.deleteMany({ where: { userId } });
+
+    const botCandidates = await prisma.user.findMany({
+      where: {
+        phone: { startsWith: "fake" },
+        id: { not: userId }
+      },
+      take: 80
     });
+    const bots = shuffleList(botCandidates).slice(0, 5);
+    if (bots.length < 5) {
+      return res.status(503).json({
+        message: "机器人账号不足，请先在服务器执行种子数据或稍后重试"
+      });
+    }
 
-    const queued = await prisma.werewolfMatchQueue.findMany({
-      orderBy: { createdAt: "asc" },
-      take: 6
-    });
-    if (queued.length < 6) return res.json({ ok: true, matched: false, queuedCount: queued.length });
-
-    const userIds = queued.map((q) => q.userId);
     const room = await prisma.werewolfRoom.create({
       data: {
         type: "MATCH",
         status: "READY",
-        ownerUserId: userIds[0],
+        ownerUserId: userId,
         maxSeats: 6,
         minStartPlayers: 6
       }
     });
     await prisma.werewolfRoomMember.createMany({
-      data: userIds.map((uid, idx) => ({
-        roomId: room.id,
-        userId: uid,
-        status: idx === 0 ? "HOST" : "ACCEPTED",
-        invitedByUserId: idx === 0 ? null : userIds[0]
-      }))
+      data: [
+        { roomId: room.id, userId, status: "HOST", invitedByUserId: null },
+        ...bots.map((b) => ({
+          roomId: room.id,
+          userId: b.id,
+          status: "ACCEPTED",
+          invitedByUserId: userId
+        }))
+      ]
     });
-    await prisma.werewolfMatchQueue.deleteMany({ where: { userId: { in: userIds } } });
-    const payload = await getWerewolfRoomPayload(room.id, userIds[0]);
-    emitWerewolfRoomUpdateToUsers(userIds, payload);
+    const payload = await getWerewolfRoomPayload(room.id, userId);
+    const notifyIds = [userId, ...bots.map((b) => b.id)];
+    emitWerewolfRoomUpdateToUsers(notifyIds, payload);
     return res.json({ ok: true, matched: true, roomId: room.id, room: payload });
   } catch (_error) {
     return res.status(500).json({ message: "匹配失败，请稍后重试" });
