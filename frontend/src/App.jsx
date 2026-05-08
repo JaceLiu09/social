@@ -262,7 +262,6 @@ export default function App() {
   const [tacitCountdownSec, setTacitCountdownSec] = useState(30);
   const [showMembershipGate, setShowMembershipGate] = useState(false);
   const [membershipSubmitting, setMembershipSubmitting] = useState(false);
-  const [showIntimateAvatar, setShowIntimateAvatar] = useState(true);
   const [showSentenceModal, setShowSentenceModal] = useState(false);
   const [sentenceMode, setSentenceMode] = useState("menu");
   const [isSentenceMatching, setIsSentenceMatching] = useState(false);
@@ -290,6 +289,7 @@ export default function App() {
   const recordChunksRef = useRef([]);
   const recordStartAtRef = useRef(0);
   const [selectedCover, setSelectedCover] = useState("");
+  const [editProfilePhotos, setEditProfilePhotos] = useState([]);
   const [profileForm, setProfileForm] = useState({
     nickname: "",
     currentCity: "",
@@ -306,6 +306,7 @@ export default function App() {
   const tacitAutoSubmitRef = useRef("");
   const sentenceMatchTimerRef = useRef(null);
   const sentenceResolveTimerRef = useRef(null);
+  const profilePhotoInputRef = useRef(null);
 
   const friendlinessPercent = session?.friendliness ?? 0;
   const profilePhotos = useMemo(() => {
@@ -317,9 +318,9 @@ export default function App() {
       return [];
     }
   }, [user]);
-  const defaultCover = resolveAssetUrl(profilePhotos[0] || user?.avatarUrl || profileForm.avatarUrl);
+  const defaultCover = resolveAssetUrl(profileForm.avatarUrl || user?.avatarUrl || profilePhotos[0]);
   const profileCover = selectedCover || defaultCover;
-  const userAvatar = resolveAssetUrl(profilePhotos[0] || user?.avatarUrl || profileForm.avatarUrl);
+  const userAvatar = resolveAssetUrl(profileForm.avatarUrl || user?.avatarUrl || profilePhotos[0]);
   const galleryPhotos = useMemo(() => {
     const list = [userAvatar, ...profilePhotos.slice(1)];
     const unique = [];
@@ -413,7 +414,7 @@ export default function App() {
   }, [hiddenProfiles, heroRotationIndex]);
   const sentenceCurrentRound = sentenceRounds[sentenceRoundIndex] || null;
   const editPhotoSlots = useMemo(() => {
-    const photos = galleryPhotos.slice(0, 3).map((src, idx) => ({ type: "photo", src, idx }));
+    const photos = editProfilePhotos.slice(0, 3).map((src, idx) => ({ type: "photo", src, idx }));
     const placeholders = [
       "最近吃过的美食",
       "独一无二的才艺",
@@ -422,7 +423,7 @@ export default function App() {
       "最美好的纪念"
     ].map((label, idx) => ({ type: "placeholder", label, idx }));
     return [...photos, ...placeholders].slice(0, 6);
-  }, [galleryPhotos]);
+  }, [editProfilePhotos]);
 
   useEffect(() => {
     if (!tacitCurrentQuestion) {
@@ -803,6 +804,11 @@ export default function App() {
       avatarUrl: user.avatarUrl || ""
     });
   }, [user]);
+
+  useEffect(() => {
+    if (mePage !== "profile-edit") return;
+    setEditProfilePhotos(galleryPhotos.slice(0, 3));
+  }, [mePage, galleryPhotos]);
 
   useEffect(() => {
     setSelectedCover(defaultCover);
@@ -1198,15 +1204,15 @@ export default function App() {
   };
 
   const saveProfile = () => {
+    const finalPhotos = editProfilePhotos.length ? editProfilePhotos : [profileForm.avatarUrl || userAvatar].filter(Boolean);
+    const finalAvatar = profileForm.avatarUrl || finalPhotos[0] || userAvatar;
     setUser((prev) =>
       prev
         ? {
             ...prev,
             ...profileForm,
-            photoUrls: JSON.stringify([
-              profileForm.avatarUrl || userAvatar,
-              ...profilePhotos.filter((item) => item !== (profileForm.avatarUrl || userAvatar))
-            ])
+            avatarUrl: finalAvatar,
+            photoUrls: JSON.stringify(finalPhotos.slice(0, 3))
           }
         : prev
     );
@@ -1434,7 +1440,10 @@ export default function App() {
       const compressed = await compressImageFile(file);
       const mediaUrl = await uploadMedia(compressed, "IMAGE");
       setProfileForm((prev) => ({ ...prev, avatarUrl: mediaUrl }));
-      setMessage("头像上传成功，记得点击保存资料");
+      setEditProfilePhotos((prev) => {
+        const deduped = [mediaUrl, ...prev.filter((item) => item !== mediaUrl)];
+        return deduped.slice(0, 3);
+      });
     } catch (error) {
       setMessage(error.message || "头像上传失败");
     }
@@ -2815,7 +2824,14 @@ export default function App() {
                           <button
                             type="button"
                             className="modern-photo-remove"
-                            onClick={() => setMessage("可在上传新头像后替换当前照片")}
+                            onClick={() => {
+                              setEditProfilePhotos((prev) => {
+                                const next = prev.filter((_, photoIdx) => photoIdx !== idx);
+                                const nextAvatar = next[0] || "";
+                                setProfileForm((form) => ({ ...form, avatarUrl: nextAvatar }));
+                                return next;
+                              });
+                            }}
                           >
                             ×
                           </button>
@@ -2825,7 +2841,7 @@ export default function App() {
                           key={`edit-placeholder-${slot.idx}`}
                           type="button"
                           className="modern-photo-placeholder"
-                          onClick={() => setMessage("上传头像后将自动替换占位卡片")}
+                          onClick={() => profilePhotoInputRef.current?.click()}
                         >
                           {slot.label}
                         </button>
@@ -2834,24 +2850,13 @@ export default function App() {
                   </div>
                   <label className="upload-avatar-btn modern-upload-btn">
                     上传头像
-                    <input type="file" accept="image/*" onChange={onPickProfileAvatar} hidden />
+                    <input ref={profilePhotoInputRef} type="file" accept="image/*" onChange={onPickProfileAvatar} hidden />
                   </label>
                   <input
                     placeholder="头像/封面地址（可选）"
                     value={profileForm.avatarUrl}
                     onChange={(e) => setProfileForm((prev) => ({ ...prev, avatarUrl: e.target.value }))}
                   />
-                </div>
-
-                <div className="modern-edit-row toggle-row">
-                  <span>显示亲密关系头像</span>
-                  <button
-                    type="button"
-                    className={`toggle-switch ${showIntimateAvatar ? "on" : ""}`}
-                    onClick={() => setShowIntimateAvatar((prev) => !prev)}
-                  >
-                    <i />
-                  </button>
                 </div>
 
                 <div className="modern-edit-group">
@@ -2902,7 +2907,7 @@ export default function App() {
                     <em>{user.industry || "IT/互联网"}</em>
                   </div>
                   <label className="modern-edit-row input-row">
-                    <span>才艺展示</span>
+                    <span>盲盒宣言</span>
                     <input
                       value={profileForm.hobbies}
                       onChange={(e) => setProfileForm((prev) => ({ ...prev, hobbies: e.target.value }))}
