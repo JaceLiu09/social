@@ -97,6 +97,16 @@ function formatChatTime(value) {
   return `${date.getMonth() + 1}月${date.getDate()}日`;
 }
 
+function formatBirthDateText(value) {
+  if (!value) return "未设置";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "未设置";
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function resolveAssetUrl(url) {
   if (!url) return MALE_SYMBOL_AVATAR;
   if (url.startsWith("data:")) return url;
@@ -252,6 +262,7 @@ export default function App() {
   const [tacitCountdownSec, setTacitCountdownSec] = useState(30);
   const [showMembershipGate, setShowMembershipGate] = useState(false);
   const [membershipSubmitting, setMembershipSubmitting] = useState(false);
+  const [showIntimateAvatar, setShowIntimateAvatar] = useState(true);
   const [showSentenceModal, setShowSentenceModal] = useState(false);
   const [sentenceMode, setSentenceMode] = useState("menu");
   const [isSentenceMatching, setIsSentenceMatching] = useState(false);
@@ -401,6 +412,17 @@ export default function App() {
     return [...base.slice(idx), ...base.slice(0, idx)];
   }, [hiddenProfiles, heroRotationIndex]);
   const sentenceCurrentRound = sentenceRounds[sentenceRoundIndex] || null;
+  const editPhotoSlots = useMemo(() => {
+    const photos = galleryPhotos.slice(0, 3).map((src, idx) => ({ type: "photo", src, idx }));
+    const placeholders = [
+      "最近吃过的美食",
+      "独一无二的才艺",
+      "我的有趣自拍",
+      "我的生活日常",
+      "最美好的纪念"
+    ].map((label, idx) => ({ type: "placeholder", label, idx }));
+    return [...photos, ...placeholders].slice(0, 6);
+  }, [galleryPhotos]);
 
   useEffect(() => {
     if (!tacitCurrentQuestion) {
@@ -2431,20 +2453,6 @@ export default function App() {
             <button className="hero-action">开始寻找</button>
           </div>
 
-          <h3 className="section-title">配对聊天</h3>
-          <div className="feature-grid">
-            <div className="feature-card blue">
-              <h3>盲盒匹配</h3>
-              <p>今日剩余 30 次</p>
-              <button onClick={startMatch}>开始匹配</button>
-            </div>
-            <div className="feature-card purple">
-              <h3>匿名闪聊</h3>
-              <p>猜拳互动真心话</p>
-              <button>立即开聊</button>
-            </div>
-          </div>
-
           <h3 className="section-title">配对玩游戏</h3>
           <div className="game-grid">
             <div className="game-card">
@@ -2789,18 +2797,42 @@ export default function App() {
             )
           ) : mePage === "profile-edit" ? (
             <div className="profile-edit-page">
-              <div className="status-card profile-editor-page">
-                <div className="profile-editor-avatar-row">
-                  <img className="profile-avatar" src={resolveAssetUrl(profileForm.avatarUrl || userAvatar)} alt={user.nickname} />
-                  <p>点击保存后将更新资料页封面和头像</p>
+              <div className="status-card profile-editor-page modern-edit-page">
+                <div className="modern-edit-head">
+                  <strong>完善度 85%</strong>
+                  <button type="button" onClick={saveProfile}>
+                    保存
+                  </button>
                 </div>
-                <div className="profile-editor">
-                  <input
-                    placeholder="昵称"
-                    value={profileForm.nickname}
-                    onChange={(e) => setProfileForm((prev) => ({ ...prev, nickname: e.target.value }))}
-                  />
-                  <label className="upload-avatar-btn">
+
+                <div className="modern-edit-section">
+                  <p className="modern-edit-title">头像</p>
+                  <div className="modern-photo-grid">
+                    {editPhotoSlots.map((slot, idx) =>
+                      slot.type === "photo" ? (
+                        <div className="modern-photo-item" key={`edit-photo-${idx}`}>
+                          <img src={slot.src} alt={`头像${idx + 1}`} />
+                          <button
+                            type="button"
+                            className="modern-photo-remove"
+                            onClick={() => setMessage("可在上传新头像后替换当前照片")}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          key={`edit-placeholder-${slot.idx}`}
+                          type="button"
+                          className="modern-photo-placeholder"
+                          onClick={() => setMessage("上传头像后将自动替换占位卡片")}
+                        >
+                          {slot.label}
+                        </button>
+                      )
+                    )}
+                  </div>
+                  <label className="upload-avatar-btn modern-upload-btn">
                     上传头像
                     <input type="file" accept="image/*" onChange={onPickProfileAvatar} hidden />
                   </label>
@@ -2809,24 +2841,73 @@ export default function App() {
                     value={profileForm.avatarUrl}
                     onChange={(e) => setProfileForm((prev) => ({ ...prev, avatarUrl: e.target.value }))}
                   />
-                  <input
-                    placeholder="当前城市"
-                    value={profileForm.currentCity}
-                    onChange={(e) => setProfileForm((prev) => ({ ...prev, currentCity: e.target.value }))}
-                  />
-                  <input
-                    placeholder="个人签名"
-                    value={profileForm.partnerExpectation}
-                    onChange={(e) =>
-                      setProfileForm((prev) => ({ ...prev, partnerExpectation: e.target.value }))
-                    }
-                  />
-                  <input
-                    placeholder="爱好"
-                    value={profileForm.hobbies}
-                    onChange={(e) => setProfileForm((prev) => ({ ...prev, hobbies: e.target.value }))}
-                  />
-                  <button onClick={saveProfile}>保存资料</button>
+                </div>
+
+                <div className="modern-edit-row toggle-row">
+                  <span>显示亲密关系头像</span>
+                  <button
+                    type="button"
+                    className={`toggle-switch ${showIntimateAvatar ? "on" : ""}`}
+                    onClick={() => setShowIntimateAvatar((prev) => !prev)}
+                  >
+                    <i />
+                  </button>
+                </div>
+
+                <div className="modern-edit-group">
+                  <p className="group-title">基本资料</p>
+                  <label className="modern-edit-row input-row">
+                    <span>昵称</span>
+                    <input
+                      value={profileForm.nickname}
+                      onChange={(e) => setProfileForm((prev) => ({ ...prev, nickname: e.target.value }))}
+                    />
+                  </label>
+                  <div className="modern-edit-row">
+                    <span>出生日期</span>
+                    <em>{formatBirthDateText(user.birthDate)}</em>
+                  </div>
+                  <div className="modern-edit-row">
+                    <span>正在使用的设备</span>
+                    <em>iPhone 17 Pro Max</em>
+                  </div>
+                </div>
+
+                <div className="modern-edit-group">
+                  <p className="group-title">个人信息</p>
+                  <label className="modern-edit-row input-row">
+                    <span>个人签名</span>
+                    <input
+                      value={profileForm.partnerExpectation}
+                      onChange={(e) => setProfileForm((prev) => ({ ...prev, partnerExpectation: e.target.value }))}
+                    />
+                  </label>
+                  <div className="modern-edit-row">
+                    <span>月收入</span>
+                    <em>{user.income || "5万以上"}</em>
+                  </div>
+                  <div className="modern-edit-row">
+                    <span>身高</span>
+                    <em>{user.height || 176}</em>
+                  </div>
+                  <label className="modern-edit-row input-row">
+                    <span>家乡</span>
+                    <input
+                      value={profileForm.currentCity}
+                      onChange={(e) => setProfileForm((prev) => ({ ...prev, currentCity: e.target.value }))}
+                    />
+                  </label>
+                  <div className="modern-edit-row">
+                    <span>职业</span>
+                    <em>{user.industry || "IT/互联网"}</em>
+                  </div>
+                  <label className="modern-edit-row input-row">
+                    <span>才艺展示</span>
+                    <input
+                      value={profileForm.hobbies}
+                      onChange={(e) => setProfileForm((prev) => ({ ...prev, hobbies: e.target.value }))}
+                    />
+                  </label>
                 </div>
               </div>
             </div>
