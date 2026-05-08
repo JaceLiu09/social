@@ -397,22 +397,64 @@ body {
   color: #6f6f6f;
 }
 
-.hero-avatar-wrap {
-  margin: 8px auto;
-  width: 120px;
-  height: 120px;
-  border-radius: 60px;
-  background: rgba(255, 255, 255, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.hero-profile-list {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
-.hero-avatar {
-  width: 84px;
+.hero-profile-card {
+  display: grid;
+  grid-template-rows: 84px auto;
+  gap: 6px;
+  border-radius: 12px;
+  border: 1px solid #ebe3d3;
+  background: #fff9ef;
+  padding: 6px;
+  animation: heroCardFloat 3.2s ease-in-out infinite;
+}
+
+.hero-profile-cover {
+  width: 100%;
   height: 84px;
-  border-radius: 50%;
-  background: url("https://picsum.photos/120/120?portrait") center / cover no-repeat;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid #efe5d1;
+}
+
+.hero-profile-meta {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  text-align: left;
+}
+
+.hero-profile-meta strong {
+  color: #2b3042;
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hero-profile-meta span {
+  color: #66708d;
+  font-size: 10px;
+}
+
+.hero-profile-meta small {
+  color: #8891ab;
+  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes heroCardFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
 }
 
 .hero-title {
@@ -882,6 +924,37 @@ body {
   margin: 0;
   font-size: 22px;
   color: #2443a0;
+}
+
+.sentence-round-card {
+  border: 1px solid #e6ecfb;
+  border-radius: 12px;
+  background: #f8faff;
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.sentence-round-card strong {
+  color: #223057;
+  font-size: 15px;
+}
+
+.sentence-options {
+  display: grid;
+  gap: 8px;
+}
+
+.sentence-options button {
+  text-align: left;
+  background: #edf3ff;
+  color: #3251a5;
+  border-radius: 8px;
+}
+
+.sentence-options button.active-choice {
+  background: #2f5bd5;
+  color: #fff;
 }
 
 .card {

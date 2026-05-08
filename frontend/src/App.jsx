@@ -47,6 +47,45 @@ function createHeroAvatars() {
   return sampleItems(localAvatarPool, 5);
 }
 
+const SENTENCE_CHAIN_BANK = [
+  {
+    stem: "周末突然下雨，我会先",
+    options: ["约你去咖啡馆躲雨", "在家看一部老电影", "去楼下便利店买热饮"]
+  },
+  {
+    stem: "第一次见面最加分的是",
+    options: ["说话真诚不端着", "穿着干净有细节", "会认真听我讲话"]
+  },
+  {
+    stem: "一起旅行时我更在意",
+    options: ["行程松弛不赶路", "拍照好看有仪式感", "吃到本地特色小店"]
+  },
+  {
+    stem: "晚上聊天冷场时，我会",
+    options: ["丢一个有趣的问题", "分享今天的小糗事", "发一张正在听的歌单"]
+  },
+  {
+    stem: "关系升温最快的方式是",
+    options: ["稳定且高质量联系", "一起完成一件小事", "情绪低落时彼此接住"]
+  },
+  {
+    stem: "如果对方迟到十分钟，我会",
+    options: ["先找个地方坐着等", "发消息确认是否堵车", "顺便买两杯饮料"]
+  },
+  {
+    stem: "最理想的约会结尾是",
+    options: ["散步到地铁口再告别", "互发今天最喜欢的瞬间", "约好下次见面的时间"]
+  }
+];
+
+function createSentenceChainRounds(count = 5) {
+  return sampleItems(SENTENCE_CHAIN_BANK, count).map((item, idx) => ({
+    id: `sentence-round-${idx + 1}`,
+    stem: item.stem,
+    options: item.options
+  }));
+}
+
 function formatChatTime(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -157,6 +196,8 @@ export default function App() {
   const [blindBoxTarget, setBlindBoxTarget] = useState(null);
   const [gameState, setGameState] = useState(null);
   const [onlineCount, setOnlineCount] = useState(200000);
+  const [hiddenProfiles, setHiddenProfiles] = useState([]);
+  const [heroRotationIndex, setHeroRotationIndex] = useState(0);
   const [posts, setPosts] = useState([]);
   const [squareLoading, setSquareLoading] = useState(false);
   const [hasMorePosts, setHasMorePosts] = useState(true);
@@ -199,6 +240,7 @@ export default function App() {
   const [werewolfGame, setWerewolfGame] = useState(null);
   const [werewolfSpeechDraft, setWerewolfSpeechDraft] = useState("");
   const [werewolfActionLoading, setWerewolfActionLoading] = useState(false);
+  const [werewolfSpeechCountdown, setWerewolfSpeechCountdown] = useState(0);
   const [showTacitModal, setShowTacitModal] = useState(false);
   const [tacitMode, setTacitMode] = useState("menu");
   const [tacitRoomId, setTacitRoomId] = useState("");
@@ -210,6 +252,18 @@ export default function App() {
   const [tacitCountdownSec, setTacitCountdownSec] = useState(30);
   const [showMembershipGate, setShowMembershipGate] = useState(false);
   const [membershipSubmitting, setMembershipSubmitting] = useState(false);
+  const [showSentenceModal, setShowSentenceModal] = useState(false);
+  const [sentenceMode, setSentenceMode] = useState("menu");
+  const [isSentenceMatching, setIsSentenceMatching] = useState(false);
+  const [sentenceOpponent, setSentenceOpponent] = useState(null);
+  const [sentenceRounds, setSentenceRounds] = useState([]);
+  const [sentenceRoundIndex, setSentenceRoundIndex] = useState(0);
+  const [sentenceMyChoice, setSentenceMyChoice] = useState("");
+  const [sentencePeerChoice, setSentencePeerChoice] = useState("");
+  const [sentenceCountdown, setSentenceCountdown] = useState(20);
+  const [sentenceScore, setSentenceScore] = useState(0);
+  const [sentenceLogs, setSentenceLogs] = useState([]);
+  const [sentenceResolving, setSentenceResolving] = useState(false);
   const [isTacitMatching, setIsTacitMatching] = useState(false);
   const [myPosts, setMyPosts] = useState([]);
   const [newPostText, setNewPostText] = useState("");
@@ -236,8 +290,11 @@ export default function App() {
   const AUDIO_MAX_BYTES = 8 * 1024 * 1024;
   const UPLOAD_TIMEOUT_MS = 20000;
   const werewolfPollingRef = useRef(null);
+  const werewolfSyncRetryRef = useRef(0);
   const tacitPollingRef = useRef(null);
   const tacitAutoSubmitRef = useRef("");
+  const sentenceMatchTimerRef = useRef(null);
+  const sentenceResolveTimerRef = useRef(null);
 
   const friendlinessPercent = session?.friendliness ?? 0;
   const profilePhotos = useMemo(() => {
@@ -336,6 +393,14 @@ export default function App() {
         : {},
     [authToken]
   );
+  const visibleHiddenProfiles = useMemo(() => {
+    if (!hiddenProfiles.length) return [];
+    const base = hiddenProfiles.slice(0, 6);
+    if (base.length <= 1) return base;
+    const idx = heroRotationIndex % base.length;
+    return [...base.slice(idx), ...base.slice(0, idx)];
+  }, [hiddenProfiles, heroRotationIndex]);
+  const sentenceCurrentRound = sentenceRounds[sentenceRoundIndex] || null;
 
   useEffect(() => {
     if (!tacitCurrentQuestion) {
@@ -377,16 +442,63 @@ export default function App() {
   }, [showTacitModal, tacitMode, tacitRoomId, authHeaders]);
 
   useEffect(() => {
-    if (!showWerewolfModal || werewolfMode !== "playing" || !werewolfRoomId) return undefined;
+    // In normal gameplay we rely on socket push; polling is fallback only when game payload is missing.
+    if (!showWerewolfModal || werewolfMode !== "playing" || werewolfGame) return undefined;
+    werewolfSyncRetryRef.current = 0;
     const pullRoom = async () => {
       try {
-        await refreshWerewolfRoom();
+        let nextRoom = null;
+        if (werewolfRoomId) {
+          const roomRes = await fetch(`${API}/werewolf/rooms/${werewolfRoomId}`, { headers: authHeaders });
+          const roomData = await roomRes.json();
+          if (roomRes.ok && roomData?.room) nextRoom = roomData.room;
+        }
+        if (!nextRoom) {
+          const statusRes = await fetch(`${API}/werewolf/match/status`, { headers: authHeaders });
+          const statusData = await statusRes.json();
+          if (statusRes.ok && statusData?.matched && statusData?.room) nextRoom = statusData.room;
+        }
+        if (nextRoom) {
+          applyWerewolfRoom(nextRoom);
+          if (nextRoom.game) {
+            werewolfSyncRetryRef.current = 0;
+            return;
+          }
+        }
+        werewolfSyncRetryRef.current += 1;
+        if (werewolfSyncRetryRef.current >= 3) {
+          setWerewolfRoomId("");
+          setWerewolfRoomMembers([]);
+          setWerewolfGame(null);
+          setWerewolfMode("match");
+          setIsWerewolfMatching(false);
+          setChatNotice("房间状态失效，请点击“开始匹配”重新进入");
+          werewolfSyncRetryRef.current = 0;
+        }
       } catch (_error) {}
     };
     pullRoom();
     const timer = window.setInterval(pullRoom, 1500);
     return () => clearInterval(timer);
-  }, [showWerewolfModal, werewolfMode, werewolfRoomId, authHeaders]);
+  }, [showWerewolfModal, werewolfMode, werewolfRoomId, werewolfGame, authHeaders]);
+
+  useEffect(() => {
+    if (!showWerewolfModal || werewolfMode !== "playing" || !werewolfGame || werewolfGame.phase !== "DAY_SPEECH" || werewolfGame.winner) {
+      setWerewolfSpeechCountdown(0);
+      return undefined;
+    }
+    const updateCountdown = () => {
+      const deadlineAt = Number(werewolfGame.speechDeadlineAt || 0);
+      if (deadlineAt > 0) {
+        setWerewolfSpeechCountdown(Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000)));
+      } else {
+        setWerewolfSpeechCountdown(Math.max(0, Number(werewolfGame.speechSecondsLeft || 0)));
+      }
+    };
+    updateCountdown();
+    const timer = window.setInterval(updateCountdown, 1000);
+    return () => clearInterval(timer);
+  }, [showWerewolfModal, werewolfMode, werewolfGame]);
 
   useEffect(() => {
     if (!tacitCurrentQuestion || tacitMode !== "playing") return undefined;
@@ -608,6 +720,58 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!authToken) {
+      setHiddenProfiles([]);
+      return;
+    }
+    fetch(`${API}/planet/hidden-profiles`, { headers: authHeaders })
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.message || "加载隐藏款失败");
+        setHiddenProfiles(Array.isArray(data.profiles) ? data.profiles : []);
+        setHeroRotationIndex(0);
+      })
+      .catch(() => setHiddenProfiles([]));
+  }, [authToken, authHeaders]);
+
+  useEffect(() => {
+    if (hiddenProfiles.length <= 1) return undefined;
+    const timer = window.setInterval(() => {
+      setHeroRotationIndex((prev) => (prev + 1) % Math.min(hiddenProfiles.length, 6));
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [hiddenProfiles]);
+
+  useEffect(() => {
+    if (!showSentenceModal || sentenceMode !== "playing" || sentenceMyChoice || sentencePeerChoice || sentenceResolving) {
+      return undefined;
+    }
+    if (sentenceCountdown <= 0) {
+      if (!sentenceCurrentRound?.options?.length) return undefined;
+      const autoChoice = sentenceCurrentRound.options[Math.floor(Math.random() * sentenceCurrentRound.options.length)];
+      setSentenceMyChoice(autoChoice);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setSentenceCountdown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [
+    showSentenceModal,
+    sentenceMode,
+    sentenceCountdown,
+    sentenceMyChoice,
+    sentencePeerChoice,
+    sentenceResolving,
+    sentenceCurrentRound
+  ]);
+
+  useEffect(() => {
+    if (!showSentenceModal || sentenceMode !== "playing" || !sentenceMyChoice || sentencePeerChoice || sentenceResolving) return;
+    resolveSentenceRound(sentenceMyChoice);
+  }, [showSentenceModal, sentenceMode, sentenceMyChoice, sentencePeerChoice, sentenceResolving]);
+
+  useEffect(() => {
     if (!user) return;
     setProfileForm({
       nickname: user.nickname || "",
@@ -704,7 +868,7 @@ export default function App() {
       } else if (room?.status === "IN_GAME") {
         const mode = room.type === "MATCH" ? "多人匹配" : "好友房";
         setWerewolfRulePack(buildWerewolfRulePack(room.acceptedCount || 6, mode));
-        setWerewolfMode("judge");
+        setWerewolfMode(room.type === "MATCH" ? "playing" : "judge");
       }
     });
     socket.on("werewolf:invite", (invite) => {
@@ -1380,6 +1544,126 @@ export default function App() {
     loadTacitInvitations().catch(() => setTacitInvitations([]));
   };
 
+  const resetSentenceState = () => {
+    setSentenceMode("menu");
+    setIsSentenceMatching(false);
+    setSentenceOpponent(null);
+    setSentenceRounds([]);
+    setSentenceRoundIndex(0);
+    setSentenceMyChoice("");
+    setSentencePeerChoice("");
+    setSentenceCountdown(20);
+    setSentenceScore(0);
+    setSentenceLogs([]);
+    setSentenceResolving(false);
+    if (sentenceMatchTimerRef.current) {
+      clearTimeout(sentenceMatchTimerRef.current);
+      sentenceMatchTimerRef.current = null;
+    }
+    if (sentenceResolveTimerRef.current) {
+      clearTimeout(sentenceResolveTimerRef.current);
+      sentenceResolveTimerRef.current = null;
+    }
+  };
+
+  const openSentenceMenu = () => {
+    resetSentenceState();
+    setShowSentenceModal(true);
+  };
+
+  const startSentenceGame = (opponent) => {
+    const rounds = createSentenceChainRounds(5);
+    setSentenceOpponent(opponent);
+    setSentenceRounds(rounds);
+    setSentenceRoundIndex(0);
+    setSentenceMyChoice("");
+    setSentencePeerChoice("");
+    setSentenceCountdown(20);
+    setSentenceScore(0);
+    setSentenceLogs([]);
+    setSentenceResolving(false);
+    setSentenceMode("playing");
+  };
+
+  const startSentenceMatch = () => {
+    if (isSentenceMatching) return;
+    setSentenceMode("match");
+    setIsSentenceMatching(true);
+    if (sentenceMatchTimerRef.current) clearTimeout(sentenceMatchTimerRef.current);
+    sentenceMatchTimerRef.current = window.setTimeout(() => {
+      const source = hiddenProfiles.length
+        ? hiddenProfiles
+        : [{ id: "fallback-bot", nickname: "隐藏款", age: 24, city: "同城", hobbies: "电影,音乐", avatar: "", gender: "FEMALE" }];
+      const target = source[Math.floor(Math.random() * source.length)];
+      setIsSentenceMatching(false);
+      startSentenceGame({
+        id: target.id,
+        name: target.nickname || "隐藏款",
+        avatar: target.avatar || "",
+        city: target.city || "同城",
+        isBot: true
+      });
+    }, 1600);
+  };
+
+  const startSentenceInviteGame = (friend) => {
+    startSentenceGame({
+      id: friend.id,
+      name: friend.name,
+      avatar: friend.avatar || "",
+      city: friend.status || "在线",
+      isBot: false
+    });
+  };
+
+  const resolveSentenceRound = (myChoice) => {
+    if (!sentenceCurrentRound || sentenceResolving || sentencePeerChoice) return;
+    setSentenceResolving(true);
+    const options = sentenceCurrentRound.options || [];
+    const delayMs = sentenceOpponent?.isBot ? 1200 + Math.floor(Math.random() * 1600) : 1600;
+    if (sentenceResolveTimerRef.current) clearTimeout(sentenceResolveTimerRef.current);
+    sentenceResolveTimerRef.current = window.setTimeout(() => {
+      const randomFallback = options[Math.floor(Math.random() * options.length)] || "";
+      const peerChoice =
+        Math.random() < (sentenceOpponent?.isBot ? 0.55 : 0.5)
+          ? myChoice
+          : randomFallback === myChoice && options.length > 1
+            ? options.find((item) => item !== myChoice) || randomFallback
+            : randomFallback;
+      setSentencePeerChoice(peerChoice);
+      const matched = peerChoice === myChoice;
+      setSentenceScore((prev) => prev + (matched ? 20 : 0));
+      setSentenceLogs((prev) => [
+        ...prev,
+        `第 ${sentenceRoundIndex + 1} 题：你选「${myChoice}」，对方选「${peerChoice}」${matched ? "，默契+20" : "，继续加油"}。`
+      ]);
+      if (sentenceRoundIndex >= sentenceRounds.length - 1) {
+        setSentenceMode("result");
+        setSentenceResolving(false);
+        return;
+      }
+      if (sentenceResolveTimerRef.current) clearTimeout(sentenceResolveTimerRef.current);
+      sentenceResolveTimerRef.current = window.setTimeout(() => {
+        setSentenceRoundIndex((prev) => prev + 1);
+        setSentenceMyChoice("");
+        setSentencePeerChoice("");
+        setSentenceCountdown(20);
+        setSentenceResolving(false);
+      }, 1200);
+    }, delayMs);
+  };
+
+  const pickSentenceChoice = (choice) => {
+    if (!sentenceCurrentRound || sentenceMyChoice || sentencePeerChoice || sentenceResolving) return;
+    setSentenceMyChoice(choice);
+    resolveSentenceRound(choice);
+  };
+
+  const closeSentenceModal = () => {
+    setShowSentenceModal(false);
+    resetSentenceState();
+  };
+
   const applyTacitRoom = (room) => {
     if (!room) return;
     setTacitRoomId(room.id || "");
@@ -1620,6 +1904,9 @@ export default function App() {
         : []
     );
     setWerewolfGame(room.game || null);
+    if (room.game?.status === "IN_GAME") {
+      setWerewolfMode("playing");
+    }
   };
 
   const ensureWerewolfFriendRoom = async () => {
@@ -1641,8 +1928,21 @@ export default function App() {
     setWerewolfInvitations(Array.isArray(data.invitations) ? data.invitations : []);
   };
 
-  const startWerewolfMatching = () => {
+  const resetWerewolfSessionRemote = async () => {
+    try {
+      await fetch(`${API}/werewolf/session/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders }
+      });
+    } catch (_error) {}
+  };
+
+  const startWerewolfMatching = async () => {
     if (isWerewolfMatching || werewolfPollingRef.current) return;
+    await resetWerewolfSessionRemote();
+    setWerewolfRoomId("");
+    setWerewolfRoomMembers([]);
+    setWerewolfGame(null);
     setIsWerewolfMatching(true);
     fetch(`${API}/werewolf/match/enqueue`, {
       method: "POST",
@@ -1654,7 +1954,7 @@ export default function App() {
         if (data.matched && data.room) {
           applyWerewolfRoom(data.room);
           setWerewolfRulePack(buildWerewolfRulePack(6, "多人匹配"));
-          setWerewolfMode("judge");
+          setWerewolfMode(data.room?.game ? "playing" : "match");
           setIsWerewolfMatching(false);
           return;
         }
@@ -1666,7 +1966,7 @@ export default function App() {
             if (statusData.matched && statusData.room) {
               applyWerewolfRoom(statusData.room);
               setWerewolfRulePack(buildWerewolfRulePack(6, "多人匹配"));
-              setWerewolfMode("judge");
+              setWerewolfMode(statusData.room?.game ? "playing" : "match");
               setIsWerewolfMatching(false);
               clearInterval(werewolfPollingRef.current);
               werewolfPollingRef.current = null;
@@ -1764,11 +2064,15 @@ export default function App() {
     applyWerewolfRoom(data.room);
   };
 
-  const closeWerewolfModal = () => {
+  const closeWerewolfModal = async () => {
+    await resetWerewolfSessionRemote();
     setShowWerewolfModal(false);
     setShowWerewolfInvitePanel(false);
     setWerewolfInviteCooldowns({});
     setIsWerewolfMatching(false);
+    setWerewolfRoomId("");
+    setWerewolfRoomMembers([]);
+    setWerewolfMode("menu");
     setWerewolfGame(null);
     setWerewolfSpeechDraft("");
     setWerewolfActionLoading(false);
@@ -2094,12 +2398,37 @@ export default function App() {
       {tab === "planet" && (
         <section className="main-content">
           <div className="hero-match-card">
-            <div className="hero-level">Lv.1</div>
-            <div className="hero-avatar-wrap">
-              <div className="hero-avatar" />
+            <div className="hero-level">附近推荐</div>
+            <div className="hero-profile-list">
+              {(visibleHiddenProfiles.length ? visibleHiddenProfiles : [{ id: "empty" }]).map((item) => (
+                <div key={item.id} className="hero-profile-card">
+                  {item.id === "empty" ? (
+                    <p className="feed-tip">正在加载隐藏款资料...</p>
+                  ) : (
+                    <>
+                      <img
+                        className="hero-profile-cover"
+                        src={resolveAssetUrl(item.avatar || "")}
+                        alt={item.nickname || "隐藏款"}
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = item.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
+                        }}
+                      />
+                      <div className="hero-profile-meta">
+                        <strong>{item.nickname || "隐藏款"}</strong>
+                        <span>
+                          {item.age || "-"}岁 · {item.city || "同城"}
+                        </span>
+                        <small>{item.hobbies || "期待与你认识"}</small>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
             </div>
-            <p className="hero-title">她在等你一起加入</p>
-            <button className="hero-action">和她通话</button>
+            <p className="hero-title">寻找你附近的隐藏款</p>
+            <button className="hero-action">开始寻找</button>
           </div>
 
           <h3 className="section-title">配对聊天</h3>
@@ -2114,11 +2443,6 @@ export default function App() {
               <p>猜拳互动真心话</p>
               <button>立即开聊</button>
             </div>
-            <div className="feature-card orange">
-              <h3>文字闪聊</h3>
-              <p>立即找人聊聊</p>
-              <button>马上开始</button>
-            </div>
           </div>
 
           <h3 className="section-title">配对玩游戏</h3>
@@ -2126,6 +2450,9 @@ export default function App() {
             <div className="game-card">
               <h4>猜句子接龙</h4>
               <p>15.1万人正在玩</p>
+              <button type="button" onClick={openSentenceMenu}>
+                进入
+              </button>
             </div>
             <div className="game-card">
               <h4>狼人杀</h4>
@@ -2830,6 +3157,11 @@ export default function App() {
                   你的身份：{werewolfGame.myRole || "未知"}
                   {werewolfGame.winner ? ` · 胜利阵营：${werewolfGame.winner === "WOLF" ? "狼人" : "好人"}` : ""}
                 </p>
+                {werewolfGame.phase === "DAY_SPEECH" && !werewolfGame.winner && (
+                  <p className="feed-tip">
+                    发言倒计时：{Math.max(0, werewolfSpeechCountdown || Number(werewolfGame.speechSecondsLeft || 0))}s
+                  </p>
+                )}
                 <div className="werewolf-role-grid">
                   {werewolfGame.players.map((item) => (
                     <span key={`ww-player-${item.userId}`}>
@@ -2890,6 +3222,15 @@ export default function App() {
                 {!werewolfGame.winner && !werewolfGame.actions?.canNightKill && !werewolfGame.actions?.canSpeak && !werewolfGame.actions?.canVote && (
                   <p className="feed-tip">等待其他玩家行动中...</p>
                 )}
+              </div>
+            )}
+            {werewolfMode === "playing" && !werewolfGame && (
+              <div className="werewolf-mode-wrap">
+                <p>正在进入游戏房间...</p>
+                <p className="feed-tip">正在同步对局状态，请稍候 1-2 秒。</p>
+                <button type="button" onClick={() => refreshWerewolfRoom().catch((e) => setChatNotice(e.message))}>
+                  立即重试
+                </button>
               </div>
             )}
             {werewolfMode === "judge" && werewolfRulePack && (
@@ -3129,6 +3470,117 @@ export default function App() {
               </div>
             )}
             <button type="button" onClick={closeTacitModal}>
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showSentenceModal && (
+        <div className="profile-setup-overlay" onClick={closeSentenceModal}>
+          <div className="profile-setup-card werewolf-card tacit-card" onClick={(e) => e.stopPropagation()}>
+            <h3>猜句子接龙</h3>
+            {sentenceMode === "menu" && (
+              <div className="werewolf-mode-wrap">
+                <p>每局 5 题，双方从同一句开头里选下一句，选中同一个选项即加分。</p>
+                <div className="werewolf-menu">
+                  <button type="button" onClick={startSentenceMatch}>
+                    匹配模式
+                  </button>
+                  <button type="button" onClick={() => setSentenceMode("invite")}>
+                    邀请好友
+                  </button>
+                </div>
+              </div>
+            )}
+            {sentenceMode === "match" && (
+              <div className="werewolf-mode-wrap">
+                <p>句子接龙匹配中（2人）</p>
+                <p className="feed-tip">{isSentenceMatching ? "正在为你匹配同频玩家..." : "点击按钮开始匹配"}</p>
+                <button type="button" onClick={startSentenceMatch} disabled={isSentenceMatching}>
+                  {isSentenceMatching ? "匹配中..." : "开始匹配"}
+                </button>
+                <button type="button" onClick={() => setSentenceMode("menu")}>
+                  返回菜单
+                </button>
+              </div>
+            )}
+            {sentenceMode === "invite" && (
+              <div className="werewolf-mode-wrap">
+                <p>邀请好友进入接龙局</p>
+                <div className="werewolf-invite-list">
+                  {contacts.length ? (
+                    contacts.map((item) => (
+                      <div key={`sentence-invite-${item.id}`} className="contact-item">
+                        <img src={resolveAssetUrl(item.avatar)} alt={item.name} className="chat-avatar" />
+                        <div className="contact-main">
+                          <strong>{item.name}</strong>
+                          <span>{item.status}</span>
+                        </div>
+                        <button type="button" onClick={() => startSentenceInviteGame(item)}>
+                          开始
+                        </button>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="feed-tip">暂无可邀请好友，先去聊天页加好友吧。</p>
+                  )}
+                </div>
+                <button type="button" onClick={() => setSentenceMode("menu")}>
+                  返回菜单
+                </button>
+              </div>
+            )}
+            {sentenceMode === "playing" && sentenceCurrentRound && (
+              <div className="werewolf-mode-wrap">
+                <p>
+                  第 {sentenceRoundIndex + 1} / {sentenceRounds.length} 题 · {sentenceOpponent?.name || "对方"}
+                </p>
+                <p className="feed-tip">本题倒计时：{sentenceCountdown}s</p>
+                <div className="sentence-round-card">
+                  <strong>{sentenceCurrentRound.stem}</strong>
+                  <div className="sentence-options">
+                    {sentenceCurrentRound.options.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        className={sentenceMyChoice === option ? "active-choice" : ""}
+                        disabled={Boolean(sentenceMyChoice) || sentenceResolving}
+                        onClick={() => pickSentenceChoice(option)}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {sentenceMyChoice && (
+                  <p className="feed-tip">
+                    你选择：{sentenceMyChoice}
+                    {sentencePeerChoice ? ` ｜ 对方选择：${sentencePeerChoice}` : " ｜ 等待对方选择..."}
+                  </p>
+                )}
+                <p className="feed-tip">当前默契分：{sentenceScore}</p>
+              </div>
+            )}
+            {sentenceMode === "result" && (
+              <div className="werewolf-mode-wrap">
+                <p>本局完成：默契分 {sentenceScore} / 100</p>
+                <div className="werewolf-script-list">
+                  {sentenceLogs.map((line, idx) => (
+                    <p key={`sentence-log-${idx}`}>{line}</p>
+                  ))}
+                </div>
+                <div className="werewolf-menu">
+                  <button type="button" onClick={startSentenceMatch}>
+                    再来一局
+                  </button>
+                  <button type="button" onClick={() => setSentenceMode("menu")}>
+                    返回菜单
+                  </button>
+                </div>
+              </div>
+            )}
+            <button type="button" onClick={closeSentenceModal}>
               关闭
             </button>
           </div>

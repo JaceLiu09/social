@@ -163,6 +163,8 @@ function getWerewolfGameView(game, viewerUserId = "") {
     day: game.day,
     winner: game.winner || "",
     currentSpeakerUserId: game.currentSpeakerUserId || "",
+    speechDeadlineAt: game.speechDeadlineAt || 0,
+    speechSecondsLeft: getWerewolfSpeechSecondsLeft(game),
     myRole: viewer?.role || "",
     aliveCount: alivePlayers.length,
     players: game.players.map((p) => ({
@@ -243,6 +245,22 @@ function clearWerewolfGameTimer(roomId) {
   }
 }
 
+function getWerewolfSpeechSecondsLeft(game) {
+  if (!game?.speechDeadlineAt) return 0;
+  return Math.max(0, Math.ceil((Number(game.speechDeadlineAt) - Date.now()) / 1000));
+}
+
+function setWerewolfCurrentSpeaker(game, speakerUserId) {
+  game.currentSpeakerUserId = speakerUserId || "";
+  game.speechDeadlineAt = speakerUserId ? Date.now() + 20000 : 0;
+}
+
+function advanceWerewolfSpeaker(game) {
+  game.currentSpeakerIndex += 1;
+  const nextSpeaker = game.currentSpeakerOrder[game.currentSpeakerIndex] || "";
+  setWerewolfCurrentSpeaker(game, nextSpeaker);
+}
+
 async function emitWerewolfGameUpdate(roomId) {
   const room = await getWerewolfRoomPayload(roomId);
   if (!room) return;
@@ -256,6 +274,92 @@ async function emitWerewolfGameUpdate(roomId) {
       sockets.forEach((socketId) => io.to(socketId).emit("werewolf:room:update", payload));
     })
   );
+}
+
+async function startWerewolfGame(roomId, userId) {
+  const room = await prisma.werewolfRoom.findUnique({ where: { id: roomId } });
+  if (!room) {
+    return { ok: false, status: 404, message: "房间不存在" };
+  }
+  if (room.type === "FRIEND" && room.ownerUserId !== userId) {
+    return { ok: false, status: 403, message: "仅房主可开局" };
+  }
+  const payload = await getWerewolfRoomPayload(roomId, userId);
+  if (!payload) {
+    return { ok: false, status: 404, message: "房间不存在" };
+  }
+  if (payload.game?.status === "IN_GAME") {
+    return { ok: true, room: payload };
+  }
+
+  let acceptedMembers = payload.members.filter((m) => m.status === "HOST" || m.status === "ACCEPTED");
+  let players = acceptedMembers.map((m) => ({
+    userId: m.userId,
+    name: m.name || "玩家",
+    isBot: m.userId !== userId
+  }));
+  if (room.type === "MATCH") {
+    const participantIds = players.map((p) => p.userId);
+    const needBots = Math.max(0, 6 - participantIds.length);
+    if (needBots > 0) {
+      const botUsers = await prisma.user.findMany({
+        where: {
+          phone: { startsWith: "fake" },
+          id: { notIn: participantIds }
+        },
+        take: needBots
+      });
+      players = [
+        ...players,
+        ...botUsers.map((u) => ({
+          userId: u.id,
+          name: u.nickname || "机器人",
+          isBot: true
+        }))
+      ];
+    }
+    players = players.slice(0, 6);
+    if (players.length < 6) {
+      return { ok: false, status: 400, message: "匹配玩家不足，稍后再试" };
+    }
+  } else {
+    if (players.length < 6) {
+      return { ok: false, status: 400, message: "至少6名玩家同意后才能开始" };
+    }
+    players = players.slice(0, 12);
+    acceptedMembers = acceptedMembers.slice(0, 12);
+  }
+
+  const roleDeck = buildWerewolfRoleDeck(players.length);
+  const game = {
+    roomId,
+    humanUserId: userId,
+    phase: "NIGHT",
+    day: 1,
+    winner: "",
+    players: players.map((p, idx) => ({
+      userId: p.userId,
+      name: p.name,
+      isBot: p.isBot,
+      alive: true,
+      role: roleDeck[idx] || "VILLAGER",
+      camp: (roleDeck[idx] || "VILLAGER") === "WOLF" ? "WOLF" : "GOOD"
+    })),
+    logs: [],
+    currentSpeakerOrder: [],
+    currentSpeakerIndex: 0,
+    currentSpeakerUserId: "",
+    speechDeadlineAt: 0,
+    nightKillTargetUserId: "",
+    votes: {}
+  };
+  game.logs.push(buildWerewolfLog(game, "游戏开始，天黑请闭眼。"));
+  werewolfGames.set(roomId, game);
+  await prisma.werewolfRoom.update({ where: { id: roomId }, data: { status: "IN_GAME" } });
+  await emitWerewolfGameUpdate(roomId);
+  scheduleWerewolfSimulation(roomId).catch(() => {});
+  const next = await getWerewolfRoomPayload(roomId, userId);
+  return { ok: true, room: next };
 }
 
 async function scheduleWerewolfSimulation(roomId) {
@@ -285,19 +389,29 @@ async function scheduleWerewolfSimulation(roomId) {
       return;
     }
     const timer = setTimeout(async () => {
-      const target =
-        game.nightKillTargetUserId && goodTargets.some((p) => p.userId === game.nightKillTargetUserId)
-          ? game.players.find((p) => p.userId === game.nightKillTargetUserId)
-          : randomPick(goodTargets);
-      if (target) {
-        target.alive = false;
-        game.logs.push(buildWerewolfLog(game, `夜晚结束，${target.name} 出局。`));
+      // 首夜平安夜，保证首日所有玩家都能参与发言/投票
+      if (game.day === 1) {
+        game.logs.push(buildWerewolfLog(game, "夜晚结束，昨夜平安无事。"));
+      } else {
+        const target =
+          game.nightKillTargetUserId && goodTargets.some((p) => p.userId === game.nightKillTargetUserId)
+            ? game.players.find((p) => p.userId === game.nightKillTargetUserId)
+            : randomPick(goodTargets);
+        if (target) {
+          target.alive = false;
+          game.logs.push(buildWerewolfLog(game, `夜晚结束，${target.name} 出局。`));
+        }
       }
       game.nightKillTargetUserId = "";
       game.phase = "DAY_SPEECH";
-      game.currentSpeakerOrder = shuffleList(game.players.filter((p) => p.alive).map((p) => p.userId));
+      const aliveUserIds = game.players.filter((p) => p.alive).map((p) => p.userId);
+      if (aliveUserIds.includes(game.humanUserId)) {
+        game.currentSpeakerOrder = [game.humanUserId, ...shuffleList(aliveUserIds.filter((id) => id !== game.humanUserId))];
+      } else {
+        game.currentSpeakerOrder = shuffleList(aliveUserIds);
+      }
       game.currentSpeakerIndex = 0;
-      game.currentSpeakerUserId = game.currentSpeakerOrder[0] || "";
+      setWerewolfCurrentSpeaker(game, game.currentSpeakerOrder[0] || "");
       game.logs.push(buildWerewolfLog(game, `第 ${game.day} 天白天开始，请依次发言。`));
       await emitWerewolfGameUpdate(roomId);
       await scheduleWerewolfSimulation(roomId);
@@ -309,7 +423,7 @@ async function scheduleWerewolfSimulation(roomId) {
   if (game.phase === "DAY_SPEECH") {
     if (!game.currentSpeakerOrder.length || game.currentSpeakerIndex >= game.currentSpeakerOrder.length) {
       game.phase = "DAY_VOTE";
-      game.currentSpeakerUserId = "";
+      setWerewolfCurrentSpeaker(game, "");
       game.votes = {};
       game.logs.push(buildWerewolfLog(game, "发言结束，进入公投环节。"));
       await emitWerewolfGameUpdate(roomId);
@@ -317,9 +431,20 @@ async function scheduleWerewolfSimulation(roomId) {
       return;
     }
     const currentSpeaker = game.currentSpeakerOrder[game.currentSpeakerIndex];
-    game.currentSpeakerUserId = currentSpeaker;
+    setWerewolfCurrentSpeaker(game, currentSpeaker);
     if (currentSpeaker === game.humanUserId) {
       await emitWerewolfGameUpdate(roomId);
+      const timer = setTimeout(async () => {
+        if (game.phase !== "DAY_SPEECH" || game.currentSpeakerUserId !== currentSpeaker) return;
+        const speaker = game.players.find((p) => p.userId === currentSpeaker);
+        if (speaker?.alive) {
+          game.logs.push(buildWerewolfLog(game, `${speaker.name} 发言超时，自动过麦。`));
+        }
+        advanceWerewolfSpeaker(game);
+        await emitWerewolfGameUpdate(roomId);
+        await scheduleWerewolfSimulation(roomId);
+      }, 20000);
+      werewolfGameTimers.set(roomId, timer);
       return;
     }
     const timer = setTimeout(async () => {
@@ -328,17 +453,21 @@ async function scheduleWerewolfSimulation(roomId) {
         const snippets = ["我先观察一下。", "我这轮是好人视角。", "先听后面玩家发言。", "这轮发言偏保守。"];
         game.logs.push(buildWerewolfLog(game, `${speaker.name} 发言：${randomPick(snippets)}`));
       }
-      game.currentSpeakerIndex += 1;
-      game.currentSpeakerUserId = game.currentSpeakerOrder[game.currentSpeakerIndex] || "";
+      advanceWerewolfSpeaker(game);
       await emitWerewolfGameUpdate(roomId);
       await scheduleWerewolfSimulation(roomId);
-    }, 1200);
+    }, randomInt(10000, 15000));
     werewolfGameTimers.set(roomId, timer);
     return;
   }
 
   if (game.phase === "DAY_VOTE") {
     const alive = game.players.filter((p) => p.alive);
+    const humanAlive = alive.some((p) => p.userId === game.humanUserId);
+    if (humanAlive && !game.votes[game.humanUserId]) {
+      await emitWerewolfGameUpdate(roomId);
+      return;
+    }
     const bots = alive.filter((p) => p.userId !== game.humanUserId);
     const pendingBot = bots.find((p) => !game.votes[p.userId]);
     if (pendingBot) {
@@ -349,11 +478,6 @@ async function scheduleWerewolfSimulation(roomId) {
         await scheduleWerewolfSimulation(roomId);
       }, 900);
       werewolfGameTimers.set(roomId, timer);
-      return;
-    }
-    const humanAlive = alive.some((p) => p.userId === game.humanUserId);
-    if (humanAlive && !game.votes[game.humanUserId]) {
-      await emitWerewolfGameUpdate(roomId);
       return;
     }
     const tally = new Map();
@@ -378,6 +502,7 @@ async function scheduleWerewolfSimulation(roomId) {
     }
     game.day += 1;
     game.phase = "NIGHT";
+    setWerewolfCurrentSpeaker(game, "");
     game.logs.push(buildWerewolfLog(game, `第 ${game.day} 夜开始，狼人请选择目标。`));
     await emitWerewolfGameUpdate(roomId);
     await scheduleWerewolfSimulation(roomId);
@@ -1099,6 +1224,49 @@ app.get("/match/online-count", (_req, res) => {
   res.json({ count });
 });
 
+app.get("/planet/hidden-profiles", async (req, res) => {
+  try {
+    const viewerId = getAuthUserId(req);
+    if (!viewerId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const viewer = await prisma.user.findUnique({
+      where: { id: viewerId },
+      select: { gender: true }
+    });
+    if (!viewer) return res.status(401).json({ message: "未登录或登录态失效" });
+    const preferredGender = viewer.gender === "MALE" ? "FEMALE" : "MALE";
+    const list = await prisma.user.findMany({
+      where: {
+        phone: { startsWith: "fake" },
+        gender: preferredGender
+      },
+      select: {
+        id: true,
+        nickname: true,
+        age: true,
+        currentCity: true,
+        hobbies: true,
+        avatarUrl: true,
+        gender: true
+      },
+      take: 12
+    });
+    const shuffled = shuffleList(list).slice(0, 6);
+    return res.json({
+      profiles: shuffled.map((item) => ({
+        id: item.id,
+        nickname: item.nickname,
+        age: item.age,
+        city: item.currentCity || "",
+        hobbies: item.hobbies || "",
+        avatar: item.avatarUrl || "",
+        gender: item.gender
+      }))
+    });
+  } catch (_error) {
+    return res.status(500).json({ message: "加载隐藏款资料失败" });
+  }
+});
+
 app.post("/match/start", async (req, res) => {
   const { userId } = req.body;
   const currentUser = await prisma.user.findUnique({ where: { id: userId } });
@@ -1361,12 +1529,27 @@ app.post("/werewolf/match/enqueue", async (req, res) => {
     const userId = getAuthUserId(req);
     if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
 
-    const existingMember = await prisma.werewolfRoomMember.findFirst({
+    let existingMember = await prisma.werewolfRoomMember.findFirst({
       where: {
         userId,
-        room: { status: { in: ["WAITING", "READY", "IN_GAME"] } }
+        room: {
+          type: "MATCH",
+          status: { in: ["WAITING", "READY", "IN_GAME"] }
+        }
       }
     });
+    if (existingMember) {
+      const payload = await getWerewolfRoomPayload(existingMember.roomId, userId);
+      // Server restart may leave DB room status at IN_GAME while in-memory game is gone.
+      // Treat this as stale and rematch immediately instead of returning an empty playing screen.
+      if (payload?.type === "MATCH" && payload?.status === "IN_GAME" && !payload?.game) {
+        await prisma.werewolfRoom.update({
+          where: { id: existingMember.roomId },
+          data: { status: "CLOSED" }
+        });
+        existingMember = null;
+      }
+    }
     if (existingMember) {
       const payload = await getWerewolfRoomPayload(existingMember.roomId, userId);
       return res.json({ ok: true, roomId: existingMember.roomId, matched: true, room: payload });
@@ -1374,17 +1557,39 @@ app.post("/werewolf/match/enqueue", async (req, res) => {
 
     await prisma.werewolfMatchQueue.deleteMany({ where: { userId } });
 
-    const botCandidates = await prisma.user.findMany({
-      where: {
-        phone: { startsWith: "fake" },
-        id: { not: userId }
-      },
-      take: 80
+    const currentUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { gender: true }
     });
-    const bots = shuffleList(botCandidates).slice(0, 5);
+    if (!currentUser) return res.status(404).json({ message: "用户不存在" });
+    const oppositeGender = currentUser.gender === "MALE" ? "FEMALE" : "MALE";
+    const sameGender = currentUser.gender === "MALE" ? "MALE" : "FEMALE";
+    const oppositeTarget = randomPick([3, 4]);
+    const sameTarget = 5 - oppositeTarget;
+    const [oppositeBots, sameBots] = await Promise.all([
+      prisma.user.findMany({
+        where: {
+          phone: { startsWith: "fake" },
+          id: { not: userId },
+          gender: oppositeGender
+        },
+        take: 120
+      }),
+      prisma.user.findMany({
+        where: {
+          phone: { startsWith: "fake" },
+          id: { not: userId },
+          gender: sameGender
+        },
+        take: 120
+      })
+    ]);
+    const pickedOpposite = shuffleList(oppositeBots).slice(0, oppositeTarget);
+    const pickedSame = shuffleList(sameBots).slice(0, sameTarget);
+    const bots = shuffleList([...pickedOpposite, ...pickedSame]).slice(0, 5);
     if (bots.length < 5) {
       return res.status(503).json({
-        message: "机器人账号不足，请先在服务器执行种子数据或稍后重试"
+        message: "符合性别配比的机器人账号不足，请先补充种子数据后重试"
       });
     }
 
@@ -1408,10 +1613,14 @@ app.post("/werewolf/match/enqueue", async (req, res) => {
         }))
       ]
     });
-    const payload = await getWerewolfRoomPayload(room.id, userId);
+    const started = await startWerewolfGame(room.id, userId);
+    if (!started.ok) {
+      return res.status(started.status || 500).json({ message: started.message || "开局失败" });
+    }
+    const startedRoom = started.room;
     const notifyIds = [userId, ...bots.map((b) => b.id)];
-    emitWerewolfRoomUpdateToUsers(notifyIds, payload);
-    return res.json({ ok: true, matched: true, roomId: room.id, room: payload });
+    emitWerewolfRoomUpdateToUsers(notifyIds, startedRoom);
+    return res.json({ ok: true, matched: true, roomId: room.id, room: startedRoom });
   } catch (_error) {
     return res.status(500).json({ message: "匹配失败，请稍后重试" });
   }
@@ -1424,15 +1633,72 @@ app.get("/werewolf/match/status", async (req, res) => {
     const member = await prisma.werewolfRoomMember.findFirst({
       where: {
         userId,
-        room: { status: { in: ["WAITING", "READY", "IN_GAME"] } }
+        room: {
+          type: "MATCH",
+          status: { in: ["WAITING", "READY", "IN_GAME"] }
+        }
       },
       orderBy: { createdAt: "desc" }
     });
     if (!member) return res.json({ matched: false });
-    const room = await getWerewolfRoomPayload(member.roomId, userId);
+    let room = await getWerewolfRoomPayload(member.roomId, userId);
+    if (room?.type === "MATCH" && room?.status === "IN_GAME" && !room?.game) {
+      const started = await startWerewolfGame(member.roomId, userId);
+      if (started.ok) room = started.room;
+    }
     return res.json({ matched: true, roomId: member.roomId, room });
   } catch (_error) {
     return res.status(500).json({ message: "查询匹配状态失败" });
+  }
+});
+
+app.post("/werewolf/session/reset", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+
+    await prisma.werewolfMatchQueue.deleteMany({ where: { userId } });
+    const activeMembers = await prisma.werewolfRoomMember.findMany({
+      where: {
+        userId,
+        room: {
+          status: { in: ["WAITING", "READY", "IN_GAME"] }
+        }
+      },
+      include: {
+        room: true
+      }
+    });
+
+    for (const member of activeMembers) {
+      const roomId = member.roomId;
+      if (member.room.type === "MATCH") {
+        await prisma.werewolfRoom.updateMany({
+          where: { id: roomId, status: { in: ["WAITING", "READY", "IN_GAME"] } },
+          data: { status: "CLOSED" }
+        });
+        werewolfGames.delete(roomId);
+        clearWerewolfGameTimer(roomId);
+      } else if (member.status !== "HOST") {
+        await prisma.werewolfRoomMember.updateMany({
+          where: {
+            roomId,
+            userId,
+            status: { in: ["PENDING", "ACCEPTED"] }
+          },
+          data: { status: "DECLINED" }
+        });
+      } else {
+        await prisma.werewolfRoom.updateMany({
+          where: { id: roomId, status: { in: ["WAITING", "READY"] } },
+          data: { status: "CLOSED" }
+        });
+      }
+    }
+
+    return res.json({ ok: true });
+  } catch (_error) {
+    return res.status(500).json({ message: "重置狼人杀会话失败" });
   }
 });
 
@@ -1468,8 +1734,12 @@ app.get("/werewolf/rooms/:id", async (req, res) => {
   try {
     const userId = getAuthUserId(req);
     if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
-    const room = await getWerewolfRoomPayload(req.params.id, userId);
+    let room = await getWerewolfRoomPayload(req.params.id, userId);
     if (!room) return res.status(404).json({ message: "房间不存在" });
+    if (room.type === "MATCH" && room.status === "IN_GAME" && !room.game) {
+      const started = await startWerewolfGame(req.params.id, userId);
+      if (started.ok) room = started.room;
+    }
     const joined = room.members.some((m) => m.userId === userId);
     if (!joined) return res.status(403).json({ message: "你不在该房间中" });
     return res.json({ room });
@@ -1586,75 +1856,11 @@ app.post("/werewolf/rooms/:id/start", async (req, res) => {
   try {
     const userId = getAuthUserId(req);
     if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
-    const roomId = req.params.id;
-    const room = await prisma.werewolfRoom.findUnique({ where: { id: roomId } });
-    if (!room) return res.status(404).json({ message: "房间不存在" });
-    if (room.type === "FRIEND" && room.ownerUserId !== userId) return res.status(403).json({ message: "仅房主可开局" });
-    const payload = await getWerewolfRoomPayload(roomId, userId);
-    if (!payload) return res.status(404).json({ message: "房间不存在" });
-    let acceptedMembers = payload.members.filter((m) => m.status === "HOST" || m.status === "ACCEPTED");
-    let players = acceptedMembers.map((m) => ({
-      userId: m.userId,
-      name: m.name || "玩家",
-      isBot: m.userId !== userId
-    }));
-    if (room.type === "MATCH") {
-      const participantIds = players.map((p) => p.userId);
-      const needBots = Math.max(0, 6 - participantIds.length);
-      if (needBots > 0) {
-        const botUsers = await prisma.user.findMany({
-          where: {
-            phone: { startsWith: "fake" },
-            id: { notIn: participantIds }
-          },
-          take: needBots
-        });
-        players = [
-          ...players,
-          ...botUsers.map((u) => ({
-            userId: u.id,
-            name: u.nickname || "机器人",
-            isBot: true
-          }))
-        ];
-      }
-      players = players.slice(0, 6);
-      if (players.length < 6) return res.status(400).json({ message: "匹配玩家不足，稍后再试" });
-    } else {
-      if (players.length < 6) return res.status(400).json({ message: "至少6名玩家同意后才能开始" });
-      players = players.slice(0, 12);
-      acceptedMembers = acceptedMembers.slice(0, 12);
+    const started = await startWerewolfGame(req.params.id, userId);
+    if (!started.ok) {
+      return res.status(started.status || 500).json({ message: started.message || "开局失败" });
     }
-
-    const roleDeck = buildWerewolfRoleDeck(players.length);
-    const game = {
-      roomId,
-      humanUserId: userId,
-      phase: "NIGHT",
-      day: 1,
-      winner: "",
-      players: players.map((p, idx) => ({
-        userId: p.userId,
-        name: p.name,
-        isBot: p.isBot,
-        alive: true,
-        role: roleDeck[idx] || "VILLAGER",
-        camp: (roleDeck[idx] || "VILLAGER") === "WOLF" ? "WOLF" : "GOOD"
-      })),
-      logs: [],
-      currentSpeakerOrder: [],
-      currentSpeakerIndex: 0,
-      currentSpeakerUserId: "",
-      nightKillTargetUserId: "",
-      votes: {}
-    };
-    game.logs.push(buildWerewolfLog(game, "游戏开始，天黑请闭眼。"));
-    werewolfGames.set(roomId, game);
-    await prisma.werewolfRoom.update({ where: { id: roomId }, data: { status: "IN_GAME" } });
-    await emitWerewolfGameUpdate(roomId);
-    const next = await getWerewolfRoomPayload(roomId, userId);
-    scheduleWerewolfSimulation(roomId).catch(() => {});
-    return res.json({ room: next });
+    return res.json({ room: started.room });
   } catch (_error) {
     return res.status(500).json({ message: "开局失败" });
   }
@@ -1684,8 +1890,7 @@ app.post("/werewolf/rooms/:id/action", async (req, res) => {
         return res.status(400).json({ message: "当前不可发言" });
       }
       game.logs.push(buildWerewolfLog(game, `${me.name} 发言：${text || "我先过。"} `));
-      game.currentSpeakerIndex += 1;
-      game.currentSpeakerUserId = game.currentSpeakerOrder[game.currentSpeakerIndex] || "";
+      advanceWerewolfSpeaker(game);
     } else if (actionType === "vote") {
       if (game.phase !== "DAY_VOTE") return res.status(400).json({ message: "当前不可投票" });
       const target = game.players.find((p) => p.userId === targetUserId && p.alive && p.userId !== userId);
