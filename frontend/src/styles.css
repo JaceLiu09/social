@@ -240,6 +240,42 @@ body {
   gap: 10px;
 }
 
+.setup-page {
+  min-height: 100vh;
+  background: #f5f7ff;
+  display: flex;
+  justify-content: center;
+  padding: 20px 14px 28px;
+}
+
+.setup-standalone-card {
+  width: min(560px, 100%);
+  max-height: unset;
+  border-radius: 20px;
+  box-shadow: 0 12px 34px rgba(25, 36, 80, 0.12);
+}
+
+.setup-photo-block {
+  display: grid;
+  gap: 8px;
+}
+
+.setup-photo-block strong {
+  font-size: 14px;
+  color: #1f2740;
+}
+
+.setup-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.setup-upload-slot {
+  min-height: 104px;
+  font-size: 13px;
+}
+
 .add-friend-card {
   max-width: 520px;
 }
@@ -905,6 +941,27 @@ body {
   max-width: 640px;
 }
 
+.game-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.game-modal-head h3 {
+  margin: 0;
+}
+
+.sound-toggle-btn {
+  border-radius: 999px;
+  background: #e9efff;
+  color: #3553ab;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  min-width: 66px;
+}
+
 .werewolf-menu {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -914,6 +971,12 @@ body {
 .werewolf-mode-wrap {
   display: grid;
   gap: 10px;
+  border: 1px solid #e6ecfb;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #f9fbff 0%, #f2f6ff 100%);
+  padding: 10px;
+  position: relative;
+  overflow: hidden;
 }
 
 .werewolf-seats {
@@ -998,6 +1061,119 @@ body {
   line-height: 1.45;
 }
 
+.game-hud-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.game-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  background: #e9f0ff;
+  color: #3453a6;
+}
+
+.game-pill.safe {
+  background: #e9f8ef;
+  color: #2f8b57;
+}
+
+.game-pill.danger {
+  background: #ffecef;
+  color: #c24b61;
+}
+
+.game-progress-wrap {
+  display: grid;
+  gap: 6px;
+}
+
+.game-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #566289;
+}
+
+.game-progress-label strong {
+  color: #2f5bd5;
+}
+
+.game-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: #e5ecff;
+  overflow: hidden;
+}
+
+.game-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #52d5ff 0%, #5a63f0 100%);
+  transition: width 0.35s ease;
+}
+
+.result-rank-chip {
+  justify-self: start;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.result-rank-chip.gold {
+  background: #fff3cf;
+  color: #a06a00;
+}
+
+.result-rank-chip.silver {
+  background: #edf1ff;
+  color: #3e57a9;
+}
+
+.result-rank-chip.bronze {
+  background: #ffece1;
+  color: #a55b35;
+}
+
+.game-intro-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: rgba(15, 22, 44, 0.48);
+  color: #fff;
+  font-size: 52px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  animation: gameIntroPop 0.35s ease;
+}
+
+.game-fx-toast {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 25;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: #2f5bd5;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 6px 16px rgba(47, 91, 213, 0.25);
+  animation: gameFxFloat 0.5s ease;
+}
+
 .tacit-card {
   max-width: 680px;
 }
@@ -1040,6 +1216,7 @@ body {
 .tacit-answer-card button.active-choice {
   background: #2f5bd5;
   color: #fff;
+  box-shadow: 0 8px 18px rgba(64, 100, 225, 0.28);
 }
 
 .tacit-score {
@@ -1077,6 +1254,7 @@ body {
 .sentence-options button.active-choice {
   background: #2f5bd5;
   color: #fff;
+  box-shadow: 0 8px 18px rgba(64, 100, 225, 0.28);
 }
 
 .card {
@@ -1441,6 +1619,329 @@ button:hover {
 
 .chat-membership-tip {
   margin-top: 10px;
+}
+
+.planet-match-panel {
+  width: min(420px, 100%);
+}
+
+.truth-modal-card {
+  width: min(520px, 100%);
+}
+
+.truth-answer-input {
+  width: 100%;
+  min-height: 92px;
+  border: 1px solid #e4e8f3;
+  border-radius: 10px;
+  padding: 10px 12px;
+  resize: none;
+  background: #f8f9fd;
+  color: #2a324f;
+  font-size: 14px;
+}
+
+.truth-invite-list {
+  max-height: 140px;
+  overflow: auto;
+}
+
+.truth-question-cards {
+  display: grid;
+  gap: 8px;
+}
+
+.truth-phase-stepper {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.truth-phase-stepper span {
+  text-align: center;
+  font-size: 12px;
+  border-radius: 999px;
+  padding: 4px 0;
+  background: #edf2ff;
+  color: #4c5a84;
+}
+
+.truth-phase-stepper span.active {
+  background: #5a63f0;
+  color: #fff;
+  font-weight: 700;
+}
+
+.truth-phase-stepper span.done {
+  background: #dfe8ff;
+  color: #3e57a9;
+}
+
+.truth-phase-progress {
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #e6ecff;
+}
+
+.truth-phase-progress span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #61d5ff 0%, #5863f0 100%);
+  transition: width 0.25s linear;
+}
+
+.truth-round-panel {
+  position: relative;
+}
+
+.truth-round-panel.round-enter {
+  animation: truthRoundSlideIn 0.36s ease;
+}
+
+.truth-question-cards button {
+  text-align: left;
+  border: 1px solid #dfe7fb;
+  background: #f8faff;
+  color: #2f3d67;
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.truth-question-cards button:hover {
+  transform: translateY(-1px);
+}
+
+.truth-question-cards button.picked {
+  border-color: #4a69ea;
+  box-shadow: 0 10px 22px rgba(74, 105, 234, 0.24);
+  background: linear-gradient(180deg, #eef3ff 0%, #e4ecff 100%);
+  animation: truthPickLock 0.32s ease;
+}
+
+.truth-question-index {
+  font-size: 12px;
+  color: #5b6b9a;
+  font-weight: 700;
+}
+
+.truth-dice-board {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.truth-dice-board > div {
+  border: 1px solid #e2e7f6;
+  border-radius: 12px;
+  background: #f7f9ff;
+  min-height: 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: #33406b;
+  gap: 4px;
+}
+
+.truth-dice-cell {
+  position: relative;
+}
+
+.truth-dice-face {
+  font-size: 28px;
+  line-height: 1;
+  color: #4b59d9;
+  text-shadow: 0 2px 8px rgba(80, 95, 220, 0.18);
+}
+
+.truth-dice-board.rolling > div {
+  animation: truthDicePulse 0.5s infinite;
+}
+
+.truth-dice-board.rolling .truth-dice-face {
+  animation: truthDiceSpin 0.45s linear infinite;
+}
+
+.truth-dice-board.settling > div {
+  animation: truthDiceSettleBounce 0.38s ease-out;
+}
+
+@keyframes truthDicePulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+}
+
+@keyframes truthDiceSpin {
+  0% {
+    transform: rotate(0deg) scale(0.95);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.08);
+  }
+  100% {
+    transform: rotate(360deg) scale(0.95);
+  }
+}
+
+@keyframes truthDiceSettleBounce {
+  0% {
+    transform: translateY(-6px) scale(0.96);
+  }
+  50% {
+    transform: translateY(2px) scale(1.03);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes truthPickLock {
+  0% {
+    transform: scale(0.96);
+  }
+  60% {
+    transform: scale(1.02);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes truthRoundSlideIn {
+  from {
+    transform: translateX(14px);
+    opacity: 0.58;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes gameIntroPop {
+  from {
+    transform: scale(0.85);
+    opacity: 0.45;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes gameFxFloat {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.planet-match-card {
+  border: 1px solid #e8ebf5;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.planet-match-cover {
+  width: 100%;
+  aspect-ratio: 16/10;
+  object-fit: cover;
+  display: block;
+}
+
+.membership-gate-overlay {
+  z-index: 90;
+  align-items: flex-end;
+  padding: 0;
+  background: rgba(10, 14, 30, 0.5);
+}
+
+.membership-gate-card {
+  width: 100%;
+  max-width: 640px;
+  border-radius: 22px 22px 0 0;
+  border: 0;
+  margin: 0 auto;
+  padding: 18px 16px calc(20px + env(safe-area-inset-bottom));
+  box-shadow: 0 -10px 34px rgba(24, 32, 70, 0.2);
+  animation: membershipSheetSlideUp 0.24s ease-out;
+}
+
+.membership-sheet-handle {
+  width: 52px;
+  height: 5px;
+  border-radius: 999px;
+  background: #d8deef;
+  margin: -2px auto 12px;
+}
+
+.membership-gate-card h3 {
+  font-size: 22px;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.membership-gate-card > p {
+  text-align: center;
+  font-size: 14px;
+  color: #747f99;
+  margin-bottom: 8px;
+}
+
+.membership-gate-card .werewolf-menu {
+  gap: 10px;
+}
+
+.membership-gate-card .werewolf-menu button {
+  border-radius: 14px;
+  font-size: 17px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #5865f2 0%, #6d4dff 100%);
+  color: #fff;
+  min-height: 46px;
+}
+
+.membership-gate-card > button {
+  width: 100%;
+  margin-top: 2px;
+  border: 1px solid #d8def2;
+  border-radius: 12px;
+  min-height: 42px;
+  color: #4f5b7a;
+  background: #fff;
+}
+
+@keyframes membershipSheetSlideUp {
+  from {
+    transform: translateY(28px);
+    opacity: 0.45;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 .contact-list {

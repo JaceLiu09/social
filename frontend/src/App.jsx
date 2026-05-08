@@ -86,6 +86,129 @@ function createSentenceChainRounds(count = 5) {
   }));
 }
 
+const TRUTH_ROUNDS_PER_GAME = 5;
+const TRUTH_DIFFICULTY_OPTIONS = [
+  { id: "LIGHT", label: "轻松" },
+  { id: "HEART", label: "走心" },
+  { id: "DEEP", label: "深度" },
+  { id: "MIXED", label: "混合" }
+];
+
+function pickRandomItem(list, fallback = null) {
+  if (!Array.isArray(list) || !list.length) return fallback;
+  return list[Math.floor(Math.random() * list.length)] || fallback;
+}
+
+function getDiceFace(value) {
+  const faces = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
+  const idx = Math.max(1, Math.min(6, Number(value) || 1)) - 1;
+  return faces[idx];
+}
+
+function playDiceTone(audioContext, frequency, durationSec = 0.08, gainValue = 0.04) {
+  if (!audioContext) return;
+  const osc = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  osc.type = "triangle";
+  osc.frequency.value = frequency;
+  gain.gain.value = gainValue;
+  osc.connect(gain);
+  gain.connect(audioContext.destination);
+  const now = audioContext.currentTime;
+  gain.gain.setValueAtTime(gainValue, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + durationSec);
+  osc.start(now);
+  osc.stop(now + durationSec);
+}
+
+function createTruthChallengeBank() {
+  const scenes = [
+    "第一次见面",
+    "深夜聊天",
+    "异地相处",
+    "争吵后和好",
+    "周末约会",
+    "节日仪式感",
+    "朋友圈互动",
+    "见家长前",
+    "暧昧升温期",
+    "认真交往后",
+    "长期关系里",
+    "压力很大时",
+    "低落情绪里",
+    "被误会之后",
+    "被夸赞之后",
+    "冷战阶段",
+    "想确认关系时",
+    "准备告白前",
+    "想复合的时候",
+    "想放弃的时候"
+  ];
+  const focuses = [
+    "最在意对方哪一点",
+    "最想被理解的部分",
+    "最怕被踩中的底线",
+    "最容易吃醋的瞬间",
+    "最想一起完成的事",
+    "最想立刻表达的话",
+    "最不愿妥协的原则",
+    "最期待得到的回应",
+    "最想改变的习惯",
+    "最想守住的承诺"
+  ];
+  const tonesByDifficulty = {
+    LIGHT: ["幽默", "轻松", "自在"],
+    HEART: ["温柔", "走心", "真诚"],
+    DEEP: ["深聊", "理性", "直面"]
+  };
+  const answerOpenings = [
+    "我会坦白说，",
+    "如果认真回答，",
+    "我内心最真实的是，",
+    "站在现在的我看，",
+    "我想先诚实一点，"
+  ];
+  const answerCores = [
+    "希望彼此有稳定的安全感",
+    "希望被看见情绪而不被否定",
+    "希望在冲突里也能被尊重",
+    "希望关系里有持续的行动",
+    "希望两个人都愿意成长",
+    "希望交流是坦诚且温和的",
+    "希望日常陪伴比口号更真实",
+    "希望在关键时刻互相托底",
+    "希望被坚定选择而不是备选",
+    "希望彼此能把话说开"
+  ];
+  const answerEndings = [
+    "这会让我更有安全感。",
+    "这样我才敢继续投入。",
+    "这比任何甜言蜜语都重要。",
+    "我会因此更确定这段关系。",
+    "这就是我最看重的答案。"
+  ];
+  const bank = [];
+  TRUTH_DIFFICULTY_OPTIONS.forEach((difficulty) => {
+    scenes.forEach((scene) => {
+      focuses.forEach((focus) => {
+        (tonesByDifficulty[difficulty.id] || ["真诚"]).forEach((tone) => {
+          const opening = pickRandomItem(answerOpenings, "我会坦白说，");
+          const core = pickRandomItem(answerCores, "希望彼此真诚沟通");
+          const ending = pickRandomItem(answerEndings, "这对我很重要。");
+          bank.push({
+            difficulty: difficulty.id,
+            question: `【${difficulty.label}/${tone}】在${scene}里，你${focus}？`,
+            answer: `${opening}${core}，${ending}`
+          });
+        });
+      });
+    });
+  });
+  return bank.slice(0, 1000);
+}
+
+const TRUTH_CHALLENGE_BANK = createTruthChallengeBank();
+
 function formatChatTime(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -204,7 +327,6 @@ export default function App() {
   const [authToken, setAuthToken] = useState("");
   const [session, setSession] = useState(null);
   const [blindBoxTarget, setBlindBoxTarget] = useState(null);
-  const [gameState, setGameState] = useState(null);
   const [onlineCount, setOnlineCount] = useState(200000);
   const [hiddenProfiles, setHiddenProfiles] = useState([]);
   const [heroRotationIndex, setHeroRotationIndex] = useState(0);
@@ -222,6 +344,7 @@ export default function App() {
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
   const [registerForm, setRegisterForm] = useState(registerBasicInitial);
   const [profileSetupForm, setProfileSetupForm] = useState(profileSetupInitial);
+  const [profileSetupPhotos, setProfileSetupPhotos] = useState([]);
   const [needsProfileSetup, setNeedsProfileSetup] = useState(false);
   const registerPhoneRef = useRef(null);
   const registerPasswordRef = useRef(null);
@@ -238,6 +361,7 @@ export default function App() {
   const [addFriendResults, setAddFriendResults] = useState([]);
   const [incomingRequests, setIncomingRequests] = useState([]);
   const [incomingRequestCount, setIncomingRequestCount] = useState(0);
+  const [gameSfxEnabled, setGameSfxEnabled] = useState(true);
   const [showWerewolfModal, setShowWerewolfModal] = useState(false);
   const [werewolfMode, setWerewolfMode] = useState("menu");
   const [werewolfRoomMembers, setWerewolfRoomMembers] = useState([]);
@@ -251,6 +375,8 @@ export default function App() {
   const [werewolfSpeechDraft, setWerewolfSpeechDraft] = useState("");
   const [werewolfActionLoading, setWerewolfActionLoading] = useState(false);
   const [werewolfSpeechCountdown, setWerewolfSpeechCountdown] = useState(0);
+  const [werewolfIntroCountdown, setWerewolfIntroCountdown] = useState(0);
+  const [werewolfFxText, setWerewolfFxText] = useState("");
   const [showTacitModal, setShowTacitModal] = useState(false);
   const [tacitMode, setTacitMode] = useState("menu");
   const [tacitRoomId, setTacitRoomId] = useState("");
@@ -260,8 +386,14 @@ export default function App() {
   const [tacitConfirming, setTacitConfirming] = useState(false);
   const [tacitSubmittedQuestionId, setTacitSubmittedQuestionId] = useState("");
   const [tacitCountdownSec, setTacitCountdownSec] = useState(30);
+  const [tacitIntroCountdown, setTacitIntroCountdown] = useState(0);
+  const [tacitFxText, setTacitFxText] = useState("");
   const [showMembershipGate, setShowMembershipGate] = useState(false);
   const [membershipSubmitting, setMembershipSubmitting] = useState(false);
+  const [membershipGateContext, setMembershipGateContext] = useState("invite");
+  const [showPlanetMatchPanel, setShowPlanetMatchPanel] = useState(false);
+  const [planetMatchLoading, setPlanetMatchLoading] = useState(false);
+  const [planetMatchProfile, setPlanetMatchProfile] = useState(null);
   const [showSentenceModal, setShowSentenceModal] = useState(false);
   const [sentenceMode, setSentenceMode] = useState("menu");
   const [isSentenceMatching, setIsSentenceMatching] = useState(false);
@@ -274,6 +406,29 @@ export default function App() {
   const [sentenceScore, setSentenceScore] = useState(0);
   const [sentenceLogs, setSentenceLogs] = useState([]);
   const [sentenceResolving, setSentenceResolving] = useState(false);
+  const [sentenceIntroCountdown, setSentenceIntroCountdown] = useState(0);
+  const [sentenceFxText, setSentenceFxText] = useState("");
+  const [showTruthModal, setShowTruthModal] = useState(false);
+  const [truthMode, setTruthMode] = useState("menu");
+  const [isTruthMatching, setIsTruthMatching] = useState(false);
+  const [truthDifficulty, setTruthDifficulty] = useState("LIGHT");
+  const [truthOpponent, setTruthOpponent] = useState(null);
+  const [truthDiceResult, setTruthDiceResult] = useState(null);
+  const [truthRoundIndex, setTruthRoundIndex] = useState(0);
+  const [truthAnswerDraft, setTruthAnswerDraft] = useState("");
+  const [truthAwaitingMyAnswer, setTruthAwaitingMyAnswer] = useState(false);
+  const [truthPhase, setTruthPhase] = useState("idle");
+  const [truthPhaseCountdown, setTruthPhaseCountdown] = useState(0);
+  const [truthQuestionOptions, setTruthQuestionOptions] = useState([]);
+  const [truthPickedQuestionIndex, setTruthPickedQuestionIndex] = useState(-1);
+  const [truthCurrentQuestion, setTruthCurrentQuestion] = useState("");
+  const [truthCurrentDifficultyLabel, setTruthCurrentDifficultyLabel] = useState("轻松");
+  const [truthRollingDice, setTruthRollingDice] = useState({ me: 1, peer: 1 });
+  const [truthIsRolling, setTruthIsRolling] = useState(false);
+  const [truthDiceSettling, setTruthDiceSettling] = useState(false);
+  const [truthRoundAnimating, setTruthRoundAnimating] = useState(false);
+  const [truthLogs, setTruthLogs] = useState([]);
+  const [truthInviteMembers, setTruthInviteMembers] = useState([]);
   const [isTacitMatching, setIsTacitMatching] = useState(false);
   const [myPosts, setMyPosts] = useState([]);
   const [newPostText, setNewPostText] = useState("");
@@ -306,9 +461,20 @@ export default function App() {
   const tacitAutoSubmitRef = useRef("");
   const sentenceMatchTimerRef = useRef(null);
   const sentenceResolveTimerRef = useRef(null);
+  const truthMatchTimerRef = useRef(null);
+  const truthRoundTimerRef = useRef(null);
+  const truthDiceAnimRef = useRef(null);
+  const truthRunRoundRef = useRef(null);
+  const truthDiceSettleTimerRef = useRef(null);
+  const truthPhaseTimerRef = useRef(null);
+  const truthCountdownTimerRef = useRef(null);
+  const truthAutoActionTimerRef = useRef(null);
+  const truthRoundAnimTimerRef = useRef(null);
+  const truthRoundContextRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const truthInviteTimersRef = useRef([]);
   const profilePhotoInputRef = useRef(null);
 
-  const friendlinessPercent = session?.friendliness ?? 0;
   const profilePhotos = useMemo(() => {
     if (!user?.photoUrls) return [];
     try {
@@ -412,7 +578,37 @@ export default function App() {
     const idx = heroRotationIndex % base.length;
     return [...base.slice(idx), ...base.slice(0, idx)];
   }, [hiddenProfiles, heroRotationIndex]);
+  const truthBankByDifficulty = useMemo(() => {
+    if (truthDifficulty === "MIXED") return TRUTH_CHALLENGE_BANK;
+    const filtered = TRUTH_CHALLENGE_BANK.filter((item) => item.difficulty === truthDifficulty);
+    return filtered.length ? filtered : TRUTH_CHALLENGE_BANK;
+  }, [truthDifficulty]);
   const sentenceCurrentRound = sentenceRounds[sentenceRoundIndex] || null;
+  const werewolfAliveCount = useMemo(
+    () => (Array.isArray(werewolfGame?.players) ? werewolfGame.players.filter((p) => p.alive).length : 0),
+    [werewolfGame]
+  );
+  const werewolfTotalCount = Array.isArray(werewolfGame?.players) ? werewolfGame.players.length : 0;
+  const tacitProgressPercent = useMemo(() => {
+    const idx = Number(tacitCurrentQuestion?.sortOrder || 0);
+    const count = Number(tacitRoom?.questionCount || 10);
+    const safe = Math.max(1, count);
+    const done = tacitCurrentQuestion?.done ? idx + 1 : idx;
+    return Math.max(0, Math.min(100, Math.round((done / safe) * 100)));
+  }, [tacitCurrentQuestion, tacitRoom?.questionCount]);
+  const sentenceProgressPercent = useMemo(() => {
+    const total = Math.max(1, sentenceRounds.length || 5);
+    const done = sentencePeerChoice ? sentenceRoundIndex + 1 : sentenceRoundIndex;
+    return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+  }, [sentencePeerChoice, sentenceRoundIndex, sentenceRounds.length]);
+  const truthPhaseSteps = [
+    { id: "rolling", label: "摇骰子" },
+    { id: "pick", label: "选题" },
+    { id: "answer", label: "作答" },
+    { id: "review", label: "查看" }
+  ];
+  const truthPhaseIndex = Math.max(0, truthPhaseSteps.findIndex((item) => item.id === truthPhase));
+  const truthAnswerMinLen = 3;
   const editPhotoSlots = useMemo(() => {
     const photos = editProfilePhotos.slice(0, 3).map((src, idx) => ({ type: "photo", src, idx }));
     const placeholders = [
@@ -524,7 +720,7 @@ export default function App() {
   }, [showWerewolfModal, werewolfMode, werewolfGame]);
 
   useEffect(() => {
-    if (!tacitCurrentQuestion || tacitMode !== "playing") return undefined;
+    if (!tacitCurrentQuestion || tacitMode !== "playing" || tacitIntroCountdown > 0) return undefined;
     if (tacitCountdownSec <= 0) {
       if (tacitAutoSubmitRef.current === tacitCurrentQuestion.id) return undefined;
       tacitAutoSubmitRef.current = tacitCurrentQuestion.id;
@@ -556,7 +752,8 @@ export default function App() {
     tacitCountdownSec,
     tacitDraftChoice,
     tacitRoomId,
-    authHeaders
+    authHeaders,
+    tacitIntroCountdown
   ]);
 
   const sortConversations = (list, pinnedIds = pinnedConversationIds) =>
@@ -766,7 +963,28 @@ export default function App() {
   }, [hiddenProfiles]);
 
   useEffect(() => {
-    if (!showSentenceModal || sentenceMode !== "playing" || sentenceMyChoice || sentencePeerChoice || sentenceResolving) {
+    try {
+      const raw = window.localStorage.getItem("game-sfx-enabled");
+      if (raw === null) return;
+      setGameSfxEnabled(raw !== "0");
+    } catch (_error) {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("game-sfx-enabled", gameSfxEnabled ? "1" : "0");
+    } catch (_error) {}
+  }, [gameSfxEnabled]);
+
+  useEffect(() => {
+    if (
+      !showSentenceModal ||
+      sentenceMode !== "playing" ||
+      sentenceIntroCountdown > 0 ||
+      sentenceMyChoice ||
+      sentencePeerChoice ||
+      sentenceResolving
+    ) {
       return undefined;
     }
     if (sentenceCountdown <= 0) {
@@ -786,13 +1004,111 @@ export default function App() {
     sentenceMyChoice,
     sentencePeerChoice,
     sentenceResolving,
-    sentenceCurrentRound
+    sentenceCurrentRound,
+    sentenceIntroCountdown
   ]);
 
   useEffect(() => {
-    if (!showSentenceModal || sentenceMode !== "playing" || !sentenceMyChoice || sentencePeerChoice || sentenceResolving) return;
+    if (
+      !showSentenceModal ||
+      sentenceMode !== "playing" ||
+      sentenceIntroCountdown > 0 ||
+      !sentenceMyChoice ||
+      sentencePeerChoice ||
+      sentenceResolving
+    ) {
+      return;
+    }
     resolveSentenceRound(sentenceMyChoice);
-  }, [showSentenceModal, sentenceMode, sentenceMyChoice, sentencePeerChoice, sentenceResolving]);
+  }, [showSentenceModal, sentenceMode, sentenceMyChoice, sentencePeerChoice, sentenceResolving, sentenceIntroCountdown]);
+
+  useEffect(() => {
+    if (!showWerewolfModal || werewolfMode !== "playing") return;
+    setWerewolfIntroCountdown(3);
+  }, [showWerewolfModal, werewolfMode, werewolfRoomId]);
+
+  useEffect(() => {
+    if (werewolfIntroCountdown <= 0) return undefined;
+    if (werewolfIntroCountdown === 3) playGameSfx("countdown");
+    const timer = window.setTimeout(() => setWerewolfIntroCountdown((prev) => Math.max(0, prev - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [werewolfIntroCountdown]);
+
+  useEffect(() => {
+    if (!showTacitModal || tacitMode !== "playing") return;
+    setTacitIntroCountdown(3);
+  }, [showTacitModal, tacitMode, tacitRoomId]);
+
+  useEffect(() => {
+    if (tacitIntroCountdown <= 0) return undefined;
+    if (tacitIntroCountdown === 3) playGameSfx("countdown");
+    const timer = window.setTimeout(() => setTacitIntroCountdown((prev) => Math.max(0, prev - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [tacitIntroCountdown]);
+
+  useEffect(() => {
+    if (!showSentenceModal || sentenceMode !== "playing") return;
+    setSentenceIntroCountdown(3);
+  }, [showSentenceModal, sentenceMode, sentenceOpponent?.id]);
+
+  useEffect(() => {
+    if (sentenceIntroCountdown <= 0) return undefined;
+    if (sentenceIntroCountdown === 3) playGameSfx("countdown");
+    const timer = window.setTimeout(() => setSentenceIntroCountdown((prev) => Math.max(0, prev - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [sentenceIntroCountdown]);
+
+  useEffect(() => {
+    if (!werewolfGame?.winner) return;
+    playGameSfx("win");
+    setWerewolfFxText(`${
+      werewolfGame.winner === "WOLF" ? "狼人阵营" : "好人阵营"
+    }胜利`);
+    const timer = window.setTimeout(() => setWerewolfFxText(""), 1200);
+    return () => clearTimeout(timer);
+  }, [werewolfGame?.winner]);
+
+  useEffect(() => {
+    if (!tacitCurrentQuestion?.done) return;
+    playGameSfx(tacitCurrentQuestion.matched ? "hit" : "miss");
+    setTacitFxText(tacitCurrentQuestion.matched ? "默契+10" : "本题未命中");
+    const timer = window.setTimeout(() => setTacitFxText(""), 1000);
+    return () => clearTimeout(timer);
+  }, [tacitCurrentQuestion?.id, tacitCurrentQuestion?.done, tacitCurrentQuestion?.matched]);
+
+  useEffect(() => {
+    if (!sentencePeerChoice || !sentenceMyChoice) return;
+    playGameSfx(sentencePeerChoice === sentenceMyChoice ? "hit" : "miss");
+    setSentenceFxText(sentencePeerChoice === sentenceMyChoice ? "命中 +20" : "本题未命中");
+    const timer = window.setTimeout(() => setSentenceFxText(""), 1000);
+    return () => clearTimeout(timer);
+  }, [sentencePeerChoice, sentenceMyChoice]);
+
+  useEffect(() => {
+    if (tacitMode !== "playing" || tacitIntroCountdown > 0 || !tacitCurrentQuestion?.id) return;
+    playGameSfx("round");
+  }, [tacitMode, tacitCurrentQuestion?.id, tacitIntroCountdown]);
+
+  useEffect(() => {
+    if (sentenceMode !== "playing" || sentenceIntroCountdown > 0) return;
+    if (!sentenceCurrentRound?.id) return;
+    playGameSfx("round");
+  }, [sentenceMode, sentenceCurrentRound?.id, sentenceIntroCountdown]);
+
+  useEffect(() => {
+    if (truthMode !== "playing" || truthRoundIndex <= 0) return;
+    setTruthRoundAnimating(true);
+    if (truthRoundAnimTimerRef.current) clearTimeout(truthRoundAnimTimerRef.current);
+    truthRoundAnimTimerRef.current = window.setTimeout(() => {
+      setTruthRoundAnimating(false);
+    }, 360);
+    return () => {
+      if (truthRoundAnimTimerRef.current) {
+        clearTimeout(truthRoundAnimTimerRef.current);
+        truthRoundAnimTimerRef.current = null;
+      }
+    };
+  }, [truthMode, truthRoundIndex]);
 
   useEffect(() => {
     if (!user) return;
@@ -804,6 +1120,29 @@ export default function App() {
       avatarUrl: user.avatarUrl || ""
     });
   }, [user]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const key = `my-posts:${user.id}`;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) {
+        setMyPosts([]);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      setMyPosts(Array.isArray(parsed) ? parsed : []);
+    } catch (_error) {
+      setMyPosts([]);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    try {
+      window.localStorage.setItem(`my-posts:${user.id}`, JSON.stringify(myPosts));
+    } catch (_error) {}
+  }, [user?.id, myPosts]);
 
   useEffect(() => {
     if (mePage !== "profile-edit") return;
@@ -956,6 +1295,42 @@ export default function App() {
         clearInterval(tacitPollingRef.current);
         tacitPollingRef.current = null;
       }
+      if (truthMatchTimerRef.current) {
+        clearTimeout(truthMatchTimerRef.current);
+        truthMatchTimerRef.current = null;
+      }
+      if (truthRoundTimerRef.current) {
+        clearTimeout(truthRoundTimerRef.current);
+        truthRoundTimerRef.current = null;
+      }
+      if (truthDiceAnimRef.current) {
+        clearInterval(truthDiceAnimRef.current);
+        truthDiceAnimRef.current = null;
+      }
+      if (truthDiceSettleTimerRef.current) {
+        clearTimeout(truthDiceSettleTimerRef.current);
+        truthDiceSettleTimerRef.current = null;
+      }
+      if (truthPhaseTimerRef.current) {
+        clearTimeout(truthPhaseTimerRef.current);
+        truthPhaseTimerRef.current = null;
+      }
+      if (truthCountdownTimerRef.current) {
+        clearInterval(truthCountdownTimerRef.current);
+        truthCountdownTimerRef.current = null;
+      }
+      if (truthAutoActionTimerRef.current) {
+        clearTimeout(truthAutoActionTimerRef.current);
+        truthAutoActionTimerRef.current = null;
+      }
+      if (truthRoundAnimTimerRef.current) {
+        clearTimeout(truthRoundAnimTimerRef.current);
+        truthRoundAnimTimerRef.current = null;
+      }
+      if (truthInviteTimersRef.current.length) {
+        truthInviteTimersRef.current.forEach((timer) => clearTimeout(timer));
+        truthInviteTimersRef.current = [];
+      }
     },
     []
   );
@@ -978,6 +1353,19 @@ export default function App() {
     if (!user?.membershipExpireAt || user.membershipType === "FREE") return false;
     return new Date(user.membershipExpireAt) > new Date();
   }, [user]);
+
+  const membershipGateCopy =
+    membershipGateContext === "planet" || membershipGateContext === "truth"
+      ? {
+          title: "联系TA需要开通会员",
+          desc: "已为你匹配到异性资料卡，查看详细资料并联系对方需先开通会员。",
+          cancel: "先看看"
+        }
+      : {
+          title: "开通会员后可邀请再来一局",
+          desc: "当前账号是免费用户，开通会员后可邀请对方继续下一局并添加好友。",
+          cancel: "先不添加"
+        };
 
   const mustAgree = () => {
     if (agreed) return true;
@@ -1038,6 +1426,7 @@ export default function App() {
     setAuthToken(data.token || "");
     setNeedsProfileSetup(Boolean(data.needsProfile || !data.user.profileCompleted));
     setProfileSetupForm(profileSetupInitial);
+    setProfileSetupPhotos(data.user?.avatarUrl ? [data.user.avatarUrl] : []);
     setMessage(data.needsProfile || !data.user.profileCompleted ? "登录成功，请先完善资料" : "");
   };
 
@@ -1073,6 +1462,7 @@ export default function App() {
     setAuthToken(data.token || "");
     setNeedsProfileSetup(true);
     setProfileSetupForm(profileSetupInitial);
+    setProfileSetupPhotos([]);
     setMessage("短信验证通过，注册成功，请完善资料");
   };
 
@@ -1080,6 +1470,9 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
     const { birthYear, birthMonth, birthDay, gender } = profileSetupForm;
+    if (profileSetupPhotos.length < 1) {
+      return setMessage("请至少上传1张新用户相册照片");
+    }
     if (!gender) return setMessage("请选择性别");
     if (!birthYear || !birthMonth || !birthDay) {
       return setMessage("请选择完整的出生年月日");
@@ -1093,6 +1486,7 @@ export default function App() {
       },
       body: JSON.stringify({
         ...profileSetupForm,
+        avatarUrl: profileSetupPhotos[0] || profileSetupForm.avatarUrl || "",
         birthDate
       })
     });
@@ -1100,7 +1494,22 @@ export default function App() {
     if (!res.ok) return setMessage(data.message || "资料提交失败");
     setUser(data.user);
     setNeedsProfileSetup(false);
+    setProfileSetupPhotos([]);
     setMessage("");
+  };
+
+  const onPickSetupPhoto = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file);
+      const mediaUrl = await uploadMedia(compressed, "IMAGE");
+      setProfileSetupPhotos((prev) => [mediaUrl, ...prev.filter((item) => item !== mediaUrl)].slice(0, 6));
+      setProfileSetupForm((prev) => ({ ...prev, avatarUrl: mediaUrl }));
+    } catch (error) {
+      setMessage(error.message || "新用户相册上传失败");
+    }
   };
 
   const quickLogin = async (type) => {
@@ -1125,6 +1534,7 @@ export default function App() {
     setUser(data.user);
     setAuthToken(data.token || "");
     setNeedsProfileSetup(Boolean(data.needsProfile || !data.user.profileCompleted));
+    setProfileSetupPhotos(data.user?.avatarUrl ? [data.user.avatarUrl] : []);
     setMessage(type === "device" ? "本机号码登录成功" : "微信快捷登录成功");
   };
 
@@ -1136,35 +1546,58 @@ export default function App() {
       body: JSON.stringify({ userId: user.id })
     });
     const data = await res.json();
-    if (!res.ok) return setMessage(data.message || "匹配失败");
+    if (!res.ok) throw new Error(data.message || "匹配失败");
     setSession(data.session);
     setBlindBoxTarget(data.targetBlindBox);
-    setGameState(null);
-    setMessage("匹配成功，开始掷骰子");
+    setMessage("匹配成功");
+    return data;
   };
 
-  const playRound = async () => {
-    if (!session) return;
-    const res = await fetch(`${API}/game/dice-round`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: session.id })
-    });
-    const data = await res.json();
-    if (!res.ok) return setMessage(data.message || "回合失败");
-    setGameState(data.result);
-    setSession(data.progress);
+  const startPlanetMatchFlow = async () => {
+    if (!user) return;
+    setShowPlanetMatchPanel(true);
+    setPlanetMatchLoading(true);
+    setPlanetMatchProfile(null);
+    try {
+      const data = await startMatch();
+      const matchedId = data?.targetBlindBox?.id || "";
+      const pool = hiddenProfiles.length ? hiddenProfiles : [];
+      const picked =
+        pool.find((item) => item.id === matchedId) ||
+        (pool.length ? pool[Math.floor(Math.random() * pool.length)] : null);
+      setPlanetMatchProfile(picked);
+      if (!picked) setChatNotice("已匹配成功，可继续点击“开始寻找”刷新匹配对象");
+    } catch (error) {
+      setChatNotice(error.message || "匹配失败，请稍后再试");
+      setShowPlanetMatchPanel(false);
+    } finally {
+      setPlanetMatchLoading(false);
+    }
   };
 
-  const unlockProfile = async () => {
-    const res = await fetch(`${API}/match/unlock`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: session.id, maleUserId: session.maleUserId })
-    });
-    const data = await res.json();
-    if (!res.ok) return setMessage(data.message || "解锁失败");
-    setMessage(`已支付 ${data.amount} 元，解锁成功`);
+  const handlePlanetDetailGate = () => {
+    if (isMembershipValid) {
+      setChatNotice("已为你开放详细资料和联系入口，前往聊天页可继续互动。");
+      return;
+    }
+    setMembershipGateContext("planet");
+    setShowMembershipGate(true);
+  };
+
+  const handlePlanetContact = async () => {
+    if (!planetMatchProfile?.id) return;
+    if (!isMembershipValid) {
+      setMembershipGateContext("planet");
+      setShowMembershipGate(true);
+      return;
+    }
+    try {
+      await sendFriendRequest(planetMatchProfile.id, planetMatchProfile.nickname || "TA");
+      setShowPlanetMatchPanel(false);
+      setTab("chat");
+    } catch (error) {
+      setChatNotice(error.message || "联系失败，请稍后重试");
+    }
   };
 
   const onSquareScroll = async () => {
@@ -1225,9 +1658,9 @@ export default function App() {
     setAuthToken("");
     setNeedsProfileSetup(false);
     setProfileSetupForm(profileSetupInitial);
+    setProfileSetupPhotos([]);
     setSession(null);
     setBlindBoxTarget(null);
-    setGameState(null);
     setActiveConversation(null);
     setChatMessages([]);
     setChatInput("");
@@ -1245,9 +1678,9 @@ export default function App() {
     setAuthToken("");
     setNeedsProfileSetup(false);
     setProfileSetupForm(profileSetupInitial);
+    setProfileSetupPhotos([]);
     setSession(null);
     setBlindBoxTarget(null);
-    setGameState(null);
     setActiveConversation(null);
     setChatMessages([]);
     setChatInput("");
@@ -1695,6 +2128,421 @@ export default function App() {
     resetSentenceState();
   };
 
+  const playGameSfx = (type) => {
+    if (!gameSfxEnabled) return;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!audioContextRef.current) audioContextRef.current = new Ctx();
+      const ctx = audioContextRef.current;
+      if (ctx.state === "suspended") ctx.resume();
+      if (type === "countdown") {
+        playDiceTone(ctx, 740, 0.04, 0.02);
+        window.setTimeout(() => playDiceTone(ctx, 880, 0.04, 0.02), 55);
+        return;
+      }
+      if (type === "hit") {
+        playDiceTone(ctx, 620, 0.06, 0.03);
+        window.setTimeout(() => playDiceTone(ctx, 760, 0.06, 0.03), 65);
+        return;
+      }
+      if (type === "miss") {
+        playDiceTone(ctx, 320, 0.07, 0.025);
+        return;
+      }
+      if (type === "win") {
+        playDiceTone(ctx, 520, 0.06, 0.03);
+        window.setTimeout(() => playDiceTone(ctx, 680, 0.08, 0.03), 70);
+        window.setTimeout(() => playDiceTone(ctx, 860, 0.1, 0.028), 150);
+        return;
+      }
+      if (type === "round") {
+        playDiceTone(ctx, 480, 0.045, 0.02);
+      }
+    } catch (_error) {}
+  };
+
+  const playTruthDiceSound = (type) => {
+    if (!gameSfxEnabled) return;
+    if (type === "roll") {
+      playGameSfx("round");
+      playGameSfx("countdown");
+      return;
+    }
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!audioContextRef.current) audioContextRef.current = new Ctx();
+      const ctx = audioContextRef.current;
+      if (ctx.state === "suspended") ctx.resume();
+      playDiceTone(ctx, 280, 0.08, 0.045);
+      window.setTimeout(() => playDiceTone(ctx, 220, 0.1, 0.04), 75);
+    } catch (_error) {}
+  };
+
+  const toggleGameSfx = () => {
+    setGameSfxEnabled((prev) => !prev);
+  };
+
+  const resetTruthState = () => {
+    setTruthMode("menu");
+    setIsTruthMatching(false);
+    setTruthOpponent(null);
+    setTruthDiceResult(null);
+    setTruthRoundIndex(0);
+    setTruthAnswerDraft("");
+    setTruthAwaitingMyAnswer(false);
+    setTruthPhase("idle");
+    setTruthPhaseCountdown(0);
+    setTruthQuestionOptions([]);
+    setTruthPickedQuestionIndex(-1);
+    setTruthCurrentQuestion("");
+    setTruthCurrentDifficultyLabel("轻松");
+    setTruthRollingDice({ me: 1, peer: 1 });
+    setTruthIsRolling(false);
+    setTruthDiceSettling(false);
+    setTruthRoundAnimating(false);
+    setTruthLogs([]);
+    setTruthInviteMembers([]);
+    truthRunRoundRef.current = null;
+    truthRoundContextRef.current = null;
+    if (truthMatchTimerRef.current) {
+      clearTimeout(truthMatchTimerRef.current);
+      truthMatchTimerRef.current = null;
+    }
+    if (truthRoundTimerRef.current) {
+      clearTimeout(truthRoundTimerRef.current);
+      truthRoundTimerRef.current = null;
+    }
+    if (truthDiceAnimRef.current) {
+      clearInterval(truthDiceAnimRef.current);
+      truthDiceAnimRef.current = null;
+    }
+    if (truthDiceSettleTimerRef.current) {
+      clearTimeout(truthDiceSettleTimerRef.current);
+      truthDiceSettleTimerRef.current = null;
+    }
+    if (truthPhaseTimerRef.current) {
+      clearTimeout(truthPhaseTimerRef.current);
+      truthPhaseTimerRef.current = null;
+    }
+    if (truthCountdownTimerRef.current) {
+      clearInterval(truthCountdownTimerRef.current);
+      truthCountdownTimerRef.current = null;
+    }
+    if (truthAutoActionTimerRef.current) {
+      clearTimeout(truthAutoActionTimerRef.current);
+      truthAutoActionTimerRef.current = null;
+    }
+    if (truthRoundAnimTimerRef.current) {
+      clearTimeout(truthRoundAnimTimerRef.current);
+      truthRoundAnimTimerRef.current = null;
+    }
+    if (truthInviteTimersRef.current.length) {
+      truthInviteTimersRef.current.forEach((timer) => clearTimeout(timer));
+      truthInviteTimersRef.current = [];
+    }
+  };
+
+  const openTruthMenu = () => {
+    resetTruthState();
+    setShowTruthModal(true);
+  };
+
+  const openTruthInviteRoom = () => {
+    setTruthMode("invite");
+    setTruthInviteMembers(
+      user
+        ? [
+            {
+              userId: user.id,
+              name: user.nickname || "我",
+              avatar: user.avatarUrl || "",
+              status: "HOST"
+            }
+          ]
+        : []
+    );
+  };
+
+  const clearTruthPhaseTimers = () => {
+    if (truthPhaseTimerRef.current) {
+      clearTimeout(truthPhaseTimerRef.current);
+      truthPhaseTimerRef.current = null;
+    }
+    if (truthCountdownTimerRef.current) {
+      clearInterval(truthCountdownTimerRef.current);
+      truthCountdownTimerRef.current = null;
+    }
+    if (truthAutoActionTimerRef.current) {
+      clearTimeout(truthAutoActionTimerRef.current);
+      truthAutoActionTimerRef.current = null;
+    }
+  };
+
+  const startTruthPhaseCountdown = (seconds, onTimeout) => {
+    clearTruthPhaseTimers();
+    setTruthPhaseCountdown(seconds);
+    truthCountdownTimerRef.current = window.setInterval(() => {
+      setTruthPhaseCountdown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    truthPhaseTimerRef.current = window.setTimeout(() => {
+      clearTruthPhaseTimers();
+      setTruthPhaseCountdown(0);
+      onTimeout?.();
+    }, seconds * 1000);
+  };
+
+  const startTruthChallenge = (opponent) => {
+    setTruthOpponent(opponent);
+    setTruthDiceResult(null);
+    setTruthRoundIndex(0);
+    setTruthAnswerDraft("");
+    setTruthAwaitingMyAnswer(false);
+    setTruthQuestionOptions([]);
+    setTruthPhase("idle");
+    setTruthPhaseCountdown(0);
+    setTruthCurrentQuestion("");
+    setTruthCurrentDifficultyLabel(TRUTH_DIFFICULTY_OPTIONS.find((item) => item.id === truthDifficulty)?.label || "轻松");
+    setTruthRollingDice({ me: 1, peer: 1 });
+    setTruthIsRolling(false);
+    setTruthLogs([]);
+    setTruthMode("playing");
+
+    const scheduleNextRound = (nextRoundIdx) => {
+      if (nextRoundIdx >= TRUTH_ROUNDS_PER_GAME) {
+        setTruthMode("result");
+        setTruthPhase("result");
+        setTruthAwaitingMyAnswer(false);
+        setTruthIsRolling(false);
+        clearTruthPhaseTimers();
+        return;
+      }
+      if (truthRoundTimerRef.current) clearTimeout(truthRoundTimerRef.current);
+      truthRoundTimerRef.current = window.setTimeout(() => {
+        const mixedPoolIds = ["LIGHT", "HEART", "DEEP"];
+        const targetDifficultyId = truthDifficulty === "MIXED" ? pickRandomItem(mixedPoolIds, "LIGHT") : truthDifficulty;
+        const difficultyLabel = TRUTH_DIFFICULTY_OPTIONS.find((item) => item.id === targetDifficultyId)?.label || "轻松";
+        const roundPool = TRUTH_CHALLENGE_BANK.filter((item) => item.difficulty === targetDifficultyId);
+        const picked = sampleItems(roundPool.length ? roundPool : truthBankByDifficulty, 3);
+        const questionOptions = picked.length ? picked : [{ question: "你最看重关系里的哪一部分？", answer: "我会选择彼此真诚和稳定沟通。" }];
+        setTruthQuestionOptions(questionOptions);
+        setTruthPickedQuestionIndex(-1);
+        setTruthRoundIndex(nextRoundIdx + 1);
+        setTruthCurrentQuestion("");
+        setTruthCurrentDifficultyLabel(difficultyLabel);
+        setTruthAnswerDraft("");
+        setTruthAwaitingMyAnswer(false);
+        setTruthDiceSettling(false);
+        setTruthIsRolling(true);
+        setTruthPhase("rolling");
+        playTruthDiceSound("roll");
+        if (truthDiceAnimRef.current) clearInterval(truthDiceAnimRef.current);
+        truthDiceAnimRef.current = window.setInterval(() => {
+          setTruthRollingDice({
+            me: Math.floor(Math.random() * 6) + 1,
+            peer: Math.floor(Math.random() * 6) + 1
+          });
+        }, 120);
+
+        window.setTimeout(() => {
+          if (truthDiceAnimRef.current) {
+            clearInterval(truthDiceAnimRef.current);
+            truthDiceAnimRef.current = null;
+          }
+          let myDice = Math.floor(Math.random() * 6) + 1;
+          let peerDice = Math.floor(Math.random() * 6) + 1;
+          while (myDice === peerDice) {
+            myDice = Math.floor(Math.random() * 6) + 1;
+            peerDice = Math.floor(Math.random() * 6) + 1;
+          }
+          const meLose = myDice < peerDice;
+          setTruthIsRolling(false);
+          setTruthRollingDice({ me: myDice, peer: peerDice });
+          setTruthDiceSettling(true);
+          playTruthDiceSound("settle");
+          if (truthDiceSettleTimerRef.current) clearTimeout(truthDiceSettleTimerRef.current);
+          truthDiceSettleTimerRef.current = window.setTimeout(() => setTruthDiceSettling(false), 420);
+          setTruthDiceResult({
+            round: nextRoundIdx + 1,
+            me: myDice,
+            peer: peerDice,
+            meLose,
+            question: "",
+            answer: "",
+            difficultyLabel
+          });
+          setTruthLogs((prev) => [
+            ...prev,
+            `第 ${nextRoundIdx + 1} 回合：你 ${myDice} 点，对方 ${peerDice} 点，${meLose ? "你" : opponent?.name || "对方"}点数更低。`
+          ]);
+          truthRoundContextRef.current = { nextRoundIdx, meLose, questionOptions, difficultyLabel, picked: false };
+          setTruthPhase("pick");
+
+          const pickQuestion = (item, optionIndex = -1) => {
+            const ctx = truthRoundContextRef.current;
+            if (!ctx || ctx.picked) return;
+            ctx.picked = true;
+            clearTruthPhaseTimers();
+            setTruthPickedQuestionIndex(optionIndex);
+            truthAutoActionTimerRef.current = window.setTimeout(() => {
+              setTruthCurrentQuestion(item.question);
+              setTruthDiceResult((prev) => (prev ? { ...prev, question: item.question, answer: item.answer } : prev));
+              setTruthLogs((prev) => [...prev, `系统题目（${difficultyLabel}）：${item.question}`]);
+              setTruthPhase("answer");
+              if (ctx.meLose) {
+                setTruthAwaitingMyAnswer(true);
+                startTruthPhaseCountdown(12, () => {
+                  setTruthAwaitingMyAnswer(false);
+                  setTruthLogs((prev) => [...prev, "你回答：超时未作答"]);
+                  setTruthPhase("review");
+                  startTruthPhaseCountdown(3, () => scheduleNextRound(nextRoundIdx + 1));
+                });
+                return;
+              }
+              setTruthAwaitingMyAnswer(false);
+              startTruthPhaseCountdown(10, () => {
+                setTruthLogs((prev) => [...prev, `${opponent?.name || "对方"}回答：${item.answer}`]);
+                setTruthPhase("review");
+                startTruthPhaseCountdown(3, () => scheduleNextRound(nextRoundIdx + 1));
+              });
+            }, 320);
+          };
+
+          if (meLose) {
+            startTruthPhaseCountdown(8, () => {
+              const autoItem = pickRandomItem(questionOptions, questionOptions[0]);
+              pickQuestion(autoItem, questionOptions.findIndex((q) => q.question === autoItem?.question));
+            });
+            truthAutoActionTimerRef.current = window.setTimeout(() => {
+              const autoItem = pickRandomItem(questionOptions, questionOptions[0]);
+              pickQuestion(autoItem, questionOptions.findIndex((q) => q.question === autoItem?.question));
+            }, 3000 + Math.floor(Math.random() * 3000));
+            return;
+          }
+          startTruthPhaseCountdown(8, () => {
+            const autoItem = pickRandomItem(questionOptions, questionOptions[0]);
+            pickQuestion(autoItem, questionOptions.findIndex((q) => q.question === autoItem?.question));
+          });
+          truthRunRoundRef.current = (choiceQuestion) => pickQuestion(choiceQuestion);
+        }, 1300);
+      }, 260);
+    };
+
+    truthRunRoundRef.current = scheduleNextRound;
+    scheduleNextRound(0);
+  };
+
+  const submitTruthAnswer = () => {
+    const finalAnswer = truthAnswerDraft.trim();
+    if (!truthAwaitingMyAnswer || finalAnswer.length < truthAnswerMinLen) return;
+    clearTruthPhaseTimers();
+    setTruthAwaitingMyAnswer(false);
+    setTruthLogs((prev) => [...prev, `你回答：${finalAnswer}`]);
+    setTruthPhase("review");
+    const nextIdx = Number(truthRoundIndex || 0);
+    startTruthPhaseCountdown(3, () => truthRunRoundRef.current?.(nextIdx));
+  };
+
+  const chooseTruthQuestion = (idx) => {
+    if (truthPhase !== "pick" || truthDiceResult?.meLose || truthPickedQuestionIndex >= 0) return;
+    const target = truthQuestionOptions[idx];
+    if (!target) return;
+    setTruthPickedQuestionIndex(idx);
+    truthRunRoundRef.current?.(target);
+  };
+
+  const startTruthMatch = () => {
+    if (isTruthMatching) return;
+    setTruthMode("match");
+    setIsTruthMatching(true);
+    if (truthMatchTimerRef.current) clearTimeout(truthMatchTimerRef.current);
+    truthMatchTimerRef.current = window.setTimeout(() => {
+      const source = hiddenProfiles.length
+        ? hiddenProfiles
+        : [{ id: "truth-fallback", nickname: "隐藏款", age: 24, city: "同城", hobbies: "摄影,电影", avatar: "", gender: "FEMALE" }];
+      const target = source[Math.floor(Math.random() * source.length)];
+      setIsTruthMatching(false);
+      startTruthChallenge({
+        id: target.id,
+        name: target.nickname || "隐藏款",
+        avatar: target.avatar || "",
+        city: target.city || "同城",
+        isBot: true
+      });
+    }, 1400);
+  };
+
+  const startTruthInvite = (friend) => {
+    if (!friend?.id) return;
+    setTruthInviteMembers((prev) => {
+      if (prev.some((item) => item.userId === friend.id)) return prev;
+      return [
+        ...prev,
+        {
+          userId: friend.id,
+          name: friend.name || "好友",
+          avatar: friend.avatar || "",
+          status: "INVITED"
+        }
+      ];
+    });
+    const timer = window.setTimeout(() => {
+      setTruthInviteMembers((prev) =>
+        prev.map((item) =>
+          item.userId === friend.id && item.status === "INVITED" ? { ...item, status: "ACCEPTED" } : item
+        )
+      );
+    }, 1200 + Math.floor(Math.random() * 1200));
+    truthInviteTimersRef.current.push(timer);
+  };
+
+  const startTruthInviteRoomGame = () => {
+    const opponent = truthInviteMembers.find((item) => item.status === "ACCEPTED" && item.userId !== user?.id);
+    if (!opponent) {
+      setChatNotice("请等待至少1位好友接受邀请");
+      return;
+    }
+    startTruthChallenge({
+      id: opponent.userId,
+      name: opponent.name || "对方",
+      avatar: opponent.avatar || "",
+      city: "好友房",
+      isBot: false
+    });
+  };
+
+  const handleTruthProfileGate = () => {
+    if (isMembershipValid) {
+      setChatNotice("会员已开通，可查看对方详细资料并继续联系。");
+      return;
+    }
+    setMembershipGateContext("truth");
+    setShowMembershipGate(true);
+  };
+
+  const handleTruthContact = async () => {
+    if (!truthOpponent?.id) return;
+    if (!isMembershipValid) {
+      setMembershipGateContext("truth");
+      setShowMembershipGate(true);
+      return;
+    }
+    try {
+      await sendFriendRequest(truthOpponent.id, truthOpponent.name || "TA");
+      setShowTruthModal(false);
+      resetTruthState();
+      setTab("chat");
+    } catch (error) {
+      setChatNotice(error.message || "联系失败，请稍后重试");
+    }
+  };
+
+  const closeTruthModal = () => {
+    setShowTruthModal(false);
+    resetTruthState();
+  };
+
   const applyTacitRoom = (room) => {
     if (!room) return;
     setTacitRoomId(room.id || "");
@@ -1860,6 +2708,7 @@ export default function App() {
   const onTacitAddFriend = async () => {
     if (!tacitPeerMember?.userId) return;
     if (!isMembershipValid) {
+      setMembershipGateContext("invite");
       setShowMembershipGate(true);
       return;
     }
@@ -1878,6 +2727,7 @@ export default function App() {
   };
 
   const inviteTacitReplay = () => {
+    setMembershipGateContext("invite");
     setShowMembershipGate(true);
   };
 
@@ -2274,14 +3124,41 @@ export default function App() {
     );
   }
 
-  return (
-    <div className={`main-app ${tab === "chat" && activeConversation ? "chat-detail-mode" : ""}`}>
-      {chatNotice && <div className="chat-notice-banner">{chatNotice}</div>}
-      {needsProfileSetup && (
-        <div className="profile-setup-overlay">
-          <form className="profile-setup-card" onSubmit={onCompleteProfile}>
+  if (needsProfileSetup) {
+    return (
+      <main className="setup-page">
+        <form className="profile-setup-card setup-standalone-card" onSubmit={onCompleteProfile}>
             <h3>完善新用户资料</h3>
             <p>资料仅用于匹配推荐，提交后即可正常使用。</p>
+            <div className="setup-photo-block">
+              <strong>新用户相册（至少1张）</strong>
+              <div className="setup-photo-grid">
+                {profileSetupPhotos.map((photo, idx) => (
+                  <div key={`setup-photo-${idx}`} className="modern-photo-item">
+                    <img src={resolveAssetUrl(photo)} alt={`相册${idx + 1}`} />
+                    <button
+                      type="button"
+                      className="modern-photo-remove"
+                      onClick={() =>
+                        setProfileSetupPhotos((prev) => {
+                          const next = prev.filter((_, i) => i !== idx);
+                          setProfileSetupForm((form) => ({ ...form, avatarUrl: next[0] || "" }));
+                          return next;
+                        })
+                      }
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                {Array.from({ length: Math.max(0, 6 - profileSetupPhotos.length) }, (_, idx) => (
+                  <label key={`setup-upload-${idx}`} className="modern-photo-placeholder setup-upload-slot">
+                    点击上传
+                    <input type="file" accept="image/*" onChange={onPickSetupPhoto} hidden />
+                  </label>
+                ))}
+              </div>
+            </div>
             <div className="birth-select-row">
               <select
                 value={profileSetupForm.birthYear}
@@ -2374,9 +3251,15 @@ export default function App() {
               required
             />
             <button type="submit">提交资料</button>
-          </form>
-        </div>
-      )}
+            {message && <p className="msg auth-msg">{message}</p>}
+        </form>
+      </main>
+    );
+  }
+
+  return (
+    <div className={`main-app ${tab === "chat" && activeConversation ? "chat-detail-mode" : ""}`}>
+      {chatNotice && <div className="chat-notice-banner">{chatNotice}</div>}
       <header className={`main-header ${tab === "me" ? "me-header" : ""}`}>
         {tab === "me" ? (
           <>
@@ -2459,7 +3342,9 @@ export default function App() {
               ))}
             </div>
             <p className="hero-title">寻找你附近的隐藏款</p>
-            <button className="hero-action">开始寻找</button>
+            <button className="hero-action" type="button" onClick={startPlanetMatchFlow}>
+              开始寻找
+            </button>
           </div>
 
           <h3 className="section-title">配对玩游戏</h3>
@@ -2479,8 +3364,11 @@ export default function App() {
               </button>
             </div>
             <div className="game-card">
-              <h4>脑力配对</h4>
+              <h4>真心话挑战</h4>
               <p>1.5万人正在玩</p>
+              <button type="button" onClick={openTruthMenu}>
+                进入
+              </button>
             </div>
             <div className="game-card">
               <h4>二选一默契挑战</h4>
@@ -2493,22 +3381,7 @@ export default function App() {
 
           <div className="status-card">
             <p>盲盒星球在线：{onlineCount.toLocaleString()} 人</p>
-            {blindBoxTarget && <p>已匹配到：{blindBoxTarget.nickname}（资料未解锁）</p>}
-            {session && (
-              <>
-                <button onClick={playRound}>掷骰子进行一回合</button>
-                <p>回合数：{session.roundsPlayed} / 5+</p>
-                <p>友好度：{friendlinessPercent}%</p>
-              </>
-            )}
-            {gameState && (
-              <p>
-                骰子 A={gameState.diceA} / B={gameState.diceB}，题目：{gameState.question}
-              </p>
-            )}
-            {session?.isUnlocked && user?.gender === "MALE" && (
-              <button onClick={unlockProfile}>支付1.9元解锁女方资料</button>
-            )}
+            {blindBoxTarget ? <p>已匹配到 1 位异性用户，点击“开始寻找”可再次匹配</p> : <p>点击上方开始寻找，立即进入异性匹配</p>}
           </div>
         </section>
       )}
@@ -3103,7 +3976,12 @@ export default function App() {
       {showWerewolfModal && (
         <div className="profile-setup-overlay" onClick={closeWerewolfModal}>
           <div className="profile-setup-card werewolf-card" onClick={(e) => e.stopPropagation()}>
-            <h3>狼人杀</h3>
+            <div className="game-modal-head">
+              <h3>狼人杀</h3>
+              <button type="button" className="sound-toggle-btn" onClick={toggleGameSfx}>
+                音效{gameSfxEnabled ? "开" : "关"}
+              </button>
+            </div>
             {werewolfMode === "menu" && (
               <div className="werewolf-mode-wrap">
                 <div className="werewolf-menu">
@@ -3236,6 +4114,14 @@ export default function App() {
             )}
             {werewolfMode === "playing" && werewolfGame && (
               <div className="werewolf-mode-wrap werewolf-judge-sheet">
+                {werewolfIntroCountdown > 0 && <div className="game-intro-overlay">{werewolfIntroCountdown}</div>}
+                {werewolfFxText && <div className="game-fx-toast">{werewolfFxText}</div>}
+                <div className="game-hud-row">
+                  <span className="game-pill">存活 {werewolfAliveCount}/{werewolfTotalCount || 0}</span>
+                  <span className={`game-pill ${werewolfGame.phase === "NIGHT" ? "danger" : "safe"}`}>
+                    {werewolfGame.phase === "NIGHT" ? "夜晚博弈" : werewolfGame.phase === "DAY_SPEECH" ? "白天发言" : "白天投票"}
+                  </span>
+                </div>
                 <p>
                   第 {werewolfGame.day} 天 · {werewolfGame.phase === "NIGHT" ? "夜晚阶段" : werewolfGame.phase === "DAY_SPEECH" ? "白天发言" : werewolfGame.phase === "DAY_VOTE" ? "白天投票" : "游戏结束"}
                 </p>
@@ -3357,7 +4243,12 @@ export default function App() {
       {showTacitModal && (
         <div className="profile-setup-overlay" onClick={closeTacitModal}>
           <div className="profile-setup-card werewolf-card tacit-card" onClick={(e) => e.stopPropagation()}>
-            <h3>二选一默契挑战</h3>
+            <div className="game-modal-head">
+              <h3>二选一默契挑战</h3>
+              <button type="button" className="sound-toggle-btn" onClick={toggleGameSfx}>
+                音效{gameSfxEnabled ? "开" : "关"}
+              </button>
+            </div>
             {tacitMode === "menu" && (
               <div className="werewolf-mode-wrap">
                 <p>每局 10 题，同一个答案 +10 分，用来测你们的默契值。</p>
@@ -3471,6 +4362,17 @@ export default function App() {
             )}
             {tacitMode === "playing" && tacitCurrentQuestion && (
               <div className="werewolf-mode-wrap">
+                {tacitIntroCountdown > 0 && <div className="game-intro-overlay">{tacitIntroCountdown}</div>}
+                {tacitFxText && <div className="game-fx-toast">{tacitFxText}</div>}
+                <div className="game-progress-wrap">
+                  <div className="game-progress-label">
+                    <span>默契进度</span>
+                    <strong>{tacitProgressPercent}%</strong>
+                  </div>
+                  <div className="game-progress-bar">
+                    <span style={{ width: `${tacitProgressPercent}%` }} />
+                  </div>
+                </div>
                 <p>
                   第 {Number(tacitCurrentQuestion.sortOrder || 0) + 1} / {tacitRoom?.questionCount || 10} 题 · 当前默契值{" "}
                   {tacitRoom?.score || 0}
@@ -3521,6 +4423,9 @@ export default function App() {
               <div className="werewolf-mode-wrap">
                 <p>挑战完成</p>
                 <h4 className="tacit-score">默契值：{tacitRoom.score || 0} / 100</h4>
+                <div className={`result-rank-chip ${(tacitRoom.score || 0) >= 80 ? "gold" : (tacitRoom.score || 0) >= 50 ? "silver" : "bronze"}`}>
+                  {(tacitRoom.score || 0) >= 80 ? "王者默契" : (tacitRoom.score || 0) >= 50 ? "进阶默契" : "新手默契"}
+                </div>
                 <p className="feed-tip">
                   {(tacitRoom.score || 0) >= 80
                     ? "默契爆表，简直心有灵犀！"
@@ -3565,7 +4470,12 @@ export default function App() {
       {showSentenceModal && (
         <div className="profile-setup-overlay" onClick={closeSentenceModal}>
           <div className="profile-setup-card werewolf-card tacit-card" onClick={(e) => e.stopPropagation()}>
-            <h3>猜句子接龙</h3>
+            <div className="game-modal-head">
+              <h3>猜句子接龙</h3>
+              <button type="button" className="sound-toggle-btn" onClick={toggleGameSfx}>
+                音效{gameSfxEnabled ? "开" : "关"}
+              </button>
+            </div>
             {sentenceMode === "menu" && (
               <div className="werewolf-mode-wrap">
                 <p>每局 5 题，双方从同一句开头里选下一句，选中同一个选项即加分。</p>
@@ -3619,6 +4529,17 @@ export default function App() {
             )}
             {sentenceMode === "playing" && sentenceCurrentRound && (
               <div className="werewolf-mode-wrap">
+                {sentenceIntroCountdown > 0 && <div className="game-intro-overlay">{sentenceIntroCountdown}</div>}
+                {sentenceFxText && <div className="game-fx-toast">{sentenceFxText}</div>}
+                <div className="game-progress-wrap">
+                  <div className="game-progress-label">
+                    <span>接龙进度</span>
+                    <strong>{sentenceProgressPercent}%</strong>
+                  </div>
+                  <div className="game-progress-bar">
+                    <span style={{ width: `${sentenceProgressPercent}%` }} />
+                  </div>
+                </div>
                 <p>
                   第 {sentenceRoundIndex + 1} / {sentenceRounds.length} 题 · {sentenceOpponent?.name || "对方"}
                 </p>
@@ -3651,6 +4572,9 @@ export default function App() {
             {sentenceMode === "result" && (
               <div className="werewolf-mode-wrap">
                 <p>本局完成：默契分 {sentenceScore} / 100</p>
+                <div className={`result-rank-chip ${sentenceScore >= 80 ? "gold" : sentenceScore >= 50 ? "silver" : "bronze"}`}>
+                  {sentenceScore >= 80 ? "灵魂同频" : sentenceScore >= 50 ? "默契在线" : "继续磨合"}
+                </div>
                 <div className="werewolf-script-list">
                   {sentenceLogs.map((line, idx) => (
                     <p key={`sentence-log-${idx}`}>{line}</p>
@@ -3673,10 +4597,11 @@ export default function App() {
         </div>
       )}
       {showMembershipGate && (
-        <div className="profile-setup-overlay" onClick={() => setShowMembershipGate(false)}>
-          <div className="profile-setup-card" onClick={(e) => e.stopPropagation()}>
-            <h3>开通会员后可邀请再来一局</h3>
-            <p>当前账号是免费用户，开通会员后可邀请对方继续下一局并添加好友。</p>
+        <div className="profile-setup-overlay membership-gate-overlay" onClick={() => setShowMembershipGate(false)}>
+          <div className="profile-setup-card membership-gate-card" onClick={(e) => e.stopPropagation()}>
+            <div className="membership-sheet-handle" aria-hidden="true" />
+            <h3>{membershipGateCopy.title}</h3>
+            <p>{membershipGateCopy.desc}</p>
             <div className="werewolf-menu">
               <button type="button" disabled={membershipSubmitting} onClick={() => subscribeMembership("MONTH")}>
                 月卡 ¥29
@@ -3689,7 +4614,262 @@ export default function App() {
               </button>
             </div>
             <button type="button" onClick={() => setShowMembershipGate(false)}>
-              先不添加
+              {membershipGateCopy.cancel}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showTruthModal && (
+        <div className="profile-setup-overlay" onClick={closeTruthModal}>
+          <div className="profile-setup-card truth-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="game-modal-head">
+              <h3>真心话挑战</h3>
+              <button type="button" className="sound-toggle-btn" onClick={toggleGameSfx}>
+                音效{gameSfxEnabled ? "开" : "关"}
+              </button>
+            </div>
+            {truthMode === "menu" && (
+              <div className="werewolf-mode-wrap">
+                <p>本局题目风格</p>
+                <div className="sentence-options">
+                  {TRUTH_DIFFICULTY_OPTIONS.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={truthDifficulty === item.id ? "active-choice" : ""}
+                      onClick={() => setTruthDifficulty(item.id)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="werewolf-menu">
+                  <button type="button" onClick={startTruthMatch}>
+                    匹配模式
+                  </button>
+                  <button type="button" onClick={openTruthInviteRoom}>
+                    邀请模式
+                  </button>
+                </div>
+              </div>
+            )}
+            {truthMode === "match" && <p>{isTruthMatching ? "正在匹配异性用户..." : "匹配完成，即将进入挑战"}</p>}
+            {truthMode === "invite" && (
+              <div className="werewolf-mode-wrap">
+                <p>邀请房间（实时状态）</p>
+                <div className="werewolf-script-list truth-invite-list">
+                  {truthInviteMembers.map((member) => (
+                    <div key={`truth-member-${member.userId}`} className="werewolf-member-item">
+                      <span>{member.name}</span>
+                      <small>
+                        {member.status === "HOST" ? "房主" : member.status === "ACCEPTED" ? "已接受" : "待接受"}
+                      </small>
+                    </div>
+                  ))}
+                </div>
+                <div className="werewolf-script-list truth-invite-list">
+                  {contacts.length ? (
+                    contacts.slice(0, 8).map((friend) => {
+                      const member = truthInviteMembers.find((item) => item.userId === friend.id);
+                      return (
+                        <div key={`truth-invite-${friend.id}`} className="werewolf-member-item">
+                          <span>{friend.name}</span>
+                          {member ? (
+                            <small>{member.status === "ACCEPTED" ? "已接受" : "已邀请"}</small>
+                          ) : (
+                            <button type="button" onClick={() => startTruthInvite(friend)}>
+                              邀请
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p>暂无可邀请好友，先去聊天页添加好友吧。</p>
+                  )}
+                </div>
+                <button type="button" onClick={startTruthInviteRoomGame}>
+                  开始挑战
+                </button>
+              </div>
+            )}
+            {truthMode === "playing" && (
+              <div className={`werewolf-mode-wrap truth-round-panel ${truthRoundAnimating ? "round-enter" : ""}`}>
+                <p>
+                  对手：{truthOpponent?.name || "隐藏款"} · 本局共 {TRUTH_ROUNDS_PER_GAME} 回合，系统自动摇骰子与出题。
+                </p>
+                <div className="truth-phase-stepper">
+                  {truthPhaseSteps.map((step, idx) => (
+                    <span
+                      key={step.id}
+                      className={`${truthPhase === step.id ? "active" : ""} ${idx < truthPhaseIndex ? "done" : ""}`}
+                    >
+                      {step.label}
+                    </span>
+                  ))}
+                </div>
+                <p className="feed-tip">
+                  题目风格：{TRUTH_DIFFICULTY_OPTIONS.find((item) => item.id === truthDifficulty)?.label || "轻松"}
+                  {truthDifficulty === "MIXED" ? "（每回合随机）" : ""} · 当前进行：第{" "}
+                  {Math.max(1, truthRoundIndex)} / {TRUTH_ROUNDS_PER_GAME} 回合
+                </p>
+                <div className={`truth-dice-board ${truthIsRolling ? "rolling" : ""} ${truthDiceSettling ? "settling" : ""}`}>
+                  <div className="truth-dice-cell">
+                    <span className="truth-dice-face" aria-hidden="true">
+                      {getDiceFace(truthRollingDice.me)}
+                    </span>
+                    <span>你：{truthRollingDice.me} 点</span>
+                  </div>
+                  <div className="truth-dice-cell">
+                    <span className="truth-dice-face" aria-hidden="true">
+                      {getDiceFace(truthRollingDice.peer)}
+                    </span>
+                    <span>对方：{truthRollingDice.peer} 点</span>
+                  </div>
+                </div>
+                {truthIsRolling && <p className="feed-tip">骰子滚动中...</p>}
+                {truthPhase === "pick" && !truthIsRolling && (
+                  <div className="werewolf-mode-wrap">
+                    <p className="feed-tip">
+                      {truthDiceResult?.meLose ? `对方选题中（剩余 ${truthPhaseCountdown}s）` : `请选择 1 个问题（剩余 ${truthPhaseCountdown}s）`}
+                    </p>
+                    <div className="truth-phase-progress">
+                      <span style={{ width: `${Math.max(0, Math.min(100, (truthPhaseCountdown / 8) * 100))}%` }} />
+                    </div>
+                    {!truthDiceResult?.meLose && (
+                      <div className="truth-question-cards">
+                        {truthQuestionOptions.map((item, idx) => (
+                          <button
+                            key={`truth-q-${idx}`}
+                            type="button"
+                            className={truthPickedQuestionIndex === idx ? "picked" : ""}
+                            onClick={() => chooseTruthQuestion(idx)}
+                            disabled={truthPickedQuestionIndex >= 0}
+                          >
+                            <span className="truth-question-index">问题 {idx + 1}</span>
+                            <span>{item.question}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!truthIsRolling && truthCurrentQuestion && (
+                  <div className="werewolf-script-list">
+                    <p>题目（{truthCurrentDifficultyLabel}）：{truthCurrentQuestion}</p>
+                  </div>
+                )}
+                {truthPhase === "answer" && truthAwaitingMyAnswer && !truthIsRolling && (
+                  <div className="werewolf-mode-wrap">
+                    <p className="feed-tip">你的作答时间：{truthPhaseCountdown}s</p>
+                    <div className="truth-phase-progress">
+                      <span style={{ width: `${Math.max(0, Math.min(100, (truthPhaseCountdown / 12) * 100))}%` }} />
+                    </div>
+                    <textarea
+                      className="truth-answer-input"
+                      value={truthAnswerDraft}
+                      onChange={(e) => setTruthAnswerDraft(e.target.value)}
+                      placeholder="这一回合你点数更低，请输入你的真心话回答"
+                      maxLength={120}
+                    />
+                    <p className="feed-tip">至少输入 {truthAnswerMinLen} 个字再提交</p>
+                    <button type="button" onClick={submitTruthAnswer} disabled={truthAnswerDraft.trim().length < truthAnswerMinLen}>
+                      提交我的回答
+                    </button>
+                  </div>
+                )}
+                {truthPhase === "answer" && !truthAwaitingMyAnswer && !truthIsRolling && truthDiceResult && (
+                  <>
+                    <p className="feed-tip">对方作答中（剩余 {truthPhaseCountdown}s）...</p>
+                    <div className="truth-phase-progress">
+                      <span style={{ width: `${Math.max(0, Math.min(100, (truthPhaseCountdown / 10) * 100))}%` }} />
+                    </div>
+                  </>
+                )}
+                {truthPhase === "review" && (
+                  <>
+                    <p className="feed-tip">答案已提交，对方查看中（{truthPhaseCountdown}s）...</p>
+                    <div className="truth-phase-progress">
+                      <span style={{ width: `${Math.max(0, Math.min(100, (truthPhaseCountdown / 3) * 100))}%` }} />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            {truthMode === "result" && (
+              <div className="werewolf-mode-wrap">
+                <p>本局已完成 {TRUTH_ROUNDS_PER_GAME} / {TRUTH_ROUNDS_PER_GAME} 回合</p>
+                {truthDiceResult && (
+                  <p>
+                    最后一回合骰子：你 {truthDiceResult.me} 点 / 对方 {truthDiceResult.peer} 点
+                  </p>
+                )}
+                <div className="werewolf-script-list">
+                  {truthLogs.map((line, idx) => (
+                    <p key={`truth-log-${idx}`}>{line}</p>
+                  ))}
+                </div>
+                <div className="werewolf-menu">
+                  <button type="button" onClick={handleTruthProfileGate}>
+                    查看对方资料
+                  </button>
+                  <button type="button" onClick={handleTruthContact}>
+                    联系对方
+                  </button>
+                </div>
+                <button type="button" onClick={() => setTruthMode("menu")}>
+                  再来一局
+                </button>
+              </div>
+            )}
+            <button type="button" onClick={closeTruthModal}>
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showPlanetMatchPanel && (
+        <div className="profile-setup-overlay" onClick={() => setShowPlanetMatchPanel(false)}>
+          <div className="profile-setup-card planet-match-panel" onClick={(e) => e.stopPropagation()}>
+            <h3>盲盒星球匹配</h3>
+            {planetMatchLoading ? (
+              <p>正在匹配异性用户，请稍候...</p>
+            ) : planetMatchProfile ? (
+              <>
+                <div className="planet-match-card">
+                  <img
+                    className="planet-match-cover"
+                    src={resolveAssetUrl(planetMatchProfile.avatar || "")}
+                    alt={planetMatchProfile.nickname || "匹配对象"}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = planetMatchProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
+                    }}
+                  />
+                  <div className="hero-profile-meta">
+                    <strong>{planetMatchProfile.nickname || blindBoxTarget?.nickname || "隐藏款用户"}</strong>
+                    <span>
+                      {planetMatchProfile.age || "-"}岁 · {planetMatchProfile.city || "同城"}
+                    </span>
+                    <small>{isMembershipValid ? planetMatchProfile.hobbies || "这个人很有趣，快去认识TA" : ""}</small>
+                  </div>
+                </div>
+                <div className="werewolf-menu">
+                  <button type="button" onClick={handlePlanetDetailGate}>
+                    查看详细资料
+                  </button>
+                  <button type="button" onClick={handlePlanetContact}>
+                    联系对方
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p>暂无可用匹配资料，请稍后重试。</p>
+            )}
+            <button type="button" onClick={() => setShowPlanetMatchPanel(false)}>
+              关闭
             </button>
           </div>
         </div>
