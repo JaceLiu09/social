@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
 import avatarManifest from "./avatarManifest.json";
 
@@ -282,6 +284,15 @@ const profileSetupInitial = {
   avatarUrl: ""
 };
 
+/** 路径与主导航 tab 同步（支持 /match 独立页刷新、分享） */
+const ROUTE_TAB = {
+  "/planet": "planet",
+  "/square": "square",
+  "/chat": "chat",
+  "/me": "me",
+  "/match": "planet-match"
+};
+
 const WEREWOLF_ROLE_CONFIG = {
   6: { wolf: 2, seer: 1, witch: 0, hunter: 1, idiot: 0, villager: 2 },
   7: { wolf: 2, seer: 1, witch: 1, hunter: 1, idiot: 0, villager: 2 },
@@ -317,7 +328,16 @@ function buildWerewolfRulePack(playerCount, modeLabel) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState("planet");
+  const navigate = useNavigate();
+  const location = useLocation();
+  const tab = ROUTE_TAB[location.pathname] ?? "planet";
+
+  useLayoutEffect(() => {
+    if (!Object.prototype.hasOwnProperty.call(ROUTE_TAB, location.pathname)) {
+      navigate("/planet", { replace: true });
+    }
+  }, [location.pathname, navigate]);
+
   const [chatMode, setChatMode] = useState("chat");
   const [mePage, setMePage] = useState("home");
   const [meDetailPage, setMeDetailPage] = useState("");
@@ -391,9 +411,9 @@ export default function App() {
   const [showMembershipGate, setShowMembershipGate] = useState(false);
   const [membershipSubmitting, setMembershipSubmitting] = useState(false);
   const [membershipGateContext, setMembershipGateContext] = useState("invite");
-  const [showPlanetMatchPanel, setShowPlanetMatchPanel] = useState(false);
   const [planetMatchLoading, setPlanetMatchLoading] = useState(false);
   const [planetMatchProfile, setPlanetMatchProfile] = useState(null);
+  const [planetMatchWaitHint, setPlanetMatchWaitHint] = useState("");
   const [showSentenceModal, setShowSentenceModal] = useState(false);
   const [sentenceMode, setSentenceMode] = useState("menu");
   const [isSentenceMatching, setIsSentenceMatching] = useState(false);
@@ -472,6 +492,9 @@ export default function App() {
   const truthRoundAnimTimerRef = useRef(null);
   const truthRoundContextRef = useRef(null);
   const audioContextRef = useRef(null);
+  const planetMatchSfxIntervalRef = useRef(null);
+  const planetMatchFlowLockRef = useRef(false);
+  const planetMatchDismissedRef = useRef(false);
   const truthInviteTimersRef = useRef([]);
   const profilePhotoInputRef = useRef(null);
 
@@ -620,6 +643,15 @@ export default function App() {
     ].map((label, idx) => ({ type: "placeholder", label, idx }));
     return [...photos, ...placeholders].slice(0, 6);
   }, [editProfilePhotos]);
+
+  useEffect(() => {
+    return () => {
+      if (planetMatchSfxIntervalRef.current !== null) {
+        clearInterval(planetMatchSfxIntervalRef.current);
+        planetMatchSfxIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!tacitCurrentQuestion) {
@@ -1357,8 +1389,8 @@ export default function App() {
   const membershipGateCopy =
     membershipGateContext === "planet" || membershipGateContext === "truth"
       ? {
-          title: "联系TA需要开通会员",
-          desc: "已为你匹配到异性资料卡，查看详细资料并联系对方需先开通会员。",
+          title: "开通会员解锁资料与联系",
+          desc: "查看详细资料、联系对方等功能需先开通会员。",
           cancel: "先看看"
         }
       : {
@@ -1538,28 +1570,74 @@ export default function App() {
     setMessage(type === "device" ? "本机号码登录成功" : "微信快捷登录成功");
   };
 
-  const startMatch = async () => {
-    if (!user) return;
-    const res = await fetch(`${API}/match/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: user.id })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || "匹配失败");
-    setSession(data.session);
-    setBlindBoxTarget(data.targetBlindBox);
-    setMessage("匹配成功");
-    return data;
+  const leavePlanetMatchPage = () => {
+    planetMatchDismissedRef.current = true;
+    stopPlanetMatchSearchSfx();
+    setPlanetMatchWaitHint("");
+    setPlanetMatchProfile(null);
+    setPlanetMatchLoading(false);
+    navigate("/planet");
   };
 
   const startPlanetMatchFlow = async () => {
-    if (!user) return;
-    setShowPlanetMatchPanel(true);
-    setPlanetMatchLoading(true);
-    setPlanetMatchProfile(null);
+    if (!user) {
+      setMessage("请先登录后再开始寻找");
+      return;
+    }
+    if (planetMatchFlowLockRef.current) return;
+    planetMatchFlowLockRef.current = true;
+    planetMatchDismissedRef.current = false;
+
+    let countdownIntervalId = null;
     try {
-      const data = await startMatch();
+      try {
+        flushSync(() => {
+          setMessage("");
+          navigate("/match");
+          setPlanetMatchLoading(true);
+          setPlanetMatchProfile(null);
+        });
+      } catch {
+        setMessage("");
+        navigate("/match");
+        setPlanetMatchLoading(true);
+        setPlanetMatchProfile(null);
+      }
+
+      const minWaitMs = Math.round(3000 + Math.random() * 4000);
+      try {
+        playPlanetMatchSearchSfx();
+      } catch (_e) {
+        /* 音效失败不影响匹配流程 */
+      }
+
+      const matchEndAt = Date.now() + minWaitMs;
+      const refreshPlanetMatchCountdown = () => {
+        const secLeft = Math.max(0, Math.ceil((matchEndAt - Date.now()) / 1000));
+        setPlanetMatchWaitHint(
+          secLeft > 0 ? `附近雷达扫描中，约 ${secLeft} 秒` : "正在连接匹配服务…"
+        );
+      };
+      refreshPlanetMatchCountdown();
+      countdownIntervalId = window.setInterval(refreshPlanetMatchCountdown, 250);
+
+      /* 先完整跑完随机动画时长，再请求接口，避免并行/静默匹配路径在任何环境下被“秒完成” */
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, minWaitMs);
+      });
+
+      const res = await fetch(`${API}/match/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "匹配失败");
+      if (planetMatchDismissedRef.current) return;
+      playPlanetMatchFoundSfx();
+      setSession(data.session);
+      setBlindBoxTarget(data.targetBlindBox);
+      setMessage("匹配成功");
       const matchedId = data?.targetBlindBox?.id || "";
       const pool = hiddenProfiles.length ? hiddenProfiles : [];
       const picked =
@@ -1568,36 +1646,28 @@ export default function App() {
       setPlanetMatchProfile(picked);
       if (!picked) setChatNotice("已匹配成功，可继续点击“开始寻找”刷新匹配对象");
     } catch (error) {
-      setChatNotice(error.message || "匹配失败，请稍后再试");
-      setShowPlanetMatchPanel(false);
+      stopPlanetMatchSearchSfx();
+      if (!planetMatchDismissedRef.current) {
+        setChatNotice(error.message || "匹配失败，请稍后再试");
+        navigate("/planet");
+      }
     } finally {
+      if (countdownIntervalId !== null) window.clearInterval(countdownIntervalId);
+      setPlanetMatchWaitHint("");
       setPlanetMatchLoading(false);
+      planetMatchFlowLockRef.current = false;
     }
   };
 
   const handlePlanetDetailGate = () => {
-    if (isMembershipValid) {
-      setChatNotice("已为你开放详细资料和联系入口，前往聊天页可继续互动。");
-      return;
-    }
     setMembershipGateContext("planet");
     setShowMembershipGate(true);
   };
 
-  const handlePlanetContact = async () => {
+  const handlePlanetContact = () => {
     if (!planetMatchProfile?.id) return;
-    if (!isMembershipValid) {
-      setMembershipGateContext("planet");
-      setShowMembershipGate(true);
-      return;
-    }
-    try {
-      await sendFriendRequest(planetMatchProfile.id, planetMatchProfile.nickname || "TA");
-      setShowPlanetMatchPanel(false);
-      setTab("chat");
-    } catch (error) {
-      setChatNotice(error.message || "联系失败，请稍后重试");
-    }
+    setMembershipGateContext("planet");
+    setShowMembershipGate(true);
   };
 
   const onSquareScroll = async () => {
@@ -2162,6 +2232,40 @@ export default function App() {
     } catch (_error) {}
   };
 
+  const stopPlanetMatchSearchSfx = () => {
+    if (planetMatchSfxIntervalRef.current !== null) {
+      clearInterval(planetMatchSfxIntervalRef.current);
+      planetMatchSfxIntervalRef.current = null;
+    }
+  };
+
+  const playPlanetMatchSearchSfx = () => {
+    stopPlanetMatchSearchSfx();
+    if (!gameSfxEnabled) return;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!audioContextRef.current) audioContextRef.current = new Ctx();
+      const ctx = audioContextRef.current;
+      if (ctx.state === "suspended") ctx.resume();
+      let tick = 0;
+      planetMatchSfxIntervalRef.current = window.setInterval(() => {
+        if (!gameSfxEnabled) {
+          stopPlanetMatchSearchSfx();
+          return;
+        }
+        const base = 360 + (tick % 6) * 52;
+        tick += 1;
+        playDiceTone(ctx, base, 0.055, 0.02);
+      }, 380);
+    } catch (_error) {}
+  };
+
+  const playPlanetMatchFoundSfx = () => {
+    stopPlanetMatchSearchSfx();
+    playGameSfx("win");
+  };
+
   const playTruthDiceSound = (type) => {
     if (!gameSfxEnabled) return;
     if (type === "roll") {
@@ -2532,7 +2636,7 @@ export default function App() {
       await sendFriendRequest(truthOpponent.id, truthOpponent.name || "TA");
       setShowTruthModal(false);
       resetTruthState();
-      setTab("chat");
+      navigate("/chat");
     } catch (error) {
       setChatNotice(error.message || "联系失败，请稍后重试");
     }
@@ -3258,10 +3362,20 @@ export default function App() {
   }
 
   return (
-    <div className={`main-app ${tab === "chat" && activeConversation ? "chat-detail-mode" : ""}`}>
+    <div
+      className={`main-app ${tab === "chat" && activeConversation ? "chat-detail-mode" : ""} ${tab === "planet-match" ? "planet-match-route" : ""}`}
+    >
       {chatNotice && <div className="chat-notice-banner">{chatNotice}</div>}
-      <header className={`main-header ${tab === "me" ? "me-header" : ""}`}>
-        {tab === "me" ? (
+      <header className={`main-header ${tab === "me" ? "me-header" : ""} ${tab === "planet-match" ? "main-header--cosmic" : ""}`}>
+        {tab === "planet-match" ? (
+          <>
+            <button type="button" className="header-btn header-btn--cosmic" onClick={leavePlanetMatchPage}>
+              返回
+            </button>
+            <h1>星球匹配</h1>
+            <div className="header-placeholder" />
+          </>
+        ) : tab === "me" ? (
           <>
             {mePage === "settings" || mePage === "profile-edit" ? (
               <button
@@ -3857,7 +3971,9 @@ export default function App() {
         </section>
       )}
 
-      {message && tab !== "chat" && <p className="msg">{message}</p>}
+      {message && tab !== "chat" && !(tab === "planet-match" && planetMatchLoading) && (
+        <p className="msg">{message}</p>
+      )}
       {showAddFriendModal && (
         <div className="profile-setup-overlay" onClick={() => setShowAddFriendModal(false)}>
           <div className="profile-setup-card add-friend-card" onClick={(e) => e.stopPropagation()}>
@@ -4830,17 +4946,61 @@ export default function App() {
         </div>
       )}
 
-      {showPlanetMatchPanel && (
-        <div className="profile-setup-overlay" onClick={() => setShowPlanetMatchPanel(false)}>
-          <div className="profile-setup-card planet-match-panel" onClick={(e) => e.stopPropagation()}>
-            <h3>盲盒星球匹配</h3>
+      {tab === "planet-match" && (
+        <section className="planet-match-page" aria-labelledby="planet-match-main-title">
+          <div className="planet-match-page-bg" aria-hidden>
+            <div className="planet-match-page-stars" />
+            <div className="planet-match-page-aurora" />
+            <div className="planet-match-page-rings" />
+            <div className="planet-match-page-moon" />
+          </div>
+          <div className="planet-match-page-inner">
             {planetMatchLoading ? (
-              <p>正在匹配异性用户，请稍候...</p>
+              <div className="planet-match-page-loading" aria-busy="true">
+                <div className="planet-match-page-hero" aria-hidden>
+                  <div className="planet-match-page-ufo">
+                    <span className="planet-match-page-ufo-dome" />
+                    <span className="planet-match-page-ufo-body" />
+                    <span className="planet-match-page-ufo-glow" />
+                  </div>
+                  <div className="planet-match-page-scene">
+                    <div className="planet-match-orbit-solo planet-match-orbit-solo--cosmic">
+                      <div className="planet-match-orbit-solo-arm">
+                        <span className="planet-match-orbit-dot planet-match-orbit-dot--cyan" />
+                      </div>
+                    </div>
+                    <div className="planet-match-orbit-solo planet-match-orbit-solo--cosmic planet-match-orbit-solo--reverse">
+                      <div className="planet-match-orbit-solo-arm planet-match-orbit-solo-arm--tight">
+                        <span className="planet-match-orbit-dot planet-match-orbit-dot--magenta" />
+                      </div>
+                    </div>
+                    <div className="planet-match-globe planet-match-globe--cosmic">
+                      <span className="planet-match-globe-highlight planet-match-globe-highlight--cosmic" />
+                    </div>
+                  </div>
+                </div>
+                <p className="planet-match-page-whisper">星链校准中，为你寻找同频信号</p>
+                <h2 id="planet-match-main-title" className="planet-match-page-heading">
+                  正在为你匹配隐藏款
+                </h2>
+                <p className="planet-match-page-caption">
+                  {planetMatchWaitHint || "星际巡航中，大约 3～7 秒"}
+                </p>
+                <div className="planet-match-dots planet-match-dots--cosmic" aria-hidden>
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              </div>
             ) : planetMatchProfile ? (
-              <>
-                <div className="planet-match-card">
+              <div className="planet-match-page-result">
+                <h2 id="planet-match-main-title" className="planet-match-page-heading planet-match-page-heading--success">
+                  匹配成功
+                </h2>
+                <article className="planet-match-cyber-card">
+                  <div className="planet-match-cyber-card-frame" aria-hidden />
                   <img
-                    className="planet-match-cover"
+                    className="planet-match-cyber-cover"
                     src={resolveAssetUrl(planetMatchProfile.avatar || "")}
                     alt={planetMatchProfile.nickname || "匹配对象"}
                     onError={(e) => {
@@ -4848,52 +5008,57 @@ export default function App() {
                       e.currentTarget.src = planetMatchProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
                     }}
                   />
-                  <div className="hero-profile-meta">
+                  <div className="planet-match-cyber-meta">
                     <strong>{planetMatchProfile.nickname || blindBoxTarget?.nickname || "隐藏款用户"}</strong>
                     <span>
                       {planetMatchProfile.age || "-"}岁 · {planetMatchProfile.city || "同城"}
                     </span>
                     <small>{isMembershipValid ? planetMatchProfile.hobbies || "这个人很有趣，快去认识TA" : ""}</small>
                   </div>
-                </div>
-                <div className="werewolf-menu">
-                  <button type="button" onClick={handlePlanetDetailGate}>
-                    查看详细资料
-                  </button>
-                  <button type="button" onClick={handlePlanetContact}>
-                    联系对方
-                  </button>
-                </div>
-              </>
+                  <div className="planet-match-cyber-actions">
+                    <button type="button" className="planet-match-cyber-btn planet-match-cyber-btn--ghost" onClick={handlePlanetDetailGate}>
+                      查看详细资料
+                    </button>
+                    <button type="button" className="planet-match-cyber-btn planet-match-cyber-btn--glow" onClick={handlePlanetContact}>
+                      联系对方
+                    </button>
+                  </div>
+                </article>
+                <button type="button" className="planet-match-page-backlink" onClick={leavePlanetMatchPage}>
+                  返回盲盒星球
+                </button>
+              </div>
             ) : (
-              <p>暂无可用匹配资料，请稍后重试。</p>
+              <div className="planet-match-page-empty">
+                <p className="planet-match-page-caption">暂无可用匹配资料，请稍后重试。</p>
+                <button type="button" className="planet-match-cyber-btn planet-match-cyber-btn--glow" onClick={leavePlanetMatchPage}>
+                  返回
+                </button>
+              </div>
             )}
-            <button type="button" onClick={() => setShowPlanetMatchPanel(false)}>
-              关闭
-            </button>
           </div>
-        </div>
+        </section>
       )}
 
-      <button className="fab" onClick={() => setTab("planet")}>
+      <button className="fab" onClick={() => navigate("/planet")}>
         开盲盒
       </button>
 
       <nav className="bottom-nav">
-        <button className={tab === "planet" ? "active" : ""} onClick={() => setTab("planet")}>
+        <button className={tab === "planet" ? "active" : ""} onClick={() => navigate("/planet")}>
           盲盒星球
         </button>
-        <button className={tab === "square" ? "active" : ""} onClick={() => setTab("square")}>
+        <button className={tab === "square" ? "active" : ""} onClick={() => navigate("/square")}>
           广场
         </button>
         <div className="nav-gap" />
-        <button className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}>
+        <button className={tab === "chat" ? "active" : ""} onClick={() => navigate("/chat")}>
           聊天
           {totalUnreadCount > 0 && (
             <span className="nav-unread-badge">{totalUnreadCount > 99 ? "99+" : totalUnreadCount}</span>
           )}
         </button>
-        <button className={tab === "me" ? "active" : ""} onClick={() => setTab("me")}>
+        <button className={tab === "me" ? "active" : ""} onClick={() => navigate("/me")}>
           自己
         </button>
       </nav>
