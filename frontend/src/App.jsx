@@ -250,7 +250,18 @@ function resolveMediaUrl(url) {
   const raw = String(url || "").trim();
   if (!raw) return "";
   if (raw.startsWith("/uploads/")) return `${API}${raw}`;
-  if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("data:")) return raw;
+  if (raw.startsWith("data:")) return raw;
+  // 历史消息可能存成 http://127.0.0.1:4000/uploads/... 等绝对地址，其他设备无法访问；统一改为当前 API 根
+  try {
+    const u = new URL(raw);
+    const path = u.pathname.startsWith("/") ? u.pathname : `/${u.pathname}`;
+    if (path.startsWith("/uploads/")) {
+      return `${API}${path}${u.search || ""}`;
+    }
+  } catch (_e) {
+    /* 非绝对 URL */
+  }
+  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
   return "";
 }
 
@@ -838,11 +849,24 @@ export default function App() {
         setConversations([]);
         return;
       }
-      setContacts(Array.isArray(contactsData.contacts) ? contactsData.contacts : []);
+      const contactsList = Array.isArray(contactsData.contacts) ? contactsData.contacts : [];
+      setContacts(contactsList);
       const incoming = Array.isArray(convData.conversations) ? convData.conversations : [];
       const hiddenIds = hiddenConversationIdsRef.current;
       const visible = incoming.filter((item) => !hiddenIds.includes(item.id));
       setConversations(sortConversations(visible));
+      setActiveConversation((prev) => {
+        if (!prev?.id) return prev;
+        const fromConv = visible.find((c) => c.id === prev.id);
+        if (fromConv) {
+          return { ...prev, avatar: fromConv.avatar, name: fromConv.name };
+        }
+        const fromContact = contactsList.find((c) => c.id === prev.id);
+        if (fromContact) {
+          return { ...prev, avatar: fromContact.avatar, name: fromContact.name };
+        }
+        return prev;
+      });
     } catch (_error) {
       // Keep last successful data if refresh fails briefly.
     }
@@ -929,6 +953,7 @@ export default function App() {
       const res = await fetch(`${API}/chat/messages?peerId=${peerId}`, { headers: authHeaders });
       const data = await res.json();
       setChatMessages(Array.isArray(data.messages) ? data.messages : []);
+      setBrokenImageIds([]);
     } catch (_error) {
       // Keep last loaded messages if refresh fails.
     }
@@ -1334,6 +1359,10 @@ export default function App() {
     }, 1500);
     return () => clearInterval(timer);
   }, [activeConversation, tab, user]);
+
+  useEffect(() => {
+    setBrokenImageIds([]);
+  }, [activeConversation?.id]);
 
   const chatDetailPeerAvatarSrc = useMemo(
     () => (activeConversation ? resolveAssetUrl(activeConversation.avatar) : ""),

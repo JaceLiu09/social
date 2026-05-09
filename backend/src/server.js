@@ -2356,6 +2356,23 @@ app.post("/tacit/rooms/:id/answer", async (req, res) => {
   }
 });
 
+/** 聊天媒体统一存相对路径，避免库里留下 localhost/127.0.0.1 等仅本机可访问的绝对 URL */
+function normalizeChatMediaUrl(url) {
+  if (url == null) return null;
+  const s = String(url).trim();
+  if (!s) return null;
+  if (s.startsWith("/uploads/")) return s;
+  try {
+    const u = new URL(s);
+    if (u.pathname.startsWith("/uploads/")) {
+      return `${u.pathname}${u.search || ""}`;
+    }
+  } catch (_e) {
+    /* ignore */
+  }
+  return s;
+}
+
 app.get("/chat/conversations", async (req, res) => {
   try {
     const userId = getAuthUserId(req);
@@ -2438,7 +2455,7 @@ app.get("/chat/messages", async (req, res) => {
         toUserId: item.toUserId,
         kind: item.kind,
         text: item.text,
-        mediaUrl: item.mediaUrl,
+        mediaUrl: item.mediaUrl ? normalizeChatMediaUrl(item.mediaUrl) : null,
         audioDurationSec: item.audioDurationSec,
         createdAt: item.createdAt.toISOString()
       }))
@@ -2481,7 +2498,7 @@ app.post("/chat/messages", async (req, res) => {
       ? String(kind || "TEXT")
       : "TEXT";
     const content = String(text || "").trim();
-    const normalizedMediaUrl = mediaUrl ? String(mediaUrl) : null;
+    const normalizedMediaUrl = mediaUrl ? normalizeChatMediaUrl(String(mediaUrl)) : null;
     if (!toUserId) {
       return res.status(400).json({ message: "参数不完整" });
     }
