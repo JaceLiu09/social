@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import { prisma } from "./prisma.js";
+import { createAdminRouter } from "./adminApi.js";
 import { sampleTacitQuestionsForRound } from "./tacitQuestionBank.js";
 import {
   FRIENDLINESS_PER_ROUND,
@@ -1067,6 +1068,14 @@ const completeProfileSchema = z.object({
 });
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+app.use(
+  "/admin/api",
+  createAdminRouter({
+    prisma,
+    uploadRoot,
+    getOnlineUserIds: () => Array.from(userSockets.keys())
+  })
+);
 app.use("/uploads", express.static(uploadRoot));
 
 app.post("/chat/upload", async (req, res) => {
@@ -1175,6 +1184,61 @@ app.post("/auth/complete-profile", async (req, res) => {
       return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
     }
     return res.status(400).json({ message: error.message });
+  }
+});
+
+app.patch("/auth/profile", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const body = req.body || {};
+    const data = {};
+    if (typeof body.nickname === "string" && body.nickname.trim()) {
+      data.nickname = body.nickname.trim();
+    }
+    if (body.avatarUrl !== undefined) {
+      data.avatarUrl = body.avatarUrl ? String(body.avatarUrl) : null;
+    }
+    if (body.currentCity !== undefined) {
+      data.currentCity = String(body.currentCity || "");
+    }
+    if (body.hobbies !== undefined) {
+      data.hobbies = String(body.hobbies || "");
+    }
+    if (body.partnerExpectation !== undefined) {
+      data.partnerExpectation = String(body.partnerExpectation || "");
+    }
+    if (body.photoUrls !== undefined) {
+      let urls = body.photoUrls;
+      if (typeof urls === "string") {
+        try {
+          urls = JSON.parse(urls);
+        } catch (_e) {
+          return res.status(400).json({ message: "相册数据格式无效" });
+        }
+      }
+      if (!Array.isArray(urls)) {
+        return res.status(400).json({ message: "相册必须是数组" });
+      }
+      const cleaned = urls
+        .map((u) => (typeof u === "string" ? u.trim() : ""))
+        .filter(Boolean)
+        .slice(0, 10);
+      data.photoUrls = JSON.stringify(cleaned);
+    }
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ message: "没有可更新的字段" });
+    }
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data
+    });
+    return res.json({ user });
+  } catch (error) {
+    if (error?.name?.includes("PrismaClient")) {
+      return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
+    }
+    return res.status(500).json({ message: error.message || "更新资料失败" });
   }
 });
 

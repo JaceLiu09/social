@@ -254,6 +254,19 @@ function resolveMediaUrl(url) {
   return "";
 }
 
+/** 用户主展示图原始地址（不含 resolveAssetUrl），用于保存与聊天头像回退 */
+function getUserPrimaryRawImageUrl(user) {
+  if (!user) return "";
+  if (user.avatarUrl) return String(user.avatarUrl).trim();
+  try {
+    const parsed = JSON.parse(user.photoUrls || "[]");
+    if (Array.isArray(parsed) && parsed[0]) return String(parsed[0]).trim();
+  } catch (_e) {
+    /* ignore */
+  }
+  return "";
+}
+
 function toTenDigitId(input) {
   const raw = String(input || "");
   let hash = 0n;
@@ -341,6 +354,7 @@ export default function App() {
   const [chatMode, setChatMode] = useState("chat");
   const [mePage, setMePage] = useState("home");
   const [meDetailPage, setMeDetailPage] = useState("");
+  const [meHeaderAvatarFailed, setMeHeaderAvatarFailed] = useState(false);
   const [authMode, setAuthMode] = useState("login");
   const [agreed, setAgreed] = useState(false);
   const [user, setUser] = useState(null);
@@ -1154,6 +1168,10 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
+    setMeHeaderAvatarFailed(false);
+  }, [user?.avatarUrl, user?.photoUrls]);
+
+  useEffect(() => {
     if (!user?.id) return;
     const key = `my-posts:${user.id}`;
     try {
@@ -1316,6 +1334,15 @@ export default function App() {
     }, 1500);
     return () => clearInterval(timer);
   }, [activeConversation, tab, user]);
+
+  const chatDetailPeerAvatarSrc = useMemo(
+    () => (activeConversation ? resolveAssetUrl(activeConversation.avatar) : ""),
+    [activeConversation?.avatar, activeConversation?.id]
+  );
+  const chatDetailMyAvatarSrc = useMemo(
+    () => resolveAssetUrl(getUserPrimaryRawImageUrl(user)),
+    [user?.avatarUrl, user?.photoUrls]
+  );
 
   useEffect(
     () => () => {
@@ -1706,21 +1733,32 @@ export default function App() {
     }
   };
 
-  const saveProfile = () => {
-    const finalPhotos = editProfilePhotos.length ? editProfilePhotos : [profileForm.avatarUrl || userAvatar].filter(Boolean);
-    const finalAvatar = profileForm.avatarUrl || finalPhotos[0] || userAvatar;
-    setUser((prev) =>
-      prev
-        ? {
-            ...prev,
-            ...profileForm,
-            avatarUrl: finalAvatar,
-            photoUrls: JSON.stringify(finalPhotos.slice(0, 3))
-          }
-        : prev
-    );
-    setMePage("home");
-    setMessage("资料已更新");
+  const saveProfile = async () => {
+    if (!user || !authToken) return;
+    const fallbackRaw = profileForm.avatarUrl || getUserPrimaryRawImageUrl(user);
+    const finalPhotos = editProfilePhotos.length ? editProfilePhotos : (fallbackRaw ? [fallbackRaw] : []);
+    const finalAvatar = (profileForm.avatarUrl || finalPhotos[0] || getUserPrimaryRawImageUrl(user) || "").trim();
+    try {
+      const res = await fetch(`${API}/auth/profile`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({
+          nickname: profileForm.nickname,
+          avatarUrl: finalAvatar || null,
+          photoUrls: JSON.stringify(finalPhotos.slice(0, 3)),
+          currentCity: profileForm.currentCity,
+          hobbies: profileForm.hobbies,
+          partnerExpectation: profileForm.partnerExpectation
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "保存失败");
+      setUser(data.user);
+      setMePage("home");
+      setMessage("资料已更新");
+    } catch (error) {
+      setMessage(error.message || "保存失败，请稍后重试");
+    }
   };
 
   const switchAccount = () => {
@@ -3394,6 +3432,13 @@ export default function App() {
               >
                 返回
               </button>
+            ) : getUserPrimaryRawImageUrl(user) && !meHeaderAvatarFailed ? (
+              <img
+                className="header-avatar-img"
+                src={resolveAssetUrl(getUserPrimaryRawImageUrl(user))}
+                alt=""
+                onError={() => setMeHeaderAvatarFailed(true)}
+              />
             ) : (
               <div className="avatar-dot">{user.nickname.slice(0, 1).toUpperCase()}</div>
             )}
@@ -3554,43 +3599,68 @@ export default function App() {
                   {chatMessages.length === 0 ? (
                     <p className="feed-tip">还没有消息，打个招呼吧</p>
                   ) : (
-                    chatMessages.map((msg) => (
-                      <div
-                        key={msg.id}
-                        className={`chat-bubble ${String(msg.fromUserId) === String(user.id) ? "me-bubble" : "other-bubble"}`}
-                      >
-                        {msg.kind === "IMAGE" ? (
-                          resolveMediaUrl(msg.mediaUrl) && !brokenImageIds.includes(msg.id) ? (
+                    chatMessages.map((msg) => {
+                      const isMe = String(msg.fromUserId) === String(user.id);
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`chat-msg-row ${isMe ? "chat-msg-row--me" : "chat-msg-row--peer"}`}
+                        >
+                          {!isMe && (
                             <img
-                              src={resolveMediaUrl(msg.mediaUrl)}
+                              src={chatDetailPeerAvatarSrc}
                               alt=""
-                              className="chat-image"
-                              onClick={() => window.open(resolveMediaUrl(msg.mediaUrl), "_blank")}
-                              onError={() =>
-                                setBrokenImageIds((prev) => (prev.includes(msg.id) ? prev : [...prev, msg.id]))
-                              }
+                              className="chat-msg-avatar"
+                              onError={(e) => {
+                                e.currentTarget.src = MALE_SYMBOL_AVATAR;
+                              }}
                             />
-                          ) : (
-                            <span className="chat-image-missing">图片已失效</span>
-                          )
-                        ) : msg.kind === "AUDIO" ? (
-                          <div className="chat-audio-wrap">
-                            <div className="audio-wave">
-                              <span />
-                              <span />
-                              <span />
-                              <span />
-                              <span />
-                              <span />
-                            </div>
-                            <audio controls preload="metadata" src={resolveMediaUrl(msg.mediaUrl)} />
-                            <span>{msg.audioDurationSec ? `${msg.audioDurationSec}s` : "语音"}</span>
+                          )}
+                          <div className={`chat-bubble ${isMe ? "me-bubble" : "other-bubble"}`}>
+                            {msg.kind === "IMAGE" ? (
+                              resolveMediaUrl(msg.mediaUrl) && !brokenImageIds.includes(msg.id) ? (
+                                <img
+                                  src={resolveMediaUrl(msg.mediaUrl)}
+                                  alt=""
+                                  className="chat-image"
+                                  onClick={() => window.open(resolveMediaUrl(msg.mediaUrl), "_blank")}
+                                  onError={() =>
+                                    setBrokenImageIds((prev) => (prev.includes(msg.id) ? prev : [...prev, msg.id]))
+                                  }
+                                />
+                              ) : (
+                                <span className="chat-image-missing">图片已失效</span>
+                              )
+                            ) : msg.kind === "AUDIO" ? (
+                              <div className="chat-audio-wrap">
+                                <div className="audio-wave">
+                                  <span />
+                                  <span />
+                                  <span />
+                                  <span />
+                                  <span />
+                                  <span />
+                                </div>
+                                <audio controls preload="metadata" src={resolveMediaUrl(msg.mediaUrl)} />
+                                <span>{msg.audioDurationSec ? `${msg.audioDurationSec}s` : "语音"}</span>
+                              </div>
+                            ) : (
+                              msg.text
+                            )}
                           </div>
-                        ) : (
-                          msg.text
-                        )}
-                      </div>
-                    ))
+                          {isMe && (
+                            <img
+                              src={chatDetailMyAvatarSrc}
+                              alt=""
+                              className="chat-msg-avatar"
+                              onError={(e) => {
+                                e.currentTarget.src = MALE_SYMBOL_AVATAR;
+                              }}
+                            />
+                          )}
+                        </div>
+                      );
+                    })
                   )}
                 </div>
                 <div className="chat-detail-input-wrap">
