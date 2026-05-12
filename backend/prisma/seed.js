@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 const DEFAULT_PASSWORD = "123456";
@@ -150,6 +151,37 @@ async function main() {
     const virtualUsers = Array.from({ length: missingVirtual }, (_, idx) => buildVirtualUser(startIndex + idx, phonesAfterNamed));
     await prisma.user.createMany({ data: virtualUsers, skipDuplicates: true });
   }
+
+  await prisma.adminAccount.upsert({
+    where: { username: "admin" },
+    create: {
+      username: "admin",
+      passwordHash: bcrypt.hashSync("123456", 10),
+      canManageUsers: true
+    },
+    update: {}
+  });
+
+  await prisma.adminAccount.upsert({
+    where: { username: "eliie" },
+    create: {
+      username: "eliie",
+      passwordHash: bcrypt.hashSync("123456", 10),
+      canManageUsers: false
+    },
+    update: {}
+  });
+
+  // 常见拼写 ellie（两个 l）；与 eliie 同为受限账号
+  await prisma.adminAccount.upsert({
+    where: { username: "ellie" },
+    create: {
+      username: "ellie",
+      passwordHash: bcrypt.hashSync("123456", 10),
+      canManageUsers: false
+    },
+    update: {}
+  });
 }
 
 main()

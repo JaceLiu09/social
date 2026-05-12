@@ -25,6 +25,7 @@
 ## 后端架构
 
 - `src/server.js`：API 入口，承载业务路由
+- `src/fakeBotPhone.js`：系统种子与后台「用户机器人」**共用**手机号生成（`fakem`/`fakef` + 8 位数字），按全局唯一 `phone` 避免冲突
 - `src/config.js`：费率、回合数、友好度等业务常量
 - `prisma/schema.prisma`：用户、匹配会话、男性解锁支付记录模型
 - `prisma/seed.js`：初始化男女测试数据
@@ -49,6 +50,28 @@
   - 匹配 + 骰子 + 友好度进度
   - 解锁和会员开通入口
 - `src/styles.css`：移动端简洁样式
+
+## 机器人库逻辑（系统 vs 用户）
+
+同一套 `User` 表里用字段 **`fakeRobotLibrary`**（Prisma 枚举 `NONE` / `SYSTEM` / `USER`）区分：
+
+| 类型 | 含义 | 写入来源 |
+|------|------|----------|
+| **系统机器人库（SYSTEM）** | 种子生成的约两百个「隐藏款」账号，**只做首页 / 登录页头像展示**与盲盒星球卡片轮播 | 后端启动时 `ensureDefaultUsers` 里 `buildFakeBotUser`，手机号 `fakem*` / `fakef*` |
+| **用户机器人库（USER）** | **玩家匹配、小游戏 bot 池**只从这里抽 | 管理后台「Fake 机器人」表单提交，`POST /admin/api/fake-bots` 写入；手机号格式与系统库相同，见 `fakeBotPhone.js` |
+
+业务规则概要：
+
+- **登录页顶部头像**：未登录时请求 `GET /public/robot-library/system`（公开接口），展示系统库头像。
+- **登录后盲盒星球「附近推荐」卡片**：`GET /planet/robot-library/system`（需登录），只含系统库、异性向。
+- **匹配与小游戏对手**：`GET /planet/robot-library/user`；`POST /match/start` 只在 **`fakeRobotLibrary === USER`** 的异性机器人里抽对象。
+- **旧数据迁移**：服务启动时会把历史上 `fakem`/`fakef` 且无标记的记录标成 **SYSTEM**；若手机号曾为后台旧格式 **`fakefadm*` / `fakemadm*`**，会标成 **USER**。
+
+数据库变更后请执行：`cd backend && npx prisma generate && npx prisma db push`。
+
+若星球页长期显示「正在加载隐藏款资料」：**后端已对「仅有 fakem/fakef 手机号但尚未写入枚举」的旧数据做兼容查询**；仍为空时请确认后端已重启、数据库可连，且库里确实存在对应性别的机器人账号。
+
+---
 
 ## 本地启动
 

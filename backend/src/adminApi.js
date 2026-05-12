@@ -3,6 +3,8 @@ import { z } from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import bcrypt from "bcryptjs";
+import { allocateUniqueFakeBotPhone } from "./fakeBotPhone.js";
 
 const DEFAULT_FAKE_PASSWORD = "123456";
 const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
@@ -28,24 +30,71 @@ function parsePhotoUrls(raw) {
 export function createAdminRouter(deps) {
   const { prisma, uploadRoot, getOnlineUserIds } = deps;
   const r = Router();
+  /** @type {Map<string, { id: string; username: string; canManageUsers: boolean }>} */
+  const adminSessions = new Map();
 
-  r.use((req, res, next) => {
-    const secret = process.env.ADMIN_API_SECRET;
-    if (!secret || String(secret).length < 8) {
-      return res.status(503).json({
-        message: "未配置 ADMIN_API_SECRET（请在 backend 环境变量中设置至少 8 位密钥）"
-      });
-    }
-    if (req.headers["x-admin-secret"] !== secret) {
-      return res.status(401).json({ message: "未授权：密钥错误" });
-    }
-    next();
-  });
+  function parseBearer(req) {
+    const auth = String(req.headers.authorization || "");
+    const m = auth.match(/^Bearer\s+(.+)$/i);
+    return m ? m[1].trim() : "";
+  }
 
   r.get("/health", (_req, res) => res.json({ ok: true, scope: "admin" }));
 
+  r.post("/auth/login", async (req, res) => {
+    try {
+      const username = String(req.body?.username || "").trim();
+      const password = String(req.body?.password || "");
+      if (!username || !password) {
+        return res.status(400).json({ message: "请输入用户名和密码" });
+      }
+      const account = await prisma.adminAccount.findUnique({ where: { username } });
+      if (!account || !bcrypt.compareSync(password, account.passwordHash)) {
+        return res.status(401).json({ message: "用户名或密码错误" });
+      }
+      const token = randomUUID();
+      adminSessions.set(token, {
+        id: account.id,
+        username: account.username,
+        canManageUsers: account.canManageUsers
+      });
+      res.json({
+        token,
+        username: account.username,
+        canManageUsers: account.canManageUsers
+      });
+    } catch (e) {
+      res.status(500).json({ message: e.message || "登录失败" });
+    }
+  });
+
+  r.post("/auth/logout", (req, res) => {
+    const token = parseBearer(req);
+    if (token) adminSessions.delete(token);
+    res.json({ ok: true });
+  });
+
+  r.get("/auth/me", (req, res) => {
+    const token = parseBearer(req);
+    const session = token ? adminSessions.get(token) : null;
+    if (!session) return res.status(401).json({ message: "未登录" });
+    res.json({ username: session.username, canManageUsers: session.canManageUsers });
+  });
+
+  r.use((req, res, next) => {
+    const token = parseBearer(req);
+    if (!token || !adminSessions.has(token)) {
+      return res.status(401).json({ message: "未登录或登录已失效" });
+    }
+    req.adminSession = adminSessions.get(token);
+    next();
+  });
+
   r.get("/users", async (req, res) => {
     try {
+      if (!req.adminSession.canManageUsers) {
+        return res.status(403).json({ message: "无权限访问用户管理" });
+      }
       const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
       const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize || "20"), 10)));
       const q = String(req.query.q || "").trim();
@@ -133,11 +182,21 @@ export function createAdminRouter(deps) {
     }
   });
 
-  r.get("/fake-bots", async (_req, res) => {
+  r.get("/fake-bots", async (req, res) => {
     try {
+      const pool = String(req.query.pool || "all").toLowerCase();
+      const libFilter =
+        pool === "system"
+          ? { fakeRobotLibrary: "SYSTEM" }
+          : pool === "user"
+            ? { fakeRobotLibrary: "USER" }
+            : { fakeRobotLibrary: { in: ["SYSTEM", "USER"] } };
       const users = await prisma.user.findMany({
         where: {
-          OR: [{ phone: { startsWith: "fakem" } }, { phone: { startsWith: "fakef" } }]
+          AND: [
+            { OR: [{ phone: { startsWith: "fakem" } }, { phone: { startsWith: "fakef" } }] },
+            libFilter
+          ]
         },
         orderBy: { createdAt: "desc" },
         select: {
@@ -155,6 +214,7 @@ export function createAdminRouter(deps) {
           avatarUrl: true,
           photoUrls: true,
           profileCompleted: true,
+          fakeRobotLibrary: true,
           createdAt: true
         }
       });
@@ -189,15 +249,7 @@ export function createAdminRouter(deps) {
     try {
       const data = createFakeSchema.parse(req.body);
       const prefix = data.gender === "MALE" ? "fakem" : "fakef";
-      let phone = "";
-      for (let i = 0; i < 8; i++) {
-        const candidate = `${prefix}adm${Date.now()}${randomUUID().replace(/-/g, "").slice(0, 10)}${i}`;
-        const exists = await prisma.user.findUnique({ where: { phone: candidate } });
-        if (!exists) {
-          phone = candidate;
-          break;
-        }
-      }
+      const phone = await allocateUniqueFakeBotPhone(prisma, prefix);
       if (!phone) return res.status(500).json({ message: "无法生成唯一手机号，请重试" });
 
       const photos = data.photoUrls?.length
@@ -219,14 +271,15 @@ export function createAdminRouter(deps) {
           height: data.height ?? (male ? 178 : 165),
           weight: data.weight ?? (male ? 70 : 52),
           hometown: data.hometown || "杭州",
-          currentCity: data.currentCity || "杭州",
+          currentCity: data.currentCity?.trim() || "",
           income: data.income,
           industry: data.industry,
           hobbies: data.hobbies || "旅行,摄影,美食",
           partnerExpectation: data.partnerExpectation || "真诚沟通，彼此尊重",
           profileCompleted: true,
           avatarUrl: avatar || null,
-          photoUrls: JSON.stringify(photos)
+          photoUrls: JSON.stringify(photos),
+          fakeRobotLibrary: "USER"
         }
       });
       res.status(201).json({
@@ -251,9 +304,7 @@ export function createAdminRouter(deps) {
       const toUserId = String(req.query.toUserId || "").trim();
 
       const fakeUsers = await prisma.user.findMany({
-        where: {
-          OR: [{ phone: { startsWith: "fakem" } }, { phone: { startsWith: "fakef" } }]
-        },
+        where: { fakeRobotLibrary: { in: ["SYSTEM", "USER"] } },
         select: { id: true, nickname: true, phone: true }
       });
       const fakeIds = new Set(fakeUsers.map((u) => u.id));

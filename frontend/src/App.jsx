@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
@@ -233,25 +233,15 @@ function formatBirthDateText(value) {
 }
 
 function resolveAssetUrl(url) {
-  if (!url) return MALE_SYMBOL_AVATAR;
-  if (url.startsWith("data:")) return url;
-  const currentOrigin = `${window.location.protocol}//${window.location.host}`;
-  if (url.startsWith("http://localhost:5173/avatars/") || url.startsWith("https://localhost:5173/avatars/")) {
-    return url.replace(/^https?:\/\/localhost:5173/, currentOrigin);
-  }
-  if (url.startsWith("/avatars/")) return url;
-  if (url.startsWith("http://") || url.startsWith("https://")) return url;
-  if (url.startsWith("/")) return `${API}${url}`;
-  return url;
-}
-
-function resolveMediaUrl(url) {
-  if (!url) return "";
-  const raw = String(url || "").trim();
-  if (!raw) return "";
-  if (raw.startsWith("/uploads/")) return `${API}${raw}`;
+  const raw = String(url ?? "").trim();
+  if (!raw) return MALE_SYMBOL_AVATAR;
   if (raw.startsWith("data:")) return raw;
-  // 历史消息可能存成 http://127.0.0.1:4000/uploads/... 等绝对地址，其他设备无法访问；统一改为当前 API 根
+  const currentOrigin = `${window.location.protocol}//${window.location.host}`;
+  if (raw.startsWith("http://localhost:5173/avatars/") || raw.startsWith("https://localhost:5173/avatars/")) {
+    return raw.replace(/^https?:\/\/localhost:5173/, currentOrigin);
+  }
+  if (raw.startsWith("/avatars/")) return raw;
+  // 上传文件挂在 API 的 /uploads；历史数据可能是任意域名的绝对 URL，统一改到当前 API，避免换设备/换端口后裂开
   try {
     const u = new URL(raw);
     const path = u.pathname.startsWith("/") ? u.pathname : `/${u.pathname}`;
@@ -262,20 +252,65 @@ function resolveMediaUrl(url) {
     /* 非绝对 URL */
   }
   if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+  if (raw.startsWith("/")) return `${API}${raw}`;
+  return raw;
+}
+
+function resolveMediaUrl(url) {
+  const raw = String(url ?? "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("data:")) return raw;
+  // 与 resolveAssetUrl 一致：任意域名下的 /uploads 都接到当前 API（含换机、换端口）
+  let pathish = raw;
+  if (/^uploads\//i.test(pathish)) pathish = `/${pathish}`;
+  if (pathish.startsWith("/uploads/")) return `${API}${pathish}`;
+  try {
+    const u = new URL(raw);
+    const path = u.pathname.startsWith("/") ? u.pathname : `/${u.pathname}`;
+    if (path.startsWith("/uploads/")) {
+      return `${API}${path}${u.search || ""}`;
+    }
+  } catch (_e) {
+    /* 非绝对 URL */
+  }
+  if (raw.startsWith("//")) {
+    try {
+      const u = new URL(raw, window.location.href);
+      const path = u.pathname.startsWith("/") ? u.pathname : `/${u.pathname}`;
+      if (path.startsWith("/uploads/")) return `${API}${path}${u.search || ""}`;
+      return `${u.protocol}//${u.host}${path}${u.search || ""}`;
+    } catch (_e2) {
+      return "";
+    }
+  }
+  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+  return "";
+}
+
+/** 相册数组（可含空槽）里第一张有效图 */
+function firstNonEmptyPhotoSlot(arrOrJson) {
+  let arr = arrOrJson;
+  if (typeof arrOrJson === "string") {
+    try {
+      arr = JSON.parse(arrOrJson || "[]");
+    } catch (_e) {
+      return "";
+    }
+  }
+  if (!Array.isArray(arr)) return "";
+  for (const x of arr) {
+    const s = String(x ?? "").trim();
+    if (s) return s;
+  }
   return "";
 }
 
 /** 用户主展示图原始地址（不含 resolveAssetUrl），用于保存与聊天头像回退 */
 function getUserPrimaryRawImageUrl(user) {
   if (!user) return "";
-  if (user.avatarUrl) return String(user.avatarUrl).trim();
-  try {
-    const parsed = JSON.parse(user.photoUrls || "[]");
-    if (Array.isArray(parsed) && parsed[0]) return String(parsed[0]).trim();
-  } catch (_e) {
-    /* ignore */
-  }
-  return "";
+  const av = String(user.avatarUrl || "").trim();
+  if (av) return av;
+  return firstNonEmptyPhotoSlot(user.photoUrls);
 }
 
 function toTenDigitId(input) {
@@ -316,6 +351,16 @@ const ROUTE_TAB = {
   "/me": "me",
   "/match": "planet-match"
 };
+
+/** 「编辑资料」相册 6 宫格：每个格子固定语义，上传写入对应下标 */
+const PROFILE_EDIT_SLOT_LABELS = [
+  "头像",
+  "最近吃过的美食",
+  "独一无二的才艺",
+  "我的有趣自拍",
+  "我的生活日常",
+  "最美好的纪念"
+];
 
 const WEREWOLF_ROLE_CONFIG = {
   6: { wolf: 2, seer: 1, witch: 0, hunter: 1, idiot: 0, villager: 2 },
@@ -373,7 +418,8 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [blindBoxTarget, setBlindBoxTarget] = useState(null);
   const [onlineCount, setOnlineCount] = useState(200000);
-  const [hiddenProfiles, setHiddenProfiles] = useState([]);
+  const [systemRobotProfiles, setSystemRobotProfiles] = useState([]);
+  const [userRobotProfiles, setUserRobotProfiles] = useState([]);
   const [heroRotationIndex, setHeroRotationIndex] = useState(0);
   const [posts, setPosts] = useState([]);
   const [squareLoading, setSquareLoading] = useState(false);
@@ -386,6 +432,23 @@ export default function App() {
   const touchStartYRef = useRef(0);
   const pullTriggeredRef = useRef(false);
   const [message, setMessage] = useState("");
+  const [toastMessage, setToastMessage] = useState("");
+  const toastDismissTimerRef = useRef(null);
+
+  const showToast = useCallback((text) => {
+    setToastMessage(text);
+    if (toastDismissTimerRef.current) window.clearTimeout(toastDismissTimerRef.current);
+    toastDismissTimerRef.current = window.setTimeout(() => {
+      setToastMessage("");
+      toastDismissTimerRef.current = null;
+    }, 2800);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastDismissTimerRef.current) window.clearTimeout(toastDismissTimerRef.current);
+    };
+  }, []);
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
   const [registerForm, setRegisterForm] = useState(registerBasicInitial);
   const [profileSetupForm, setProfileSetupForm] = useState(profileSetupInitial);
@@ -394,7 +457,9 @@ export default function App() {
   const registerPhoneRef = useRef(null);
   const registerPasswordRef = useRef(null);
   const [chatKeyword, setChatKeyword] = useState("");
-  const [heroAvatarList] = useState(() => createHeroAvatars());
+  const fallbackLoginHero = useMemo(() => createHeroAvatars(), []);
+  const [loginHeroOverride, setLoginHeroOverride] = useState(null);
+  const loginHeroDisplay = loginHeroOverride?.length ? loginHeroOverride : fallbackLoginHero;
   const [activeConversation, setActiveConversation] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -489,7 +554,9 @@ export default function App() {
   const recordChunksRef = useRef([]);
   const recordStartAtRef = useRef(0);
   const [selectedCover, setSelectedCover] = useState("");
-  const [editProfilePhotos, setEditProfilePhotos] = useState([]);
+  const [editProfilePhotos, setEditProfilePhotos] = useState(() => Array(PROFILE_EDIT_SLOT_LABELS.length).fill(""));
+  /** 仅在服务端相册/头像字段变化时同步编辑格；忽略 user 引用抖动导致的重复 effect */
+  const lastProfileEditServerKeyRef = useRef(null);
   const [profileForm, setProfileForm] = useState({
     nickname: "",
     currentCity: "",
@@ -521,7 +588,6 @@ export default function App() {
   const planetMatchFlowLockRef = useRef(false);
   const planetMatchDismissedRef = useRef(false);
   const truthInviteTimersRef = useRef([]);
-  const profilePhotoInputRef = useRef(null);
 
   const profilePhotos = useMemo(() => {
     if (!user?.photoUrls) return [];
@@ -531,18 +597,20 @@ export default function App() {
     } catch (_error) {
       return [];
     }
-  }, [user]);
-  const defaultCover = resolveAssetUrl(profileForm.avatarUrl || user?.avatarUrl || profilePhotos[0]);
-  const profileCover = selectedCover || defaultCover;
-  const userAvatar = resolveAssetUrl(profileForm.avatarUrl || user?.avatarUrl || profilePhotos[0]);
-  const galleryPhotos = useMemo(() => {
-    const list = [userAvatar, ...profilePhotos.slice(1)];
-    const unique = [];
-    list.forEach((item) => {
-      if (item && !unique.includes(item)) unique.push(item);
-    });
-    return unique.slice(0, 3);
-  }, [profilePhotos, userAvatar]);
+  }, [user?.photoUrls]);
+  const primaryRaw =
+    String(profileForm.avatarUrl || user?.avatarUrl || "").trim() || firstNonEmptyPhotoSlot(profilePhotos);
+  const galleryRawPhotos = useMemo(() => {
+    const ordered = profilePhotos.map((x) => String(x ?? "").trim());
+    const primary = String(profileForm.avatarUrl || user?.avatarUrl || "").trim();
+    if (primary) {
+      if (ordered.length) ordered[0] = primary;
+      else ordered.push(primary);
+    }
+    return ordered.slice(0, 6).filter(Boolean);
+  }, [profileForm.avatarUrl, user?.avatarUrl, profilePhotos]);
+  /** 封面始终走 resolveAssetUrl；selectedCover 存数据库里的原始字符串（相对路径或绝对 URL） */
+  const profileCover = resolveAssetUrl(selectedCover || primaryRaw);
   const filteredConversations = useMemo(
     () =>
       conversations.filter((item) => {
@@ -619,13 +687,13 @@ export default function App() {
         : {},
     [authToken]
   );
-  const visibleHiddenProfiles = useMemo(() => {
-    if (!hiddenProfiles.length) return [];
-    const base = hiddenProfiles.slice(0, 6);
+  const visibleSystemRobotProfiles = useMemo(() => {
+    if (!systemRobotProfiles.length) return [];
+    const base = systemRobotProfiles.slice(0, 6);
     if (base.length <= 1) return base;
     const idx = heroRotationIndex % base.length;
     return [...base.slice(idx), ...base.slice(0, idx)];
-  }, [hiddenProfiles, heroRotationIndex]);
+  }, [systemRobotProfiles, heroRotationIndex]);
   const truthBankByDifficulty = useMemo(() => {
     if (truthDifficulty === "MIXED") return TRUTH_CHALLENGE_BANK;
     const filtered = TRUTH_CHALLENGE_BANK.filter((item) => item.difficulty === truthDifficulty);
@@ -657,17 +725,6 @@ export default function App() {
   ];
   const truthPhaseIndex = Math.max(0, truthPhaseSteps.findIndex((item) => item.id === truthPhase));
   const truthAnswerMinLen = 3;
-  const editPhotoSlots = useMemo(() => {
-    const photos = editProfilePhotos.slice(0, 3).map((src, idx) => ({ type: "photo", src, idx }));
-    const placeholders = [
-      "最近吃过的美食",
-      "独一无二的才艺",
-      "我的有趣自拍",
-      "我的生活日常",
-      "最美好的纪念"
-    ].map((label, idx) => ({ type: "placeholder", label, idx }));
-    return [...photos, ...placeholders].slice(0, 6);
-  }, [editProfilePhotos]);
 
   useEffect(() => {
     return () => {
@@ -1011,27 +1068,71 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (user) return;
+    fetch(`${API}/public/robot-library/system`)
+      .then((res) => res.json())
+      .then((data) => {
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!items.length) return;
+        setLoginHeroOverride(
+          items.slice(0, 8).map((x, i) => ({
+            src: String(x.avatar || "").trim(),
+            gender: x.gender,
+            alt: "",
+            key: `login-sys-${i}-${String(x.nickname || "").slice(0, 12)}`
+          }))
+        );
+      })
+      .catch(() => {});
+  }, [user]);
+
+  useEffect(() => {
     if (!authToken) {
-      setHiddenProfiles([]);
+      setSystemRobotProfiles([]);
+      setUserRobotProfiles([]);
       return;
     }
-    fetch(`${API}/planet/hidden-profiles`, { headers: authHeaders })
-      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok) throw new Error(data.message || "加载隐藏款失败");
-        setHiddenProfiles(Array.isArray(data.profiles) ? data.profiles : []);
-        setHeroRotationIndex(0);
-      })
-      .catch(() => setHiddenProfiles([]));
+    let cancelled = false;
+    const loadRobots = async () => {
+      try {
+        const sysRes = await fetch(`${API}/planet/robot-library/system`, { headers: authHeaders });
+        const sysData = await sysRes.json();
+        if (cancelled) return;
+        if (sysRes.ok) {
+          setSystemRobotProfiles(Array.isArray(sysData.profiles) ? sysData.profiles : []);
+          setHeroRotationIndex(0);
+        } else {
+          setSystemRobotProfiles([]);
+        }
+      } catch {
+        if (!cancelled) setSystemRobotProfiles([]);
+      }
+      try {
+        const usrRes = await fetch(`${API}/planet/robot-library/user`, { headers: authHeaders });
+        const usrData = await usrRes.json();
+        if (cancelled) return;
+        if (usrRes.ok) {
+          setUserRobotProfiles(Array.isArray(usrData.profiles) ? usrData.profiles : []);
+        } else {
+          setUserRobotProfiles([]);
+        }
+      } catch {
+        if (!cancelled) setUserRobotProfiles([]);
+      }
+    };
+    loadRobots();
+    return () => {
+      cancelled = true;
+    };
   }, [authToken, authHeaders]);
 
   useEffect(() => {
-    if (hiddenProfiles.length <= 1) return undefined;
+    if (systemRobotProfiles.length <= 1) return undefined;
     const timer = window.setInterval(() => {
-      setHeroRotationIndex((prev) => (prev + 1) % Math.min(hiddenProfiles.length, 6));
+      setHeroRotationIndex((prev) => (prev + 1) % Math.min(systemRobotProfiles.length, 6));
     }, 5000);
     return () => clearInterval(timer);
-  }, [hiddenProfiles]);
+  }, [systemRobotProfiles]);
 
   useEffect(() => {
     try {
@@ -1221,12 +1322,29 @@ export default function App() {
 
   useEffect(() => {
     if (mePage !== "profile-edit") return;
-    setEditProfilePhotos(galleryPhotos.slice(0, 3));
-  }, [mePage, galleryPhotos]);
+    const serverKey = `${user?.id ?? ""}|${user?.photoUrls ?? ""}|${user?.avatarUrl ?? ""}`;
+    if (lastProfileEditServerKeyRef.current === serverKey) return;
+    lastProfileEditServerKeyRef.current = serverKey;
+
+    let parsed = [];
+    try {
+      const p = JSON.parse(user?.photoUrls || "[]");
+      parsed = Array.isArray(p) ? p : [];
+    } catch (_e) {
+      parsed = [];
+    }
+    const slots = Array(PROFILE_EDIT_SLOT_LABELS.length).fill("");
+    for (let i = 0; i < PROFILE_EDIT_SLOT_LABELS.length; i++) {
+      slots[i] = String(parsed[i] ?? "").trim();
+    }
+    const primary = String(user?.avatarUrl || "").trim();
+    if (primary) slots[0] = primary;
+    setEditProfilePhotos(slots);
+  }, [mePage, user?.id, user?.photoUrls, user?.avatarUrl]);
 
   useEffect(() => {
-    setSelectedCover(defaultCover);
-  }, [defaultCover]);
+    setSelectedCover("");
+  }, [primaryRaw]);
 
   useEffect(() => {
     if (tab !== "me") {
@@ -1277,12 +1395,23 @@ export default function App() {
           const peerName = prev.find((item) => item.id === peerId)?.name || "新朋友";
           setChatNotice(`${peerName} 发来新消息`);
         }
+        const previewLine =
+          message.kind === "IMAGE"
+            ? "[图片]"
+            : message.kind === "AUDIO"
+              ? "[语音]"
+              : message.text || "";
+        const previewThumbUrl =
+          message.kind === "IMAGE" && (message.thumbMediaUrl || message.mediaUrl)
+            ? message.thumbMediaUrl || message.mediaUrl
+            : null;
         const next = exists
           ? prev.map((item) =>
               item.id === peerId
                 ? {
                     ...item,
-                    preview: message.text,
+                    preview: previewLine,
+                    previewThumbUrl,
                     time: message.createdAt,
                     unread: fromId === uid || isActive ? 0 : (item.unread || 0) + 1
                   }
@@ -1293,7 +1422,8 @@ export default function App() {
                 id: peerId,
                 name: "新朋友",
                 avatar: "https://picsum.photos/80/80?chat",
-                preview: message.text,
+                preview: previewLine,
+                previewThumbUrl,
                 time: message.createdAt,
                 unread: nextUnread
               },
@@ -1337,6 +1467,13 @@ export default function App() {
       if (socketRef.current === socket) socketRef.current = null;
     };
   }, [authHeaders, user]);
+
+  // 登录后立刻拉会话列表（含未读数），底部「聊天」角标不依赖先点开聊天 Tab
+  useEffect(() => {
+    if (!user?.id || !authToken) return;
+    void refreshChatPanels(user.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅在 user/token 就绪时拉取；refreshChatPanels 依赖较多且不必反复绑定
+  }, [user?.id, authToken]);
 
   useEffect(() => {
     if (!user || tab !== "chat") return;
@@ -1592,7 +1729,7 @@ export default function App() {
     if (!file) return;
     try {
       const compressed = await compressImageFile(file);
-      const mediaUrl = await uploadMedia(compressed, "IMAGE");
+      const { url: mediaUrl } = await uploadMedia(compressed, "IMAGE");
       setProfileSetupPhotos((prev) => [mediaUrl, ...prev.filter((item) => item !== mediaUrl)].slice(0, 6));
       setProfileSetupForm((prev) => ({ ...prev, avatarUrl: mediaUrl }));
     } catch (error) {
@@ -1695,7 +1832,7 @@ export default function App() {
       setBlindBoxTarget(data.targetBlindBox);
       setMessage("匹配成功");
       const matchedId = data?.targetBlindBox?.id || "";
-      const pool = hiddenProfiles.length ? hiddenProfiles : [];
+      const pool = userRobotProfiles.length ? userRobotProfiles : [];
       const picked =
         pool.find((item) => item.id === matchedId) ||
         (pool.length ? pool[Math.floor(Math.random() * pool.length)] : null);
@@ -1765,8 +1902,23 @@ export default function App() {
   const saveProfile = async () => {
     if (!user || !authToken) return;
     const fallbackRaw = profileForm.avatarUrl || getUserPrimaryRawImageUrl(user);
-    const finalPhotos = editProfilePhotos.length ? editProfilePhotos : (fallbackRaw ? [fallbackRaw] : []);
-    const finalAvatar = (profileForm.avatarUrl || finalPhotos[0] || getUserPrimaryRawImageUrl(user) || "").trim();
+    const slotUrls = Array.from({ length: PROFILE_EDIT_SLOT_LABELS.length }, (_, i) =>
+      String(editProfilePhotos[i] || "").trim()
+    );
+    const headSlot = slotUrls[0];
+    const hasPhotosAfterHead = slotUrls.slice(1).some((u) => u);
+    if (!headSlot && hasPhotosAfterHead) {
+      showToast("当前未设置头像");
+      return;
+    }
+    const finalAvatar = (
+      slotUrls.find((u) => u) ||
+      String(profileForm.avatarUrl || "").trim() ||
+      getUserPrimaryRawImageUrl(user) ||
+      ""
+    ).trim();
+    const hasAnySlot = slotUrls.some((u) => u);
+    const photoUrlsPayload = hasAnySlot ? slotUrls : fallbackRaw ? [fallbackRaw] : [];
     try {
       const res = await fetch(`${API}/auth/profile`, {
         method: "PATCH",
@@ -1774,7 +1926,7 @@ export default function App() {
         body: JSON.stringify({
           nickname: profileForm.nickname,
           avatarUrl: finalAvatar || null,
-          photoUrls: JSON.stringify(finalPhotos.slice(0, 3)),
+          photoUrls: JSON.stringify(photoUrlsPayload.slice(0, 10)),
           currentCity: profileForm.currentCity,
           hobbies: profileForm.hobbies,
           partnerExpectation: profileForm.partnerExpectation
@@ -1791,6 +1943,7 @@ export default function App() {
   };
 
   const switchAccount = () => {
+    lastProfileEditServerKeyRef.current = null;
     setUser(null);
     setAuthToken("");
     setNeedsProfileSetup(false);
@@ -1811,6 +1964,7 @@ export default function App() {
   };
 
   const logout = () => {
+    lastProfileEditServerKeyRef.current = null;
     setUser(null);
     setAuthToken("");
     setNeedsProfileSetup(false);
@@ -1871,7 +2025,8 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "上传失败");
-      return data.url;
+      if (kind === "AUDIO") return { url: data.url, thumbUrl: null };
+      return { url: data.url, thumbUrl: data.thumbUrl ?? data.url };
     } catch (error) {
       if (error.name === "AbortError") {
         throw new Error("上传超时，请检查网络后重试");
@@ -1929,7 +2084,7 @@ export default function App() {
                     ? "[图片]"
                     : message.kind === "AUDIO"
                       ? "[语音]"
-                      : message.text,
+                      : message.text || "",
                 time: message.createdAt
               }
             : item
@@ -1995,24 +2150,35 @@ export default function App() {
     if (!file || !activeConversation) return;
     try {
       const compressed = await compressImageFile(file);
-      const mediaUrl = await uploadMedia(compressed, "IMAGE");
-      await sendChatPayload({ kind: "IMAGE", mediaUrl });
+      const { url: mediaUrl, thumbUrl } = await uploadMedia(compressed, "IMAGE");
+      await sendChatPayload({
+        kind: "IMAGE",
+        mediaUrl,
+        thumbMediaUrl: thumbUrl || mediaUrl
+      });
     } catch (error) {
       setMessage(error.message || "图片发送失败");
     }
   };
 
-  const onPickProfileAvatar = async (e) => {
+  const onPickProfileAvatar = async (e, slotIndexArg) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    const n = Number(slotIndexArg);
+    const slotIndex = Math.min(
+      Math.max(0, Number.isFinite(n) ? n : 0),
+      PROFILE_EDIT_SLOT_LABELS.length - 1
+    );
     try {
       const compressed = await compressImageFile(file);
-      const mediaUrl = await uploadMedia(compressed, "IMAGE");
-      setProfileForm((prev) => ({ ...prev, avatarUrl: mediaUrl }));
+      const { url: mediaUrl } = await uploadMedia(compressed, "IMAGE");
       setEditProfilePhotos((prev) => {
-        const deduped = [mediaUrl, ...prev.filter((item) => item !== mediaUrl)];
-        return deduped.slice(0, 3);
+        const next = Array.from({ length: PROFILE_EDIT_SLOT_LABELS.length }, (_, i) => String(prev[i] || "").trim());
+        next[slotIndex] = mediaUrl;
+        const first = next.find((u) => u);
+        setProfileForm((form) => ({ ...form, avatarUrl: first || "" }));
+        return next;
       });
     } catch (error) {
       setMessage(error.message || "头像上传失败");
@@ -2047,7 +2213,7 @@ export default function App() {
           type: blob.type || "audio/webm"
         });
         try {
-          const mediaUrl = await uploadMedia(file, "AUDIO");
+          const { url: mediaUrl } = await uploadMedia(file, "AUDIO");
           await sendChatPayload({ kind: "AUDIO", mediaUrl, audioDurationSec: durationSec });
         } catch (error) {
           setMessage(error.message || "语音发送失败");
@@ -2192,8 +2358,8 @@ export default function App() {
     setIsSentenceMatching(true);
     if (sentenceMatchTimerRef.current) clearTimeout(sentenceMatchTimerRef.current);
     sentenceMatchTimerRef.current = window.setTimeout(() => {
-      const source = hiddenProfiles.length
-        ? hiddenProfiles
+      const source = userRobotProfiles.length
+        ? userRobotProfiles
         : [{ id: "fallback-bot", nickname: "隐藏款", age: 24, city: "同城", hobbies: "电影,音乐", avatar: "", gender: "FEMALE" }];
       const target = source[Math.floor(Math.random() * source.length)];
       setIsSentenceMatching(false);
@@ -2629,8 +2795,8 @@ export default function App() {
     setIsTruthMatching(true);
     if (truthMatchTimerRef.current) clearTimeout(truthMatchTimerRef.current);
     truthMatchTimerRef.current = window.setTimeout(() => {
-      const source = hiddenProfiles.length
-        ? hiddenProfiles
+      const source = userRobotProfiles.length
+        ? userRobotProfiles
         : [{ id: "truth-fallback", nickname: "隐藏款", age: 24, city: "同城", hobbies: "摄影,电影", avatar: "", gender: "FEMALE" }];
       const target = source[Math.floor(Math.random() * source.length)];
       setIsTruthMatching(false);
@@ -3162,9 +3328,9 @@ export default function App() {
         <p className="help-link">登录遇到困难？</p>
 
         <div className="hero-avatars">
-          {heroAvatarList.map((avatar) => (
+          {loginHeroDisplay.map((avatar) => (
             <img
-              key={avatar.src}
+              key={avatar.key || avatar.src}
               src={resolveAssetUrl(avatar.src)}
               alt=""
               onError={(e) => {
@@ -3433,6 +3599,11 @@ export default function App() {
       className={`main-app ${tab === "chat" && activeConversation ? "chat-detail-mode" : ""} ${tab === "planet-match" ? "planet-match-route" : ""}`}
     >
       {chatNotice && <div className="chat-notice-banner">{chatNotice}</div>}
+      {toastMessage && (
+        <div className="app-toast" role="alert">
+          {toastMessage}
+        </div>
+      )}
       <header className={`main-header ${tab === "me" ? "me-header" : ""} ${tab === "planet-match" ? "main-header--cosmic" : ""}`}>
         {tab === "planet-match" ? (
           <>
@@ -3502,7 +3673,7 @@ export default function App() {
           <div className="hero-match-card">
             <div className="hero-level">附近推荐</div>
             <div className="hero-profile-list">
-              {(visibleHiddenProfiles.length ? visibleHiddenProfiles : [{ id: "empty" }]).map((item) => (
+              {(visibleSystemRobotProfiles.length ? visibleSystemRobotProfiles : [{ id: "empty" }]).map((item) => (
                 <div key={item.id} className="hero-profile-card">
                   {item.id === "empty" ? (
                     <p className="feed-tip">正在加载隐藏款资料...</p>
@@ -3647,12 +3818,16 @@ export default function App() {
                           )}
                           <div className={`chat-bubble ${isMe ? "me-bubble" : "other-bubble"}`}>
                             {msg.kind === "IMAGE" ? (
-                              resolveMediaUrl(msg.mediaUrl) && !brokenImageIds.includes(msg.id) ? (
+                              resolveMediaUrl(msg.thumbMediaUrl || msg.mediaUrl) &&
+                              !brokenImageIds.includes(msg.id) ? (
                                 <img
-                                  src={resolveMediaUrl(msg.mediaUrl)}
+                                  src={resolveMediaUrl(msg.thumbMediaUrl || msg.mediaUrl)}
                                   alt=""
                                   className="chat-image"
-                                  onClick={() => window.open(resolveMediaUrl(msg.mediaUrl), "_blank")}
+                                  loading="lazy"
+                                  onClick={() =>
+                                    window.open(resolveMediaUrl(msg.mediaUrl), "_blank", "noopener,noreferrer")
+                                  }
                                   onError={() =>
                                     setBrokenImageIds((prev) => (prev.includes(msg.id) ? prev : [...prev, msg.id]))
                                   }
@@ -3820,7 +3995,19 @@ export default function App() {
                             <strong>{item.name}</strong>
                             <span>{formatChatTime(item.time)}</span>
                           </div>
-                          <p>{item.preview}</p>
+                          {item.previewThumbUrl ? (
+                            <div className="chat-preview-row">
+                              <img
+                                src={resolveMediaUrl(item.previewThumbUrl)}
+                                alt=""
+                                className="chat-preview-thumb"
+                                loading="lazy"
+                              />
+                              <p>{item.preview}</p>
+                            </div>
+                          ) : (
+                            <p>{item.preview}</p>
+                          )}
                         </div>
                         {item.unread > 0 && <span className="chat-unread">{item.unread > 9 ? "9+" : item.unread}</span>}
                       </button>
@@ -3903,41 +4090,70 @@ export default function App() {
                 <div className="modern-edit-section">
                   <p className="modern-edit-title">头像</p>
                   <div className="modern-photo-grid">
-                    {editPhotoSlots.map((slot, idx) =>
-                      slot.type === "photo" ? (
-                        <div className="modern-photo-item" key={`edit-photo-${idx}`}>
-                          <img src={slot.src} alt={`头像${idx + 1}`} />
-                          <button
-                            type="button"
-                            className="modern-photo-remove"
-                            onClick={() => {
-                              setEditProfilePhotos((prev) => {
-                                const next = prev.filter((_, photoIdx) => photoIdx !== idx);
-                                const nextAvatar = next[0] || "";
-                                setProfileForm((form) => ({ ...form, avatarUrl: nextAvatar }));
-                                return next;
-                              });
-                            }}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          key={`edit-placeholder-${slot.idx}`}
-                          type="button"
-                          className="modern-photo-placeholder"
-                          onClick={() => profilePhotoInputRef.current?.click()}
+                    {PROFILE_EDIT_SLOT_LABELS.map((label, idx) => {
+                      const slotInputId = `profile-edit-slot-${idx}`;
+                      const raw = String(editProfilePhotos[idx] || "").trim();
+                      return (
+                        <div
+                          className={raw ? "modern-photo-grid-cell modern-photo-item" : "modern-photo-grid-cell"}
+                          key={slotInputId}
                         >
-                          {slot.label}
-                        </button>
-                      )
-                    )}
+                          <input
+                            id={slotInputId}
+                            type="file"
+                            accept="image/*"
+                            style={{ display: "none" }}
+                            aria-hidden
+                            onChange={(ev) => onPickProfileAvatar(ev, idx)}
+                          />
+                          {raw ? (
+                            <>
+                              <button
+                                type="button"
+                                className="modern-photo-replace"
+                                aria-label={`更换${label}`}
+                                onClick={() => document.getElementById(slotInputId)?.click()}
+                              >
+                                <img src={resolveAssetUrl(raw)} alt={label} />
+                              </button>
+                              <button
+                                type="button"
+                                className="modern-photo-remove"
+                                onClick={() => {
+                                  setEditProfilePhotos((prev) => {
+                                    const next = Array.from({ length: PROFILE_EDIT_SLOT_LABELS.length }, (_, i) =>
+                                      String(prev[i] || "").trim()
+                                    );
+                                    next[idx] = "";
+                                    const first = next.find((u) => u);
+                                    setProfileForm((form) => ({ ...form, avatarUrl: first || "" }));
+                                    return next;
+                                  });
+                                }}
+                              >
+                                ×
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="modern-photo-placeholder"
+                              onClick={() => document.getElementById(slotInputId)?.click()}
+                            >
+                              {label}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                  <label className="upload-avatar-btn modern-upload-btn">
+                  <button
+                    type="button"
+                    className="upload-avatar-btn modern-upload-btn"
+                    onClick={() => document.getElementById("profile-edit-slot-0")?.click()}
+                  >
                     上传头像
-                    <input ref={profilePhotoInputRef} type="file" accept="image/*" onChange={onPickProfileAvatar} hidden />
-                  </label>
+                  </button>
                   <input
                     placeholder="头像/封面地址（可选）"
                     value={profileForm.avatarUrl}
@@ -4012,14 +4228,16 @@ export default function App() {
                     </button>
                   </div>
                   <div className="profile-gallery-row">
-                    {galleryPhotos.map((photo, idx) => (
+                    {galleryRawPhotos.map((rawUrl, idx) => (
                       <button
-                        key={`${photo}-${idx}`}
-                        className={`profile-thumb-btn ${profileCover === photo ? "active-thumb" : ""}`}
+                        key={`${rawUrl}-${idx}`}
+                        className={`profile-thumb-btn ${
+                          (!selectedCover && idx === 0) || selectedCover === rawUrl ? "active-thumb" : ""
+                        }`}
                         type="button"
-                        onClick={() => setSelectedCover(photo)}
+                        onClick={() => setSelectedCover(rawUrl)}
                       >
-                        <img src={photo} alt={`相册${idx + 1}`} className="profile-thumb" />
+                        <img src={resolveAssetUrl(rawUrl)} alt={`相册${idx + 1}`} className="profile-thumb" />
                       </button>
                     ))}
                     <button className="profile-thumb add-thumb-btn" onClick={() => setMePage("profile-edit")}>

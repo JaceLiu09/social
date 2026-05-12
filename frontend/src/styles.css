@@ -249,6 +249,41 @@ body {
   box-shadow: 0 6px 16px rgba(26, 33, 55, 0.25);
 }
 
+.app-toast {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 75;
+  max-width: min(420px, calc(100vw - 28px));
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(227, 232, 244, 0.98);
+  color: #5c6478;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-align: center;
+  line-height: 1.5;
+  box-shadow: 0 4px 14px rgba(35, 48, 78, 0.06);
+  pointer-events: none;
+  animation: appToastPop 0.28s ease;
+}
+
+@keyframes appToastPop {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
 .profile-setup-overlay {
   position: fixed;
   inset: 0;
@@ -802,6 +837,13 @@ body {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+  align-items: stretch;
+}
+
+/* 占位格也要有固定占满一列，否则按钮会按文字宽度收缩（「头像」两字会比其它格窄） */
+.modern-photo-grid-cell {
+  min-width: 0;
+  width: 100%;
 }
 
 .modern-photo-item {
@@ -819,10 +861,23 @@ body {
   object-fit: cover;
 }
 
+.modern-photo-replace {
+  display: block;
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
 .modern-photo-remove {
   position: absolute;
   right: 6px;
   bottom: 6px;
+  z-index: 1;
   width: 22px;
   height: 22px;
   border-radius: 11px;
@@ -834,14 +889,21 @@ body {
 }
 
 .modern-photo-placeholder {
+  box-sizing: border-box;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  min-height: 0;
   border: 1px dashed #dfe4f0;
   border-radius: 10px;
   background: #fafbff;
   color: #a4abc0;
   font-size: 12px;
   line-height: 1.5;
-  min-height: 86px;
   padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
 
 .modern-upload-btn {
@@ -1644,6 +1706,29 @@ button:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.chat-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  min-width: 0;
+}
+
+.chat-preview-row p {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-preview-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #eef1f8;
 }
 
 .chat-unread {

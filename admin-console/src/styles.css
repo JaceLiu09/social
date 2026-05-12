@@ -273,7 +273,77 @@ table.data tr:hover td {
   width: 100%;
 }
 
+.drop-zone {
+  margin-top: 8px;
+  padding: 18px 14px;
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  background: #fff;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.drop-zone--active {
+  border-color: #9b7bd4;
+  background: #f6f0ff;
+}
+
+.drop-hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 button.btn:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+.login-screen {
+  max-width: 420px;
+  margin: 32px auto 0;
+}
+
+.login-head {
+  border-bottom: none;
+  padding-bottom: 0;
+  justify-content: center;
+}
+
+.login-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  margin-top: 16px;
+  box-shadow: 0 8px 28px rgba(45, 38, 64, 0.06);
+}
+
+.login-card h2 {
+  margin: 0 0 16px;
+  font-size: 1.1rem;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.login-field input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.login-foot {
+  text-align: center;
+  margin-top: 20px;
 }

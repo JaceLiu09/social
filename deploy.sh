@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =========================
+# Deploy Config
+# =========================
+BRANCH="${BRANCH:-main}"
+# 显式走 ssh.github.com:443，避免 22 端口问题
+GIT_REPO_SSH="${GIT_REPO_SSH:-ssh://git@ssh.github.com:443/JaceLiu09/social.git}"
+
+BASE_DIR="${BASE_DIR:-/root/social-deploy}"
+APP_DIR="${APP_DIR:-${BASE_DIR}/app}"
+
+SERVER_IP="${SERVER_IP:-112.124.51.207}"
+FRONTEND_PORT="${FRONTEND_PORT:-4175}"
+ADMIN_CONSOLE_PORT="${ADMIN_CONSOLE_PORT:-4176}"
+BACKEND_PORT="${BACKEND_PORT:-4000}"
+
+# 前端构建时注入后端地址
+export VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://${SERVER_IP}:${BACKEND_PORT}}"
+# 管理后台独立构建：直连远端 API（与主站 API 同机同端口时可与 VITE_API_BASE_URL 相同）
+export VITE_ADMIN_API_BASE_URL="${VITE_ADMIN_API_BASE_URL:-http://${SERVER_IP}:${BACKEND_PORT}}"
+
+# Git/SSH 连接参数（不再强制 -p，URL 已含 443）
+export GIT_TERMINAL_PROMPT=0
+export GIT_SSH_COMMAND="ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2"
+
+echo "==> [1/12] Load nvm & node"
+export NVM_DIR="/root/.nvm"
+. "$NVM_DIR/nvm.sh"
+nvm use 16 >/dev/null
+
+echo "==> [2/12] Preflight GitHub SSH:443 (retry)"
+# 认证提示这句是正常的，不影响
+timeout 20s ssh -T -p 443 git@ssh.github.com || true
+
+ok=0
+for i in 1 2 3; do
+  echo "$(date '+%F %T') ls-remote attempt $i..."
+  if timeout 60s git ls-remote "${GIT_REPO_SSH}" >/dev/null; then
+    ok=1
+    break
+  fi
+  sleep 2
+done
+
+if [ "$ok" -ne 1 ]; then
+  echo "ERROR: cannot reach/auth GitHub via SSH:443 after retries."
+  echo "Manual check:"
+  echo "  timeout 60s git ls-remote ${GIT_REPO_SSH}"
+  exit 1
+fi
+
+echo "==> [3/12] Prepare app dir"
+mkdir -p "${BASE_DIR}"
+
+echo "==> [4/12] Clone or fetch/reset (with retry + progress)"
+if [ ! -d "${APP_DIR}/.git" ]; then
+  echo "first deploy: clone"
+  rm -rf "${APP_DIR}"
+  cd "${BASE_DIR}"
+
+  for i in 1 2 3; do
+    echo "$(date '+%F %T') clone attempt $i..."
+    if timeout 180s git clone --progress --depth=1 --single-branch --branch "${BRANCH}" "${GIT_REPO_SSH}" "${APP_DIR}"; then
+      break
+    fi
+    if [ "$i" -eq 3 ]; then
+      echo "clone failed after 3 attempts"
+      exit 1
+    fi
+    sleep 2
+  done
+else
+  echo "incremental deploy: fetch/reset"
+  cd "${APP_DIR}"
+
+  git remote set-url origin "${GIT_REPO_SSH}"
+
+  fetched=0
+  for i in 1 2 3; do
+    echo "$(date '+%F %T') fetch attempt $i..."
+    if timeout 120s git fetch --progress --prune --depth=1 origin "${BRANCH}"; then
+      fetched=1
+      break
+    fi
+    sleep 2
+  done
+
+  if [ "$fetched" -ne 1 ]; then
+    echo "fetch failed after 3 attempts"
+    exit 1
+  fi
+
+  git checkout -B "${BRANCH}" FETCH_HEAD
+  git reset --hard FETCH_HEAD
+  git clean -fd
+fi
+
+echo "==> [5/12] Verify latest code"
+cd "${APP_DIR}"
+git rev-parse HEAD
+git log -1 --oneline
+
+echo "==> [6/12] Backend deps"
+cd "${APP_DIR}/backend"
+npm ci
+
+echo "==> [7/12] Prisma generate + db push + seed"
+npx prisma generate
+npx prisma db push
+npm run seed
+
+echo "==> [8/12] Frontend deps"
+cd "${APP_DIR}/frontend"
+npm ci
+
+echo "==> [9/12] Frontend build"
+echo "VITE_API_BASE_URL=${VITE_API_BASE_URL}"
+npm run build
+
+echo "==> [10/12] Admin console deps"
+cd "${APP_DIR}/admin-console"
+npm ci
+
+echo "==> [11/12] Admin console build"
+echo "VITE_ADMIN_API_BASE_URL=${VITE_ADMIN_API_BASE_URL}"
+npm run build
+
+echo "==> [12/12] Restart services (PM2)"
+if pm2 describe social-backend >/dev/null 2>&1; then
+  pm2 restart social-backend --update-env
+else
+  pm2 start npm --name social-backend --cwd "${APP_DIR}/backend" -- run start
+fi
+
+if pm2 describe social-frontend >/dev/null 2>&1; then
+  pm2 restart social-frontend --update-env
+else
+  pm2 start npm --name social-frontend --cwd "${APP_DIR}/frontend" -- run preview -- --host 0.0.0.0 --port "${FRONTEND_PORT}"
+fi
+
+if pm2 describe social-admin >/dev/null 2>&1; then
+  pm2 restart social-admin --update-env
+else
+  pm2 start npm --name social-admin --cwd "${APP_DIR}/admin-console" -- run preview -- --host 0.0.0.0 --port "${ADMIN_CONSOLE_PORT}"
+fi
+
+pm2 save
+pm2 ls
+
+echo "Deploy done."
+echo "Frontend (用户端) URL:     http://${SERVER_IP}:${FRONTEND_PORT}/"
+echo "Admin 控制台 URL:         http://${SERVER_IP}:${ADMIN_CONSOLE_PORT}/"
+echo "Backend API URL:          http://${SERVER_IP}:${BACKEND_PORT}/"
+echo "Health Check URL:         http://${SERVER_IP}:${BACKEND_PORT}/health"
+echo ""
+echo "说明: 管理后台已注入 API（VITE_ADMIN_API_BASE_URL）；使用管理员账号登录（默认 admin / 123456，首次部署由 seed 创建）。"

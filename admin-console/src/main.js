@@ -1,28 +1,31 @@
-const LS_KEY = "blindbox_admin_config";
+const LS_TOKEN = "blindbox_admin_token";
+const LS_API_OVERRIDE = "blindbox_admin_api_base_override";
 
-function loadConfig() {
-  try {
-    return JSON.parse(localStorage.getItem(LS_KEY) || "{}");
-  } catch {
-    return {};
-  }
+function defaultApiBase() {
+  const v = import.meta.env.VITE_ADMIN_API_BASE_URL;
+  return v && String(v).trim() ? String(v).trim().replace(/\/$/, "") : "";
 }
 
-function saveConfig(base, secret) {
-  localStorage.setItem(LS_KEY, JSON.stringify({ base, secret }));
+function getToken() {
+  return localStorage.getItem(LS_TOKEN) || "";
+}
+
+function setToken(t) {
+  if (t) localStorage.setItem(LS_TOKEN, t);
+  else localStorage.removeItem(LS_TOKEN);
 }
 
 function apiBase() {
-  const { base } = loadConfig();
-  return (base || "").replace(/\/$/, "") || "";
+  const override = localStorage.getItem(LS_API_OVERRIDE);
+  if (override && override.trim()) return override.trim().replace(/\/$/, "");
+  return defaultApiBase();
 }
 
 function headers() {
-  const { secret } = loadConfig();
-  return {
-    "Content-Type": "application/json",
-    "x-admin-secret": secret || ""
-  };
+  const h = { "Content-Type": "application/json" };
+  const t = getToken();
+  if (t) h.Authorization = `Bearer ${t}`;
+  return h;
 }
 
 async function api(path, options = {}) {
@@ -36,9 +39,42 @@ async function api(path, options = {}) {
   } catch {
     data = { message: text || "Invalid JSON" };
   }
-  if (!res.ok) throw new Error(data.message || res.statusText);
+  if (!res.ok) {
+    const err = new Error(data.message || res.statusText);
+    err.status = res.status;
+    if (res.status === 401 && getToken()) {
+      setToken("");
+      renderLogin();
+    }
+    throw err;
+  }
   return data;
 }
+
+async function loginRequest(username, password) {
+  const base = apiBase();
+  const url = base ? `${base}/admin/api/auth/login` : "/admin/api/auth/login";
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password })
+  });
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { message: text || "Invalid JSON" };
+  }
+  if (!res.ok) {
+    const err = new Error(data.message || res.statusText);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+const showApiOverride = import.meta.env.DEV || !defaultApiBase();
 
 function mediaUrl(u) {
   if (!u) return "";
@@ -49,21 +85,70 @@ function mediaUrl(u) {
 
 const app = document.getElementById("app");
 
-function render() {
-  const cfg = loadConfig();
+function renderLogin(message = "") {
+  app.innerHTML = `
+    <div class="login-screen">
+      <header class="top-bar login-head">
+        <h1>盲盒社交 · 后台管理</h1>
+      </header>
+      <div class="login-card">
+        <h2>管理员登录</h2>
+        ${message ? `<p class="msg err">${escapeHtml(message)}</p>` : ""}
+        <label class="login-field">用户名 <input type="text" id="login-user" autocomplete="username" /></label>
+        <label class="login-field">密码 <input type="password" id="login-pass" autocomplete="current-password" /></label>
+        <button type="button" class="btn" id="login-submit">登录</button>
+      </div>
+      <p class="muted login-foot">本地开发依赖 Vite 代理访问后端；远端部署已在构建中注入 API 地址。</p>
+    </div>
+  `;
+  document.getElementById("login-submit").onclick = async () => {
+    const username = document.getElementById("login-user").value.trim();
+    const password = document.getElementById("login-pass").value;
+    try {
+      const out = await loginRequest(username, password);
+      setToken(out.token);
+      await renderShell();
+    } catch (e) {
+      renderLogin(e.message || String(e));
+    }
+  };
+}
+
+async function renderShell() {
+  let sessionUsername = "";
+  try {
+    const me = await api("/admin/api/auth/me");
+    sessionUsername = me.username || "";
+    sessionCanManageUsers = me.canManageUsers !== false;
+  } catch (e) {
+    if (!getToken()) return;
+    if (e.status === 401) return;
+    setToken("");
+    renderLogin(e.message || String(e));
+    return;
+  }
+
+  const cfgApiDisplay = apiBase() || "(当前页同源 / Vite 代理)";
+  const overrideVal = localStorage.getItem(LS_API_OVERRIDE) || "";
+  const apiRow = showApiOverride
+    ? `<label class="muted">API 覆盖 <input type="text" id="cfg-api-override" style="min-width:220px" placeholder="留空则用默认" value="${escapeAttr(overrideVal)}" /></label>
+        <button type="button" class="btn secondary" id="cfg-api-save">保存</button>`
+    : `<span class="muted">API：<code>${escapeHtml(cfgApiDisplay)}</code></span>`;
+
+  const canManageUsers = sessionCanManageUsers;
   app.innerHTML = `
     <header class="top-bar">
       <h1>盲盒社交 · 后台管理</h1>
       <div class="config-row">
-        <label>API 地址 <input type="text" id="cfg-base" placeholder="http://localhost:4000" value="${escapeAttr(cfg.base || "")}" /></label>
-        <label>ADMIN_API_SECRET <input type="password" id="cfg-secret" placeholder="与后端环境变量一致" value="${escapeAttr(cfg.secret || "")}" /></label>
-        <button type="button" class="btn" id="cfg-save">保存连接</button>
+        ${apiRow}
+        <span class="muted">${escapeHtml(sessionUsername)}</span>
+        <button type="button" class="btn secondary" id="btn-logout">退出登录</button>
       </div>
     </header>
-    <p class="muted" style="margin-top:-8px;margin-bottom:16px">本控制台为独立项目，不放在 frontend/backend 目录内。开发时可将 API 填 <code>http://localhost:4000</code>，并依赖 Vite 代理；直连远端时请填完整域名。</p>
+    <p class="muted" style="margin-top:-8px;margin-bottom:16px">使用管理员账号登录；远端访问时无需手动填写 API（由部署脚本注入 <code>VITE_ADMIN_API_BASE_URL</code>）。</p>
     <nav class="tabs">
-      <button type="button" data-tab="users" class="active">用户管理</button>
-      <button type="button" data-tab="online">在线用户</button>
+      ${canManageUsers ? `<button type="button" data-tab="users" class="active">用户管理</button>` : ""}
+      <button type="button" data-tab="online" class="${canManageUsers ? "" : "active"}">在线用户</button>
       <button type="button" data-tab="fakes">Fake 机器人</button>
       <button type="button" data-tab="messages">消息管理</button>
     </nav>
@@ -73,15 +158,27 @@ function render() {
     <div id="panel-messages" class="panel hidden"></div>
   `;
 
-  document.getElementById("cfg-save").onclick = () => {
-    const base = document.getElementById("cfg-base").value.trim();
-    const secret = document.getElementById("cfg-secret").value.trim();
-    saveConfig(base, secret);
-    flash("已保存", "ok");
-    setTab(currentTab);
+  document.getElementById("btn-logout").onclick = async () => {
+    try {
+      await api("/admin/api/auth/logout", { method: "POST" });
+    } catch {
+      /* ignore */
+    }
+    setToken("");
+    renderLogin();
   };
 
-  let currentTab = "users";
+  if (showApiOverride) {
+    document.getElementById("cfg-api-save").onclick = () => {
+      const v = document.getElementById("cfg-api-override").value.trim();
+      if (v) localStorage.setItem(LS_API_OVERRIDE, v);
+      else localStorage.removeItem(LS_API_OVERRIDE);
+      flash("已保存", "ok");
+      renderShell();
+    };
+  }
+
+  let currentTab = canManageUsers ? "users" : "online";
   document.querySelectorAll(".tabs button").forEach((btn) => {
     btn.onclick = () => {
       currentTab = btn.dataset.tab;
@@ -90,7 +187,22 @@ function render() {
     };
   });
 
-  setTab("users");
+  setTab(currentTab);
+}
+
+async function bootstrap() {
+  if (!getToken()) {
+    renderLogin();
+    return;
+  }
+  try {
+    await api("/admin/api/auth/me");
+    await renderShell();
+  } catch {
+    if (!getToken()) return;
+    setToken("");
+    renderLogin();
+  }
 }
 
 function escapeAttr(s) {
@@ -111,6 +223,8 @@ function flash(text, kind) {
 let userPage = 1;
 let msgPage = 1;
 let msgFilterTo = "";
+/** 来自 /auth/me，无「用户管理」权限时为 false */
+let sessionCanManageUsers = true;
 
 async function setTab(tab) {
   document.querySelectorAll('[id^="panel-"]').forEach((p) => p.classList.add("hidden"));
@@ -118,8 +232,13 @@ async function setTab(tab) {
   if (!panel) return;
   panel.classList.remove("hidden");
 
-  if (!loadConfig().secret) {
-    panel.innerHTML = `<p class="msg err">请先在顶部填写并保存 <strong>ADMIN_API_SECRET</strong>（与后端 <code>ADMIN_API_SECRET</code> 环境变量一致）。</p>`;
+  if (!getToken()) {
+    panel.innerHTML = `<p class="msg err">请先登录。</p>`;
+    return;
+  }
+
+  if (tab === "users" && !sessionCanManageUsers) {
+    panel.innerHTML = `<p class="msg err">当前账号无「用户管理」权限。</p>`;
     return;
   }
 
@@ -219,12 +338,31 @@ async function renderOnline(panel) {
   `;
 }
 
+function fakeBotTableRows(users, maxRows) {
+  const slice = users.slice(0, maxRows);
+  return slice
+    .map(
+      (u) => `
+              <tr>
+                <td>${u.avatarUrl ? `<img class="thumb" src="${escapeAttr(mediaUrl(u.avatarUrl))}" alt="" />` : "—"}</td>
+                <td>${escapeHtml(u.nickname)}</td>
+                <td class="muted">${escapeHtml(u.phone)}</td>
+                <td>${escapeHtml(u.currentCity || "")}</td>
+                <td class="muted">${escapeHtml((u.hobbies || "").slice(0, 40))}${(u.hobbies || "").length > 40 ? "…" : ""}</td>
+              </tr>`
+    )
+    .join("");
+}
+
 async function renderFakes(panel) {
-  const data = await api("/admin/api/fake-bots");
+  const [systemData, userData] = await Promise.all([
+    api("/admin/api/fake-bots?pool=system"),
+    api("/admin/api/fake-bots?pool=user")
+  ]);
   panel.innerHTML = `
-    <h2>Fake 机器人库</h2>
-    <p class="muted">手机号以 <code>fakem</code> / <code>fakef</code> 开头，与主站盲盒/匹配逻辑一致。默认密码与种子用户相同：<code>123456</code>（仅测试环境）。</p>
-    <h3 style="margin:20px 0 12px;font-size:14px">新增机器人</h3>
+    <h2>机器人库</h2>
+    <p class="muted">手机号仍以 <code>fakem</code> / <code>fakef</code> 开头。<strong>下方表单录入的账号进入「用户机器人库」</strong>，供玩家匹配；种子/系统库机器人仅用于首页与登录页展示。默认密码：<code>123456</code>（仅测试环境）。</p>
+    <h3 style="margin:20px 0 12px;font-size:14px">新增机器人（进入用户机器人库）</h3>
     <form id="fake-form" class="form-grid">
       <label>昵称 <input name="nickname" required placeholder="如 隐藏款女099" /></label>
       <label>性别
@@ -234,7 +372,6 @@ async function renderFakes(panel) {
       <label>身高 cm <input name="height" type="number" placeholder="默认按性别" /></label>
       <label>体重 kg <input name="weight" type="number" placeholder="默认按性别" /></label>
       <label>家乡 <input name="hometown" placeholder="杭州" /></label>
-      <label>现居城市 <input name="currentCity" placeholder="上海" /></label>
       <label>收入 <input name="income" value="8k-15k" /></label>
       <label>行业 <input name="industry" value="互联网" /></label>
       <label class="form-full">爱好（个性展示） <textarea name="hobbies" placeholder="羽毛球, 徒步, 美食"></textarea></label>
@@ -246,38 +383,43 @@ async function renderFakes(panel) {
       </div>
       <div class="form-full upload-block">
         <strong>相册（可选，可多选）</strong>
-        <p class="muted" style="margin:4px 0 8px">可选多张；提交后与头像一起保存为相册列表（头像 + 这些图片）。</p>
-        <input type="file" id="fake-album" accept="image/*" multiple />
+        <p class="muted" style="margin:4px 0 8px">支持拖拽多张到下方区域批量添加；或点按钮在系统文件框内按住 Ctrl/Cmd 点选多张。提交后与头像一起写入相册列表。</p>
+        <div id="fake-album-drop" class="drop-zone" aria-label="相册拖放区">
+          <p id="fake-album-hint" class="drop-hint muted">将多张图片拖到此处释放（可分批追加）</p>
+          <button type="button" class="btn secondary" id="fake-album-browse">选择多张图片…</button>
+          <input type="file" id="fake-album" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="hidden" tabindex="-1" />
+        </div>
       </div>
       <div class="form-full">
-        <button type="submit" class="btn" id="fake-submit-btn">提交到机器人库</button>
+        <button type="submit" class="btn" id="fake-submit-btn">提交到用户机器人库</button>
       </div>
     </form>
     <div id="fake-list-wrap" style="margin-top:24px">
-      <h3 style="font-size:14px;margin-bottom:8px">已有 ${data.users.length} 个（仅 fakem/fakef）</h3>
+      <h3 style="font-size:14px;margin-bottom:8px">系统机器人库（种子 / 展示用）· 已有 ${systemData.users.length} 个</h3>
+      <div style="overflow-x:auto;margin-bottom:20px">
+        <table class="data">
+          <thead>
+            <tr><th></th><th>昵称</th><th>手机</th><th>城市</th><th>爱好</th></tr>
+          </thead>
+          <tbody>
+            ${fakeBotTableRows(systemData.users, 80)}
+          </tbody>
+        </table>
+      </div>
+      ${systemData.users.length > 80 ? `<p class="muted">系统库仅显示前 80 条。</p>` : ""}
+
+      <h3 style="font-size:14px;margin-bottom:8px">用户机器人库（后台录入 / 匹配用）· 已有 ${userData.users.length} 个</h3>
       <div style="overflow-x:auto">
         <table class="data">
           <thead>
             <tr><th></th><th>昵称</th><th>手机</th><th>城市</th><th>爱好</th></tr>
           </thead>
           <tbody>
-            ${data.users
-              .slice(0, 80)
-              .map(
-                (u) => `
-              <tr>
-                <td>${u.avatarUrl ? `<img class="thumb" src="${escapeAttr(mediaUrl(u.avatarUrl))}" alt="" />` : "—"}</td>
-                <td>${escapeHtml(u.nickname)}</td>
-                <td class="muted">${escapeHtml(u.phone)}</td>
-                <td>${escapeHtml(u.currentCity || "")}</td>
-                <td class="muted">${escapeHtml((u.hobbies || "").slice(0, 40))}${(u.hobbies || "").length > 40 ? "…" : ""}</td>
-              </tr>`
-              )
-              .join("")}
+            ${fakeBotTableRows(userData.users, 80)}
           </tbody>
         </table>
       </div>
-      ${data.users.length > 80 ? `<p class="muted">仅显示前 80 条，完整列表可通过接口拉取。</p>` : ""}
+      ${userData.users.length > 80 ? `<p class="muted">用户库仅显示前 80 条。</p>` : ""}
     </div>
   `;
 
@@ -289,6 +431,47 @@ async function renderFakes(panel) {
     });
     return res.url;
   }
+
+  function bindFakeAlbumDropZone() {
+    const albumInput = document.getElementById("fake-album");
+    const zone = document.getElementById("fake-album-drop");
+    const hint = document.getElementById("fake-album-hint");
+    const browse = document.getElementById("fake-album-browse");
+    if (!albumInput || !zone || !hint) return;
+
+    function updateHint() {
+      const n = albumInput.files?.length || 0;
+      hint.textContent = n
+        ? `已添加 ${n} 张相册图（可继续拖拽或点击按钮追加）`
+        : "将多张图片拖到此处释放（可分批追加）；或点击下方按钮多选";
+    }
+
+    function mergeIncoming(incomingList) {
+      const add = Array.from(incomingList || []).filter((f) => String(f.type || "").startsWith("image/"));
+      if (!add.length) return;
+      const prev = albumInput.files?.length ? Array.from(albumInput.files) : [];
+      const dt = new DataTransfer();
+      [...prev, ...add].forEach((f) => dt.items.add(f));
+      albumInput.files = dt.files;
+      updateHint();
+    }
+
+    zone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      zone.classList.add("drop-zone--active");
+    });
+    zone.addEventListener("dragleave", () => zone.classList.remove("drop-zone--active"));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("drop-zone--active");
+      mergeIncoming(e.dataTransfer?.files);
+    });
+    browse?.addEventListener("click", () => albumInput.click());
+    albumInput.addEventListener("change", updateHint);
+    updateHint();
+  }
+  bindFakeAlbumDropZone();
 
   document.getElementById("fake-form").onsubmit = async (ev) => {
     ev.preventDefault();
@@ -323,7 +506,6 @@ async function renderFakes(panel) {
         height: fd.get("height") ? Number(fd.get("height")) : undefined,
         weight: fd.get("weight") ? Number(fd.get("weight")) : undefined,
         hometown: fd.get("hometown") || "",
-        currentCity: fd.get("currentCity") || "",
         income: fd.get("income") || "",
         industry: fd.get("industry") || "",
         hobbies: fd.get("hobbies") || "",
@@ -333,7 +515,7 @@ async function renderFakes(panel) {
       };
       submitBtn.textContent = "正在创建…";
       await api("/admin/api/fake-bots", { method: "POST", body: JSON.stringify(body) });
-      flash("已加入 Fake 机器人库", "ok");
+      flash("已加入用户机器人库", "ok");
       renderFakes(panel);
     } catch (e) {
       flash(e.message, "err");
@@ -438,4 +620,4 @@ function fileToDataUrl(file) {
   });
 }
 
-render();
+bootstrap();

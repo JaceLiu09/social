@@ -6,8 +6,10 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import sharp from "sharp";
 import { Server } from "socket.io";
 import { prisma } from "./prisma.js";
+import { randomInt, randomFakeBotPhoneDigits } from "./fakeBotPhone.js";
 import { createAdminRouter } from "./adminApi.js";
 import { sampleTacitQuestionsForRound } from "./tacitQuestionBank.js";
 import {
@@ -32,6 +34,29 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const uploadRoot = path.join(__dirname, "../uploads");
 const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
+
+/** 聊天图片：写原图并生成缩略图（最长边 360、JPEG）；失败则 thumb 回落为原图 URL */
+async function saveChatImageWithThumb(buffer, folder, safeName) {
+  const dir = path.join(uploadRoot, folder);
+  const thumbDir = path.join(dir, "thumb");
+  await fs.mkdir(thumbDir, { recursive: true });
+  const fullPath = path.join(dir, safeName);
+  await fs.writeFile(fullPath, buffer);
+  const mainUrl = `/uploads/${folder}/${safeName}`;
+  try {
+    const thumbBuf = await sharp(buffer)
+      .rotate()
+      .resize({ width: 360, height: 360, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 80, mozjpeg: true })
+      .toBuffer();
+    const stem = path.parse(safeName).name;
+    const thumbFile = `thumb-${stem}.jpg`;
+    await fs.writeFile(path.join(thumbDir, thumbFile), thumbBuf);
+    return { url: mainUrl, thumbUrl: `/uploads/${folder}/thumb/${thumbFile}` };
+  } catch (_e) {
+    return { url: mainUrl, thumbUrl: mainUrl };
+  }
+}
 const AUDIO_MAX_BYTES = 8 * 1024 * 1024;
 const tacitBotAnswerTimers = new Map();
 const werewolfGames = new Map();
@@ -731,16 +756,11 @@ const DEFAULT_PASSWORD = "123456";
 const VIRTUAL_USER_COUNT = 12;
 const FAKE_BOT_COUNT_PER_GENDER = 100;
 
-function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
 function randomPhone(existingPhones, prefix = "19") {
   let phone = "";
   do {
     if (prefix.startsWith("fake")) {
-      const suffix = String(randomInt(0, 99999999)).padStart(8, "0");
-      phone = `${prefix}${suffix}`;
+      phone = randomFakeBotPhoneDigits(prefix);
     } else {
       const suffix = String(randomInt(0, 999999999)).padStart(9, "0");
       phone = `${prefix}${suffix}`;
@@ -817,7 +837,8 @@ function buildFakeBotUser({ index, gender, avatarUrls, existingPhones }) {
     partnerExpectation: "真诚沟通，彼此尊重，共同成长",
     profileCompleted: true,
     avatarUrl: avatar,
-    photoUrls: JSON.stringify([avatar])
+    photoUrls: JSON.stringify([avatar]),
+    fakeRobotLibrary: "SYSTEM"
   };
 }
 
@@ -849,7 +870,31 @@ function buildNamedFriendUser(nickname, index, existingPhones) {
   };
 }
 
+/** 迁移旧库：凡 fakem/fakef 默认系统库；历史后台 adm 前缀录入的归用户机器人库 */
+async function backfillFakeRobotLibraryFlags() {
+  try {
+    await prisma.user.updateMany({
+      where: {
+        fakeRobotLibrary: "NONE",
+        OR: [{ phone: { startsWith: "fakem" } }, { phone: { startsWith: "fakef" } }]
+      },
+      data: { fakeRobotLibrary: "SYSTEM" }
+    });
+    await prisma.user.updateMany({
+      where: {
+        fakeRobotLibrary: "SYSTEM",
+        OR: [{ phone: { startsWith: "fakefadm" } }, { phone: { startsWith: "fakemadm" } }]
+      },
+      data: { fakeRobotLibrary: "USER" }
+    });
+  } catch (_e) {
+    /* 列尚未迁移等场景：避免阻塞进程启动 */
+  }
+}
+
 async function ensureDefaultUsers() {
+  await backfillFakeRobotLibraryFlags();
+
   const defaults = [
     {
       phone: "13800000001",
@@ -937,9 +982,7 @@ async function ensureDefaultUsers() {
     loadAvatarUrlsByFolder("female")
   ]);
   const existingFakeBots = await prisma.user.findMany({
-    where: {
-      OR: [{ phone: { startsWith: "fakem" } }, { phone: { startsWith: "fakef" } }]
-    },
+    where: { fakeRobotLibrary: "SYSTEM" },
     select: { phone: true, gender: true }
   });
   const fakePhoneSeed = new Set([
@@ -1111,9 +1154,13 @@ app.post("/chat/upload", async (req, res) => {
     const dir = path.join(uploadRoot, folder);
     await fs.mkdir(dir, { recursive: true });
     const safeName = `${Date.now()}-${randomUUID()}.${ext}`;
+    if (mediaKind === "IMAGE") {
+      const { url, thumbUrl } = await saveChatImageWithThumb(buffer, folder, safeName);
+      return res.json({ url, thumbUrl });
+    }
     const fullPath = path.join(dir, safeName);
     await fs.writeFile(fullPath, buffer);
-    return res.json({ url: `/uploads/${folder}/${safeName}` });
+    return res.json({ url: `/uploads/${folder}/${safeName}`, thumbUrl: null });
   } catch (_error) {
     return res.status(500).json({ message: "上传失败" });
   }
@@ -1220,10 +1267,8 @@ app.patch("/auth/profile", async (req, res) => {
       if (!Array.isArray(urls)) {
         return res.status(400).json({ message: "相册必须是数组" });
       }
-      const cleaned = urls
-        .map((u) => (typeof u === "string" ? u.trim() : ""))
-        .filter(Boolean)
-        .slice(0, 10);
+      // 保留空字符串占位，便于前端 6 宫格与槽位对齐（最多 10 条）
+      const cleaned = urls.map((u) => (typeof u === "string" ? u.trim() : "")).slice(0, 10);
       data.photoUrls = JSON.stringify(cleaned);
     }
     if (Object.keys(data).length === 0) {
@@ -1288,7 +1333,55 @@ app.get("/match/online-count", (_req, res) => {
   res.json({ count });
 });
 
-app.get("/planet/hidden-profiles", async (req, res) => {
+/** 未执行 migrate / 回填失败时，NONE + fakem/fakef 仍视为系统展示机器人 */
+function systemRobotLibraryWhereExtras() {
+  return {
+    OR: [
+      { fakeRobotLibrary: "SYSTEM" },
+      {
+        AND: [
+          { fakeRobotLibrary: "NONE" },
+          { OR: [{ phone: { startsWith: "fakem" } }, { phone: { startsWith: "fakef" } }] }
+        ]
+      }
+    ]
+  };
+}
+
+/** 登录 / 落地页：系统机器人头像展示（无需登录） */
+app.get("/public/robot-library/system", async (_req, res) => {
+  try {
+    const list = await prisma.user.findMany({
+      where: systemRobotLibraryWhereExtras(),
+      select: { avatarUrl: true, nickname: true, gender: true },
+      take: 48
+    });
+    const shuffled = shuffleList(list).slice(0, 10);
+    return res.json({
+      items: shuffled.map((u) => ({
+        avatar: u.avatarUrl || "",
+        nickname: u.nickname,
+        gender: u.gender
+      }))
+    });
+  } catch (_error) {
+    return res.json({ items: [] });
+  }
+});
+
+function mapPlanetRobotProfile(item) {
+  return {
+    id: item.id,
+    nickname: item.nickname,
+    age: item.age,
+    city: item.currentCity || "",
+    hobbies: item.hobbies || "",
+    avatar: item.avatarUrl || "",
+    gender: item.gender
+  };
+}
+
+async function planetRobotLibrary(req, res, library) {
   try {
     const viewerId = getAuthUserId(req);
     if (!viewerId) return res.status(401).json({ message: "未登录或登录态失效" });
@@ -1298,11 +1391,28 @@ app.get("/planet/hidden-profiles", async (req, res) => {
     });
     if (!viewer) return res.status(401).json({ message: "未登录或登录态失效" });
     const preferredGender = viewer.gender === "MALE" ? "FEMALE" : "MALE";
+    const where =
+      library === "SYSTEM"
+        ? {
+            gender: preferredGender,
+            ...systemRobotLibraryWhereExtras()
+          }
+        : {
+            gender: preferredGender,
+            OR: [
+              { fakeRobotLibrary: "USER" },
+              {
+                AND: [
+                  { fakeRobotLibrary: "NONE" },
+                  {
+                    OR: [{ phone: { startsWith: "fakefadm" } }, { phone: { startsWith: "fakemadm" } }]
+                  }
+                ]
+              }
+            ]
+          };
     const list = await prisma.user.findMany({
-      where: {
-        phone: { startsWith: "fake" },
-        gender: preferredGender
-      },
+      where,
       select: {
         id: true,
         nickname: true,
@@ -1316,33 +1426,48 @@ app.get("/planet/hidden-profiles", async (req, res) => {
     });
     const shuffled = shuffleList(list).slice(0, 6);
     return res.json({
-      profiles: shuffled.map((item) => ({
-        id: item.id,
-        nickname: item.nickname,
-        age: item.age,
-        city: item.currentCity || "",
-        hobbies: item.hobbies || "",
-        avatar: item.avatarUrl || "",
-        gender: item.gender
-      }))
+      profiles: shuffled.map(mapPlanetRobotProfile)
     });
   } catch (_error) {
-    return res.status(500).json({ message: "加载隐藏款资料失败" });
+    return res.status(500).json({ message: "加载机器人资料失败" });
   }
-});
+}
+
+/** 系统机器人库：盲盒星球卡片轮播等展示（仅 SYSTEM） */
+app.get("/planet/robot-library/system", (req, res) => planetRobotLibrary(req, res, "SYSTEM"));
+
+/** 用户机器人库：匹配 / 小游戏对手池（仅 USER） */
+app.get("/planet/robot-library/user", (req, res) => planetRobotLibrary(req, res, "USER"));
+
+/** 兼容旧前端路径：等同于系统库展示 */
+app.get("/planet/hidden-profiles", (req, res) => planetRobotLibrary(req, res, "SYSTEM"));
 
 app.post("/match/start", async (req, res) => {
   const { userId } = req.body;
   const currentUser = await prisma.user.findUnique({ where: { id: userId } });
   if (!currentUser) return res.status(404).json({ message: "用户不存在" });
 
+  const oppGender = currentUser.gender === "MALE" ? "FEMALE" : "MALE";
   const target = await prisma.user.findFirst({
     where: {
       id: { not: currentUser.id },
-      gender: currentUser.gender === "MALE" ? "FEMALE" : "MALE"
+      gender: oppGender,
+      OR: [
+        { fakeRobotLibrary: "USER" },
+        {
+          AND: [
+            { fakeRobotLibrary: "NONE" },
+            {
+              OR: [{ phone: { startsWith: "fakefadm" } }, { phone: { startsWith: "fakemadm" } }]
+            }
+          ]
+        }
+      ]
     }
   });
-  if (!target) return res.status(404).json({ message: "暂时没有可匹配对象" });
+  if (!target) {
+    return res.status(404).json({ message: "暂时没有可用的用户机器人，请在后台「用户机器人库」中添加后再匹配" });
+  }
 
   const [maleUserId, femaleUserId] =
     currentUser.gender === "MALE" ? [currentUser.id, target.id] : [target.id, currentUser.id];
@@ -2419,11 +2544,16 @@ app.get("/chat/conversations", async (req, res) => {
             readAt: null
           }
         });
+        const previewThumbUrl =
+          last.kind === "IMAGE" && (last.thumbMediaUrl || last.mediaUrl)
+            ? normalizeChatMediaUrl(last.thumbMediaUrl || last.mediaUrl)
+            : null;
         return {
           id: peer.id,
           name: peer.nickname,
           avatar: peer.avatarUrl || "https://picsum.photos/80/80?chat",
           preview: previewText(last),
+          previewThumbUrl,
           time: last.createdAt.toISOString(),
           unread
         };
@@ -2456,6 +2586,7 @@ app.get("/chat/messages", async (req, res) => {
         kind: item.kind,
         text: item.text,
         mediaUrl: item.mediaUrl ? normalizeChatMediaUrl(item.mediaUrl) : null,
+        thumbMediaUrl: item.thumbMediaUrl ? normalizeChatMediaUrl(item.thumbMediaUrl) : null,
         audioDurationSec: item.audioDurationSec,
         createdAt: item.createdAt.toISOString()
       }))
@@ -2493,12 +2624,14 @@ app.post("/chat/messages", async (req, res) => {
     if (!authUserId) {
       return res.status(401).json({ message: "未登录或登录态失效" });
     }
-    const { toUserId, text, kind, mediaUrl, audioDurationSec } = req.body;
+    const { toUserId, text, kind, mediaUrl, thumbMediaUrl, audioDurationSec } = req.body;
     const messageKind = ["TEXT", "IMAGE", "AUDIO"].includes(String(kind || "TEXT"))
       ? String(kind || "TEXT")
       : "TEXT";
     const content = String(text || "").trim();
     const normalizedMediaUrl = mediaUrl ? normalizeChatMediaUrl(String(mediaUrl)) : null;
+    const normalizedThumbUrl =
+      thumbMediaUrl && messageKind === "IMAGE" ? normalizeChatMediaUrl(String(thumbMediaUrl)) : null;
     if (!toUserId) {
       return res.status(400).json({ message: "参数不完整" });
     }
@@ -2513,6 +2646,7 @@ app.post("/chat/messages", async (req, res) => {
         kind: messageKind,
         text: messageKind === "TEXT" ? content : "",
         mediaUrl: normalizedMediaUrl,
+        thumbMediaUrl: messageKind === "IMAGE" ? normalizedThumbUrl || normalizedMediaUrl : null,
         audioDurationSec:
           messageKind === "AUDIO" && Number.isFinite(Number(audioDurationSec))
             ? Math.max(1, Math.floor(Number(audioDurationSec)))
@@ -2526,6 +2660,7 @@ app.post("/chat/messages", async (req, res) => {
       kind: message.kind,
       text: message.text,
       mediaUrl: message.mediaUrl,
+      thumbMediaUrl: message.thumbMediaUrl,
       audioDurationSec: message.audioDurationSec,
       createdAt: message.createdAt.toISOString()
     };
@@ -2582,12 +2717,14 @@ io.on("connection", (socket) => {
   if (!userSockets.has(userId)) userSockets.set(userId, new Set());
   userSockets.get(userId).add(socket.id);
 
-  socket.on("chat:send", async ({ toUserId, text, kind, mediaUrl, audioDurationSec }) => {
+  socket.on("chat:send", async ({ toUserId, text, kind, mediaUrl, thumbMediaUrl, audioDurationSec }) => {
     const messageKind = ["TEXT", "IMAGE", "AUDIO"].includes(String(kind || "TEXT"))
       ? String(kind || "TEXT")
       : "TEXT";
     const content = String(text || "").trim();
-    const normalizedMediaUrl = mediaUrl ? String(mediaUrl) : null;
+    const normalizedMediaUrl = mediaUrl ? normalizeChatMediaUrl(String(mediaUrl)) : null;
+    const normalizedThumbUrl =
+      thumbMediaUrl && messageKind === "IMAGE" ? normalizeChatMediaUrl(String(thumbMediaUrl)) : null;
     if (!toUserId) return;
     if (messageKind === "TEXT" && !content) return;
     if ((messageKind === "IMAGE" || messageKind === "AUDIO") && !normalizedMediaUrl) return;
@@ -2599,6 +2736,7 @@ io.on("connection", (socket) => {
           kind: messageKind,
           text: messageKind === "TEXT" ? content : "",
           mediaUrl: normalizedMediaUrl,
+          thumbMediaUrl: messageKind === "IMAGE" ? normalizedThumbUrl || normalizedMediaUrl : null,
           audioDurationSec:
             messageKind === "AUDIO" && Number.isFinite(Number(audioDurationSec))
               ? Math.max(1, Math.floor(Number(audioDurationSec)))
@@ -2612,6 +2750,7 @@ io.on("connection", (socket) => {
         kind: message.kind,
         text: message.text,
         mediaUrl: message.mediaUrl,
+        thumbMediaUrl: message.thumbMediaUrl,
         audioDurationSec: message.audioDurationSec,
         createdAt: message.createdAt.toISOString()
       };
