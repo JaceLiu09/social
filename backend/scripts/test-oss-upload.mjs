@@ -25,8 +25,9 @@ import OSS from "ali-oss";
 
 function requireEnv(name) {
   const v = process.env[name];
-  if (!v || !String(v).trim()) {
-    console.error(`缺少环境变量: ${name}`);
+  if (v === undefined || v === null || !String(v).trim()) {
+    console.error(`缺少或未设置环境变量: ${name}`);
+    console.error("请在本终端先 export（见本文件顶部注释），变量值只能是密钥本身，不要带 accessKeyId 等前缀。");
     process.exit(1);
   }
   return String(v).trim();
@@ -37,8 +38,8 @@ const key = `${prefix}/smoke-${Date.now()}.txt`;
 const body = Buffer.from(`social-main OSS smoke test ${new Date().toISOString()}\n`, "utf8");
 
 async function main() {
-  requireEnv("ALIYUN_OSS_ACCESS_KEY_ID");
-  requireEnv("ALIYUN_OSS_ACCESS_KEY_SECRET");
+  const accessKeyId = requireEnv("ALIYUN_OSS_ACCESS_KEY_ID");
+  const accessKeySecret = requireEnv("ALIYUN_OSS_ACCESS_KEY_SECRET");
   const bucket = requireEnv("ALIYUN_OSS_BUCKET");
   const region = requireEnv("ALIYUN_OSS_REGION");
   const endpoint = requireEnv("ALIYUN_OSS_ENDPOINT");
@@ -59,8 +60,8 @@ async function main() {
 
   const client = new OSS({
     region,
-    accessKeyId: process.env.ALIYUN_OSS_ACCESS_KEY_ID.trim(),
-    accessKeySecret: process.env.ALIUN_OSS_ACCESS_KEY_SECRET.trim(),
+    accessKeyId,
+    accessKeySecret,
     bucket,
     endpoint,
     secure: endpoint.startsWith("https://"),
@@ -92,5 +93,6 @@ async function main() {
 main().catch((e) => {
   console.error("失败:", e.message || e);
   if (e.status) console.error("HTTP:", e.status);
+  if (process.env.DEBUG_OSS) console.error(e.stack);
   process.exit(1);
 });
