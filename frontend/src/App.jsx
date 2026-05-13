@@ -254,6 +254,17 @@ function resolveSeedAvatarUrl(raw) {
   return null;
 }
 
+/** 虚拟主机或路径样式 OSS URL：只要 pathname 中含对象前缀，一律走 API 代理 */
+function ossObjectPathFromUrlPathname(pathname) {
+  const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  const markers = ["/fake-pictures/", "/chat-history-pictures/", "/zhenren-pictures/"];
+  for (const m of markers) {
+    const i = path.indexOf(m);
+    if (i !== -1) return path.slice(i);
+  }
+  return null;
+}
+
 function resolveAssetUrl(url) {
   const raw = String(url ?? "").trim();
   if (!raw) return MALE_SYMBOL_AVATAR;
@@ -267,12 +278,9 @@ function resolveAssetUrl(url) {
     if (path.startsWith("/uploads/")) {
       return `${API}${path}${u.search || ""}`;
     }
-    if (
-      path.startsWith("/fake-pictures/") ||
-      path.startsWith("/chat-history-pictures/") ||
-      path.startsWith("/zhenren-pictures/")
-    ) {
-      return `${API}/oss-media${path}${u.search || ""}`;
+    const ossRest = ossObjectPathFromUrlPathname(path);
+    if (ossRest) {
+      return `${API}/oss-media${ossRest}${u.search || ""}`;
     }
   } catch (_e) {
     /* 非绝对 URL */
@@ -300,12 +308,9 @@ function resolveMediaUrl(url) {
     if (path.startsWith("/uploads/")) {
       return `${API}${path}${u.search || ""}`;
     }
-    if (
-      path.startsWith("/fake-pictures/") ||
-      path.startsWith("/chat-history-pictures/") ||
-      path.startsWith("/zhenren-pictures/")
-    ) {
-      return `${API}/oss-media${path}${u.search || ""}`;
+    const ossRest = ossObjectPathFromUrlPathname(path);
+    if (ossRest) {
+      return `${API}/oss-media${ossRest}${u.search || ""}`;
     }
   } catch (_e) {
     /* 非绝对 URL */
@@ -315,13 +320,8 @@ function resolveMediaUrl(url) {
       const u = new URL(raw, window.location.href);
       const path = u.pathname.startsWith("/") ? u.pathname : `/${u.pathname}`;
       if (path.startsWith("/uploads/")) return `${API}${path}${u.search || ""}`;
-      if (
-        path.startsWith("/fake-pictures/") ||
-        path.startsWith("/chat-history-pictures/") ||
-        path.startsWith("/zhenren-pictures/")
-      ) {
-        return `${API}/oss-media${path}${u.search || ""}`;
-      }
+      const ossR = ossObjectPathFromUrlPathname(path);
+      if (ossR) return `${API}/oss-media${ossR}${u.search || ""}`;
       return `${u.protocol}//${u.host}${path}${u.search || ""}`;
     } catch (_e2) {
       return "";
@@ -3355,7 +3355,10 @@ export default function App() {
 
   const publishMyPost = () => {
     const text = newPostText.trim();
-    if (!text) return;
+    if (!text) {
+      setMessage("请先输入动态内容");
+      return;
+    }
     const post = {
       id: `mine-${Date.now()}`,
       text,
@@ -3364,6 +3367,7 @@ export default function App() {
     };
     setMyPosts((prev) => [post, ...prev]);
     setNewPostText("");
+    setMessage("已发布到我的动态（暂存在本机，刷新后仍在）");
   };
 
   if (!user) {
@@ -4316,6 +4320,9 @@ export default function App() {
                 <button type="button" onClick={publishMyPost}>
                   发布动态
                 </button>
+                <p className="feed-tip" style={{ marginTop: 8 }}>
+                  动态保存在本机浏览器，不会进入广场信息流（广场为演示数据）。
+                </p>
               </div>
               <div className="my-post-list">
                 {myPosts.length === 0 && <p className="feed-tip">你还没有发布动态</p>}
