@@ -78,9 +78,14 @@ const showApiOverride = import.meta.env.DEV || !defaultApiBase();
 
 function mediaUrl(u) {
   if (!u) return "";
-  if (u.startsWith("http")) return u;
+  const s = String(u).trim();
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("//")) {
+    const proto = typeof window !== "undefined" && window.location?.protocol ? window.location.protocol : "https:";
+    return `${proto}${s}`;
+  }
   const base = apiBase();
-  return base ? `${base}${u}` : u;
+  return base ? `${base}${s}` : s;
 }
 
 const app = document.getElementById("app");
