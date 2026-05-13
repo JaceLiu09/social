@@ -11,6 +11,14 @@
  *
  * 可选：
  *   ALIYUN_OSS_TEST_PREFIX=fake-pictures   （默认 fake-pictures）
+ *
+ * 接入点说明：
+ *   ali-oss 默认用虚拟主机样式，会变成 bucket.接入点域名 → DNS 不存在。
+ *   使用 oss-accesspoint 域名时会自动开启 path 样式（sldEnable），请求形如：
+ *   https://接入点/Bucket名/对象路径
+ *
+ * 可选：
+ *   ALIYUN_OSS_SLD=0   强制关闭 path 样式（极少用）
  */
 
 import OSS from "ali-oss";
@@ -40,16 +48,26 @@ async function main() {
     process.exit(1);
   }
 
+  const endpointLc = endpoint.toLowerCase();
+  const envSld = process.env.ALIYUN_OSS_SLD;
+  const sldEnable =
+    envSld === "0" || envSld === "false"
+      ? false
+      : envSld === "1" || envSld === "true"
+        ? true
+        : endpointLc.includes("oss-accesspoint.aliyuncs.com");
+
   const client = new OSS({
     region,
     accessKeyId: process.env.ALIYUN_OSS_ACCESS_KEY_ID.trim(),
-    accessKeySecret: process.env.ALIYUN_OSS_ACCESS_KEY_SECRET.trim(),
+    accessKeySecret: process.env.ALIUN_OSS_ACCESS_KEY_SECRET.trim(),
     bucket,
     endpoint,
-    secure: endpoint.startsWith("https://")
+    secure: endpoint.startsWith("https://"),
+    sldEnable
   });
 
-  console.log("Uploading…", { bucket, key, endpoint });
+  console.log("Uploading…", { bucket, key, endpoint, sldEnable });
   const putRes = await client.put(key, body, {
     headers: { "Content-Type": "text/plain; charset=utf-8" }
   });
