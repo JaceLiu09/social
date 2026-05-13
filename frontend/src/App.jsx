@@ -607,6 +607,8 @@ export default function App() {
   const [squareDraftFiles, setSquareDraftFiles] = useState([]);
   const [squareMomentPreviewUrls, setSquareMomentPreviewUrls] = useState([]);
   const [squarePublishLoading, setSquarePublishLoading] = useState(false);
+  /** 发动态发表中：{ kind:'upload', done, total } | { kind:'post' } */
+  const [squarePublishUi, setSquarePublishUi] = useState(null);
   const momentReplaceInputRef = useRef(null);
   const momentReplaceIndexRef = useRef(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -3397,6 +3399,8 @@ export default function App() {
       window.clearTimeout(momentPublishHomeTimerRef.current);
       momentPublishHomeTimerRef.current = null;
     }
+    setSquarePublishLoading(false);
+    setSquarePublishUi(null);
     setNewPostText("");
     setSquareDraftFiles([]);
     setMePage("home");
@@ -3407,6 +3411,8 @@ export default function App() {
       window.clearTimeout(momentPublishHomeTimerRef.current);
       momentPublishHomeTimerRef.current = null;
     }
+    setSquarePublishLoading(false);
+    setSquarePublishUi(null);
     setNewPostText("");
     setSquareDraftFiles([]);
     setMePage("moment-compose");
@@ -3423,12 +3429,22 @@ export default function App() {
       return;
     }
     setSquarePublishLoading(true);
+    const files = squareDraftFiles;
+    if (files.length > 0) {
+      setSquarePublishUi({ kind: "upload", done: 0, total: files.length });
+    } else {
+      setSquarePublishUi({ kind: "post" });
+    }
     try {
-      const files = squareDraftFiles;
       let imageUrls = [];
       if (files.length > 0) {
         imageUrls = new Array(files.length);
         let cursor = 0;
+        let uploadDone = 0;
+        const bumpUpload = () => {
+          uploadDone += 1;
+          setSquarePublishUi({ kind: "upload", done: uploadDone, total: files.length });
+        };
         const worker = async () => {
           while (true) {
             const i = cursor++;
@@ -3438,11 +3454,13 @@ export default function App() {
               timeoutMs: UPLOAD_TIMEOUT_MOMENT_IMAGE_MS
             });
             imageUrls[i] = url;
+            bumpUpload();
           }
         };
         const pool = Math.min(3, files.length);
         await Promise.all(Array.from({ length: pool }, () => worker()));
       }
+      setSquarePublishUi({ kind: "post" });
       const res = await fetch(`${API}/square/posts`, {
         method: "POST",
         headers: {
@@ -3483,6 +3501,7 @@ export default function App() {
       setMessage(e.message || "发布失败");
     } finally {
       setSquarePublishLoading(false);
+      setSquarePublishUi(null);
     }
   };
 
@@ -3787,11 +3806,17 @@ export default function App() {
                 <h1>发动态</h1>
                 <button
                   type="button"
-                  className="header-btn header-btn--publish"
+                  className="header-btn header-btn--publish header-btn--publish-progress"
                   disabled={squarePublishLoading}
                   onClick={publishMyPost}
                 >
-                  {squarePublishLoading ? "…" : "发表"}
+                  {squarePublishLoading
+                    ? squarePublishUi?.kind === "upload"
+                      ? `${squarePublishUi.done}/${squarePublishUi.total}`
+                      : squarePublishUi?.kind === "post"
+                        ? "发布中…"
+                        : "…"
+                    : "发表"}
                 </button>
               </>
             ) : (

@@ -1125,6 +1125,12 @@ body {
   opacity: 0.55;
 }
 
+.header-btn--publish-progress {
+  min-width: 4.25em;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
 .square-post-avatar {
   width: 40px;
   height: 40px;
