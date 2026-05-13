@@ -39,6 +39,21 @@ const femaleAvatarPool = (avatarManifest.female || []).map((src, idx) => ({
 }));
 const localAvatarPool = [...maleAvatarPool, ...femaleAvatarPool];
 
+/** 聊天栏表情面板：点击插入到输入框 */
+const CHAT_COMPOSER_EMOJIS = [
+  "😀", "😃", "😄", "😁", "😅", "😂", "🤣", "😊",
+  "😇", "🙂", "😉", "😍", "🥰", "😘", "😗", "😋",
+  "😛", "😜", "🤪", "😝", "🤑", "🤗", "🤭", "🤫",
+  "🤔", "🤐", "🤨", "😐", "😑", "😶", "😏", "😒",
+  "🙄", "😬", "🤥", "😌", "😔", "😪", "🤤", "😴",
+  "😷", "🤒", "🤕", "🤢", "🤮", "🤧", "🥵", "🥶",
+  "😎", "🤓", "🧐", "😕", "🙁", "☹️", "😮", "😯",
+  "😲", "😳", "🥺", "😦", "😧", "😨", "😰", "😥",
+  "😢", "😭", "😱", "😖", "😣", "😞", "😓", "😩",
+  "👍", "👎", "👏", "🙌", "🤝", "🙏", "💪", "❤️",
+  "💔", "💖", "💯", "🔥", "✨", "🎉", "🌹", "🍀"
+];
+
 function sampleItems(list, count) {
   return [...list]
     .sort(() => Math.random() - 0.5)
@@ -290,6 +305,18 @@ function resolveAssetUrl(url) {
   return raw;
 }
 
+/** 聊天上传主图 → 同源缩略图路径（无则返回 null，用原图做小格展示） */
+function thumbUrlForChatHistoryImageUrl(rawUrl) {
+  const raw = String(rawUrl ?? "").trim();
+  if (!raw) return null;
+  if (raw.includes("/chat-history-pictures/thumb/")) return raw;
+  const [pathOnly, query = ""] = raw.split("?");
+  const q = query ? `?${query}` : "";
+  const m = pathOnly.match(/^(.*\/chat-history-pictures\/)([^/]+)\.(jpe?g|png|webp|gif)$/i);
+  if (!m) return null;
+  return `${m[1]}thumb/thumb-${m[2]}.jpg${q}`;
+}
+
 function resolveMediaUrl(url) {
   const raw = String(url ?? "").trim();
   if (!raw) return "";
@@ -512,7 +539,12 @@ export default function App() {
   const [contacts, setContacts] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
+  const [chatComposerPanel, setChatComposerPanel] = useState("none");
+  const chatAttachPhotoInputRef = useRef(null);
   const [chatNotice, setChatNotice] = useState("");
+  const [squareImageLightbox, setSquareImageLightbox] = useState(null);
+  const squareLightboxTouchStartRef = useRef(null);
+  const squareLightboxSuppressClickRef = useRef(false);
 
   /** 主应用内不再使用底部常驻 msg，统一走 Toast（登录 / 完善资料页仍用内联 auth-msg） */
   useEffect(() => {
@@ -527,6 +559,31 @@ export default function App() {
     showToast(chatNotice);
     setChatNotice("");
   }, [chatNotice, showToast]);
+
+  useEffect(() => {
+    if (!squareImageLightbox) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setSquareImageLightbox(null);
+      if (e.key === "ArrowLeft") {
+        setSquareImageLightbox((lb) =>
+          lb && lb.urls.length > 1
+            ? { ...lb, index: (lb.index + lb.urls.length - 1) % lb.urls.length }
+            : lb
+        );
+      }
+      if (e.key === "ArrowRight") {
+        setSquareImageLightbox((lb) =>
+          lb && lb.urls.length > 1 ? { ...lb, index: (lb.index + 1) % lb.urls.length } : lb
+        );
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [squareImageLightbox]);
+
+  useEffect(() => {
+    setChatComposerPanel("none");
+  }, [activeConversation?.id]);
 
   const [showAddFriendModal, setShowAddFriendModal] = useState(false);
   const [addFriendKeyword, setAddFriendKeyword] = useState("");
@@ -2225,6 +2282,7 @@ export default function App() {
     if (!text) return;
     try {
       await sendChatPayload({ kind: "TEXT", text });
+      setChatComposerPanel("none");
     } catch (error) {
       setMessage(error.message || "发送失败，请稍后重试");
     }
@@ -2278,6 +2336,7 @@ export default function App() {
       setIsRecording(false);
       return;
     }
+    setChatComposerPanel("none");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
@@ -3505,6 +3564,40 @@ export default function App() {
     }
   };
 
+  const renderSquarePhotoGrid = (imageUrls, keyPrefix) => {
+    if (!Array.isArray(imageUrls) || imageUrls.length === 0) return null;
+    const list = imageUrls.map((u) => String(u ?? "").trim()).filter(Boolean);
+    if (list.length === 0) return null;
+    return (
+      <div className="square-post-photo-grid">
+        {list.map((url, i) => {
+          const thumb = thumbUrlForChatHistoryImageUrl(url) || url;
+          return (
+            <div key={`${keyPrefix}-sqph-${i}`} className="square-post-photo-cell">
+              <button
+                type="button"
+                className="square-post-photo-btn"
+                onClick={() => setSquareImageLightbox({ urls: list, index: i })}
+              >
+                <img
+                  src={resolveAssetUrl(thumb)}
+                  alt=""
+                  loading="lazy"
+                  onError={(e) => {
+                    if (thumb !== url) {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = resolveAssetUrl(url);
+                    }
+                  }}
+                />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   if (!user) {
     return (
       <main className="login-page">
@@ -3787,6 +3880,97 @@ export default function App() {
           {toastMessage}
         </div>
       )}
+      {squareImageLightbox && (
+        <div
+          className="square-image-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label="查看大图"
+          onClick={() => {
+            if (squareLightboxSuppressClickRef.current) return;
+            setSquareImageLightbox(null);
+          }}
+          onTouchStart={(e) => {
+            if (e.touches.length !== 1) return;
+            squareLightboxTouchStartRef.current = {
+              x: e.touches[0].clientX,
+              y: e.touches[0].clientY
+            };
+          }}
+          onTouchEnd={(e) => {
+            const curLb = squareImageLightbox;
+            if (!curLb || curLb.urls.length < 2) return;
+            const start = squareLightboxTouchStartRef.current;
+            squareLightboxTouchStartRef.current = null;
+            if (!start || e.changedTouches.length !== 1) return;
+            const t = e.changedTouches[0];
+            const dx = t.clientX - start.x;
+            const dy = t.clientY - start.y;
+            if (Math.abs(dx) < 52) return;
+            if (Math.abs(dx) < Math.abs(dy) * 1.2) return;
+            squareLightboxSuppressClickRef.current = true;
+            window.setTimeout(() => {
+              squareLightboxSuppressClickRef.current = false;
+            }, 380);
+            setSquareImageLightbox((lb) => {
+              if (!lb || lb.urls.length < 2) return lb;
+              if (dx < 0) {
+                return { ...lb, index: (lb.index + 1) % lb.urls.length };
+              }
+              return { ...lb, index: (lb.index + lb.urls.length - 1) % lb.urls.length };
+            });
+          }}
+        >
+          <button
+            type="button"
+            className="square-image-lightbox-close"
+            aria-label="关闭"
+            onClick={() => setSquareImageLightbox(null)}
+          >
+            ×
+          </button>
+          {squareImageLightbox.urls.length > 1 && (
+            <>
+              <button
+                type="button"
+                className="square-image-lightbox-nav square-image-lightbox-nav--prev"
+                aria-label="上一张"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSquareImageLightbox((lb) =>
+                    lb && lb.urls.length > 1
+                      ? { ...lb, index: (lb.index + lb.urls.length - 1) % lb.urls.length }
+                      : lb
+                  );
+                }}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="square-image-lightbox-nav square-image-lightbox-nav--next"
+                aria-label="下一张"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSquareImageLightbox((lb) =>
+                    lb && lb.urls.length > 1 ? { ...lb, index: (lb.index + 1) % lb.urls.length } : lb
+                  );
+                }}
+              >
+                ›
+              </button>
+            </>
+          )}
+          <div className="square-image-lightbox-inner" onClick={(e) => e.stopPropagation()}>
+            <img src={resolveAssetUrl(squareImageLightbox.urls[squareImageLightbox.index])} alt="" />
+            {squareImageLightbox.urls.length > 1 && (
+              <p className="square-image-lightbox-counter">
+                {squareImageLightbox.index + 1} / {squareImageLightbox.urls.length}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
       <header className={`main-header ${tab === "me" ? "me-header" : ""} ${tab === "planet-match" ? "main-header--cosmic" : ""}`}>
         {tab === "planet-match" ? (
           <>
@@ -3985,13 +4169,7 @@ export default function App() {
                 </div>
               </div>
               {post.text ? <p>{post.text}</p> : null}
-              {Array.isArray(post.imageUrls) && post.imageUrls.length > 0 ? (
-                <div className="post-photos">
-                  {post.imageUrls.map((url, i) => (
-                    <img key={`${post.id}-sq-${i}`} src={resolveAssetUrl(url)} alt="" loading="lazy" />
-                  ))}
-                </div>
-              ) : null}
+              {renderSquarePhotoGrid(post.imageUrls, `feed-${post.id}`)}
               <small>点赞 {post.likes}</small>
             </div>
           ))}
@@ -4086,30 +4264,156 @@ export default function App() {
                     })
                   )}
                 </div>
-                <div className="chat-detail-input-wrap">
-                  <label className="chat-media-btn" title="发送图片">
-                    🖼
-                    <input type="file" accept="image/*" onChange={onPickImage} hidden />
-                  </label>
-                  <button
-                    type="button"
-                    className={`chat-media-btn ${isRecording ? "recording-btn" : ""}`}
-                    onClick={toggleRecord}
-                    title={isRecording ? "结束录音并发送" : "录音"}
-                  >
-                    {isRecording ? "■" : "🎤"}
-                  </button>
+                <div className="chat-detail-footer">
                   <input
-                    placeholder="输入消息..."
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") sendChatMessage();
-                    }}
+                    ref={chatAttachPhotoInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden-file-input"
+                    aria-hidden
+                    onChange={onPickImage}
                   />
-                  <button type="button" onClick={sendChatMessage}>
-                    发送
-                  </button>
+                  <div className="chat-composer-bar">
+                    <button
+                      type="button"
+                      className={`chat-composer-iconbtn chat-composer-voice ${isRecording ? "is-recording" : ""}`}
+                      onClick={toggleRecord}
+                      title={isRecording ? "结束录音并发送" : "语音消息"}
+                      aria-label={isRecording ? "结束录音并发送" : "语音消息"}
+                    >
+                      {isRecording ? (
+                        <span className="chat-rec-stop" aria-hidden />
+                      ) : (
+                        <svg className="chat-voice-svg" viewBox="0 0 24 24" width="22" height="22" aria-hidden>
+                          <path
+                            fill="currentColor"
+                            d="M3 10v4h4l5 5V5L7 10H3zm13.5 3a4.5 4.5 0 000-4l-1.41 1.41a2.5 2.5 0 010 3.18L16.5 13zm3-3a8 8 0 010 4l-1.41-1.41a6 6 0 000-2.82L19.5 10zm-3-3a12 12 0 010 10l-1.41-1.41a10 10 0 000-7.18L16.5 7z"
+                          />
+                        </svg>
+                      )}
+                    </button>
+                    <div className="chat-composer-inputbox">
+                      <input
+                        placeholder="文明聊天，友善交友～"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onFocus={() => setChatComposerPanel("none")}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") sendChatMessage();
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className={`chat-composer-emoji-toggle ${chatComposerPanel === "emoji" ? "active" : ""}`}
+                        onClick={() => setChatComposerPanel((p) => (p === "emoji" ? "none" : "emoji"))}
+                        aria-label="表情"
+                        title="表情"
+                      >
+                        <span className="chat-composer-emoji-face" aria-hidden>
+                          ☺
+                        </span>
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className={`chat-composer-iconbtn chat-composer-plus ${chatComposerPanel === "plus" ? "active" : ""}`}
+                      onClick={() => setChatComposerPanel((p) => (p === "plus" ? "none" : "plus"))}
+                      aria-label="更多"
+                      title="照片、通话、礼物、游戏"
+                    >
+                      +
+                    </button>
+                    <button type="button" className="chat-composer-sendbtn" onClick={sendChatMessage}>
+                      发送
+                    </button>
+                  </div>
+                  {chatComposerPanel === "emoji" && (
+                    <div className="chat-composer-sheet chat-emoji-sheet" role="region" aria-label="表情">
+                      <div className="chat-emoji-grid">
+                        {CHAT_COMPOSER_EMOJIS.map((emo) => (
+                          <button
+                            key={emo}
+                            type="button"
+                            className="chat-emoji-cell"
+                            onClick={() => setChatInput((prev) => prev + emo)}
+                          >
+                            {emo}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {chatComposerPanel === "plus" && (
+                    <div className="chat-composer-sheet chat-plus-sheet" role="menu" aria-label="更多功能">
+                      <div className="chat-plus-grid">
+                        <button
+                          type="button"
+                          className="chat-plus-item"
+                          onClick={() => {
+                            setChatComposerPanel("none");
+                            chatAttachPhotoInputRef.current?.click();
+                          }}
+                        >
+                          <span className="chat-plus-icon" aria-hidden>
+                            🖼
+                          </span>
+                          <span>照片</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="chat-plus-item"
+                          onClick={() => {
+                            setChatComposerPanel("none");
+                            showToast("语音通话功能开发中");
+                          }}
+                        >
+                          <span className="chat-plus-icon" aria-hidden>
+                            📞
+                          </span>
+                          <span>语音通话</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="chat-plus-item"
+                          onClick={() => {
+                            setChatComposerPanel("none");
+                            showToast("视频通话功能开发中");
+                          }}
+                        >
+                          <span className="chat-plus-icon" aria-hidden>
+                            📹
+                          </span>
+                          <span>视频通话</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="chat-plus-item"
+                          onClick={() => {
+                            setChatComposerPanel("none");
+                            showToast("送礼物功能开发中");
+                          }}
+                        >
+                          <span className="chat-plus-icon" aria-hidden>
+                            🎁
+                          </span>
+                          <span>送礼物</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="chat-plus-item"
+                          onClick={() => {
+                            setChatComposerPanel("none");
+                            showToast("请返回「盲盒星球」进入狼人杀、默契挑战等玩法");
+                          }}
+                        >
+                          <span className="chat-plus-icon" aria-hidden>
+                            🎮
+                          </span>
+                          <span>邀请游戏</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </>
@@ -4568,13 +4872,7 @@ export default function App() {
                 {myPosts.map((post) => (
                   <div className="post dark-post" key={post.id}>
                     {post.text ? <p>{post.text}</p> : null}
-                    {Array.isArray(post.imageUrls) && post.imageUrls.length > 0 ? (
-                      <div className="post-photos">
-                        {post.imageUrls.map((url, i) => (
-                          <img key={`${post.id}-mine-${i}`} src={resolveAssetUrl(url)} alt="" loading="lazy" />
-                        ))}
-                      </div>
-                    ) : null}
+                    {renderSquarePhotoGrid(post.imageUrls, `mine-${post.id}`)}
                     <small>
                       {post.createdAt} · 点赞 {post.likes}
                     </small>
