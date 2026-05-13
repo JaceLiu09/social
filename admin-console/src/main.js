@@ -102,6 +102,11 @@ function mediaUrl(u) {
       const parsed = new URL(s);
       const path = parsed.pathname.startsWith("/") ? parsed.pathname : `/${parsed.pathname}`;
       if (mediaUrlOssObjectPath(path)) return toProxy(path, parsed.search);
+      // 库里常见 localhost / 127.0.0.1 / 旧部署 IP 的完整 URL；一律接到当前 API，否则 img 会打到用户本机或错误主机
+      if (path.startsWith("/uploads/") || path.startsWith("/oss-media/")) {
+        const tail = `${path}${parsed.search || ""}`;
+        return base ? `${base}${tail}` : tail;
+      }
     } catch (_e) {}
     return s;
   }
@@ -111,6 +116,10 @@ function mediaUrl(u) {
       const parsed = new URL(`https:${s}`);
       const path = parsed.pathname.startsWith("/") ? parsed.pathname : `/${parsed.pathname}`;
       if (mediaUrlOssObjectPath(path)) return toProxy(path, parsed.search);
+      if (path.startsWith("/uploads/") || path.startsWith("/oss-media/")) {
+        const tail = `${path}${parsed.search || ""}`;
+        return base ? `${base}${tail}` : tail;
+      }
     } catch (_e) {}
     const proto = typeof window !== "undefined" && window.location?.protocol ? window.location.protocol : "https:";
     return `${proto}${s}`;
