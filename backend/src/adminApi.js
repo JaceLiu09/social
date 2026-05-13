@@ -415,7 +415,7 @@ export function createAdminRouter(deps) {
           return res.json({ url });
         } catch (e) {
           console.error("[admin/upload OSS]", e);
-          return res.status(500).json({ message: e.message || "OSS 上传失败" });
+          return res.status(500).json({ message: oss.humanizeOssError(e) });
         }
       }
 

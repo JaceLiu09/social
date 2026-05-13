@@ -495,6 +495,7 @@ export default function App() {
       if (momentPublishHomeTimerRef.current) window.clearTimeout(momentPublishHomeTimerRef.current);
     };
   }, []);
+
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
   const [registerForm, setRegisterForm] = useState(registerBasicInitial);
   const [profileSetupForm, setProfileSetupForm] = useState(profileSetupInitial);
@@ -512,6 +513,21 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [chatNotice, setChatNotice] = useState("");
+
+  /** 主应用内不再使用底部常驻 msg，统一走 Toast（登录 / 完善资料页仍用内联 auth-msg） */
+  useEffect(() => {
+    if (!message) return;
+    if (!user || needsProfileSetup) return;
+    showToast(message);
+    setMessage("");
+  }, [message, user, needsProfileSetup, showToast]);
+
+  useEffect(() => {
+    if (!chatNotice) return;
+    showToast(chatNotice);
+    setChatNotice("");
+  }, [chatNotice, showToast]);
+
   const [showAddFriendModal, setShowAddFriendModal] = useState(false);
   const [addFriendKeyword, setAddFriendKeyword] = useState("");
   const [addFriendResults, setAddFriendResults] = useState([]);
@@ -939,12 +955,6 @@ export default function App() {
   useEffect(() => {
     hiddenConversationIdsRef.current = hiddenConversationIds;
   }, [hiddenConversationIds]);
-
-  useEffect(() => {
-    if (!chatNotice) return undefined;
-    const timer = setTimeout(() => setChatNotice(""), 2500);
-    return () => clearTimeout(timer);
-  }, [chatNotice]);
 
   const refreshChatPanels = async (currentUserId) => {
     try {
@@ -3753,7 +3763,6 @@ export default function App() {
     <div
       className={`main-app ${tab === "chat" && activeConversation ? "chat-detail-mode" : ""} ${tab === "planet-match" ? "planet-match-route" : ""}`}
     >
-      {chatNotice && <div className="chat-notice-banner">{chatNotice}</div>}
       {toastMessage && (
         <div className="app-toast" role="alert">
           {toastMessage}
@@ -4552,9 +4561,6 @@ export default function App() {
         </section>
       )}
 
-      {message && tab !== "chat" && !(tab === "planet-match" && planetMatchLoading) && (
-        <p className="msg">{message}</p>
-      )}
       {showAddFriendModal && (
         <div className="profile-setup-overlay" onClick={() => setShowAddFriendModal(false)}>
           <div className="profile-setup-card add-friend-card" onClick={(e) => e.stopPropagation()}>

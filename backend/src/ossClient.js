@@ -12,6 +12,29 @@ export function ossConfigured() {
   );
 }
 
+/** 将 OSS / ali-oss 常见英文错误转成可读中文，便于前端 Toast 展示 */
+export function humanizeOssError(err) {
+  const code = String(err?.code || err?.name || "");
+  const raw = String(err?.message || (typeof err === "string" ? err : "") || "").trim();
+  const blob = `${code} ${raw}`.trim();
+  if (/UserDisable/i.test(blob)) {
+    return "阿里云 OSS 提示账号已禁用（UserDisable）：请在 RAM 控制台启用该子账号，或更换一对有效的 AccessKey。";
+  }
+  if (/InvalidAccessKeyId/i.test(blob)) {
+    return "OSS AccessKeyId 无效或未开通，请检查 ALIYUN_OSS_ACCESS_KEY_ID。";
+  }
+  if (/SignatureDoesNotMatch/i.test(blob)) {
+    return "OSS 签名不匹配，请核对 ALIYUN_OSS_ACCESS_KEY_SECRET 与 Region/Bucket 是否一致。";
+  }
+  if (/NoSuchBucket/i.test(blob)) {
+    return "OSS 中不存在该 Bucket，请检查 ALIYUN_OSS_BUCKET 与 Region。";
+  }
+  if (/AccessDenied/i.test(blob)) {
+    return "OSS 拒绝访问（权限不足或策略限制），请检查 RAM 策略与 Bucket 权限。";
+  }
+  return raw || "OSS 上传失败";
+}
+
 /** 是否走服务端同源代理 /oss-media/{key}（桶可保持私有，仅用 AK 读） */
 function useOssProxyUrls() {
   const base = process.env.ALIYUN_OSS_PUBLIC_BASE_URL?.trim();

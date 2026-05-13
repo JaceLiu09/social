@@ -1267,7 +1267,7 @@ app.post("/chat/upload", async (req, res) => {
         return res.json({ url, thumbUrl });
       } catch (e) {
         console.error("[chat/upload OSS]", e);
-        return res.status(500).json({ message: e.message || "OSS 上传失败" });
+        return res.status(500).json({ message: oss.humanizeOssError(e) });
       }
     }
 
