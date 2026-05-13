@@ -587,7 +587,10 @@ export default function App() {
   const [myPosts, setMyPosts] = useState([]);
   const [newPostText, setNewPostText] = useState("");
   const [squareDraftFiles, setSquareDraftFiles] = useState([]);
+  const [squareMomentPreviewUrls, setSquareMomentPreviewUrls] = useState([]);
   const [squarePublishLoading, setSquarePublishLoading] = useState(false);
+  const momentReplaceInputRef = useRef(null);
+  const momentReplaceIndexRef = useRef(null);
   const [isRecording, setIsRecording] = useState(false);
   const [pinnedConversationIds, setPinnedConversationIds] = useState([]);
   const [hiddenConversationIds, setHiddenConversationIds] = useState([]);
@@ -1376,6 +1379,14 @@ export default function App() {
       cancelled = true;
     };
   }, [user?.id, authToken, authHeaders]);
+
+  useEffect(() => {
+    const urls = squareDraftFiles.map((f) => URL.createObjectURL(f));
+    setSquareMomentPreviewUrls(urls);
+    return () => {
+      urls.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, [squareDraftFiles]);
 
   useEffect(() => {
     if (mePage !== "profile-edit") return;
@@ -3366,6 +3377,18 @@ export default function App() {
     setWerewolfMode(data.room?.game ? "playing" : "room");
   };
 
+  const closeMomentCompose = () => {
+    setNewPostText("");
+    setSquareDraftFiles([]);
+    setMePage("home");
+  };
+
+  const openMomentCompose = () => {
+    setNewPostText("");
+    setSquareDraftFiles([]);
+    setMePage("moment-compose");
+  };
+
   const publishMyPost = async () => {
     const text = newPostText.trim();
     if (!text && squareDraftFiles.length === 0) {
@@ -3399,6 +3422,7 @@ export default function App() {
       if (!res.ok) throw new Error(data.message || "发布失败");
       setNewPostText("");
       setSquareDraftFiles([]);
+      setMePage("home");
       setMessage("发布成功，已在广场展示");
       const listRes = await fetch(`${API}/square/posts/mine`, { headers: authHeaders });
       const listData = await listRes.json();
@@ -3715,48 +3739,67 @@ export default function App() {
           </>
         ) : tab === "me" ? (
           <>
-            {mePage === "settings" || mePage === "profile-edit" ? (
-              <button
-                className="header-btn"
-                onClick={() => {
-                  if (mePage === "profile-edit") {
-                    setMePage("home");
-                    return;
-                  }
-                  if (mePage === "settings" && meDetailPage) {
-                    setMeDetailPage("");
-                    return;
-                  }
-                  setMePage("home");
-                }}
-              >
-                返回
-              </button>
-            ) : getUserPrimaryRawImageUrl(user) && !meHeaderAvatarFailed ? (
-              <img
-                className="header-avatar-img"
-                src={resolveAssetUrl(getUserPrimaryRawImageUrl(user))}
-                alt=""
-                onError={() => setMeHeaderAvatarFailed(true)}
-              />
+            {mePage === "moment-compose" ? (
+              <>
+                <button type="button" className="header-btn" onClick={closeMomentCompose}>
+                  取消
+                </button>
+                <h1>发动态</h1>
+                <button
+                  type="button"
+                  className="header-btn header-btn--publish"
+                  disabled={squarePublishLoading}
+                  onClick={publishMyPost}
+                >
+                  {squarePublishLoading ? "…" : "发表"}
+                </button>
+              </>
             ) : (
-              <div className="avatar-dot">{user.nickname.slice(0, 1).toUpperCase()}</div>
-            )}
-            <h1>
-              {mePage === "settings"
-                ? meDetailPage === "account-security"
-                  ? "账号与安全"
-                  : "设置"
-                : mePage === "profile-edit"
-                  ? "编辑资料"
-                : "自己"}
-            </h1>
-            {mePage === "settings" || mePage === "profile-edit" ? (
-              <div className="header-placeholder" />
-            ) : (
-              <button className="header-btn icon-btn" onClick={() => setMePage("settings")} aria-label="设置">
-                ⚙
-              </button>
+              <>
+                {mePage === "settings" || mePage === "profile-edit" ? (
+                  <button
+                    className="header-btn"
+                    onClick={() => {
+                      if (mePage === "profile-edit") {
+                        setMePage("home");
+                        return;
+                      }
+                      if (mePage === "settings" && meDetailPage) {
+                        setMeDetailPage("");
+                        return;
+                      }
+                      setMePage("home");
+                    }}
+                  >
+                    返回
+                  </button>
+                ) : getUserPrimaryRawImageUrl(user) && !meHeaderAvatarFailed ? (
+                  <img
+                    className="header-avatar-img"
+                    src={resolveAssetUrl(getUserPrimaryRawImageUrl(user))}
+                    alt=""
+                    onError={() => setMeHeaderAvatarFailed(true)}
+                  />
+                ) : (
+                  <div className="avatar-dot">{user.nickname.slice(0, 1).toUpperCase()}</div>
+                )}
+                <h1>
+                  {mePage === "settings"
+                    ? meDetailPage === "account-security"
+                      ? "账号与安全"
+                      : "设置"
+                    : mePage === "profile-edit"
+                      ? "编辑资料"
+                      : "自己"}
+                </h1>
+                {mePage === "settings" || mePage === "profile-edit" ? (
+                  <div className="header-placeholder" />
+                ) : (
+                  <button className="header-btn icon-btn" onClick={() => setMePage("settings")} aria-label="设置">
+                    ⚙
+                  </button>
+                )}
+              </>
             )}
           </>
         ) : (
@@ -4155,8 +4198,85 @@ export default function App() {
       )}
 
       {tab === "me" && (
-        <section className="main-content">
-          {mePage === "settings" ? (
+        <section className={`main-content${mePage === "moment-compose" ? " moment-compose-section" : ""}`}>
+          {mePage === "moment-compose" ? (
+            <div className="moment-compose-inner">
+              <textarea
+                className="moment-compose-text"
+                rows={8}
+                placeholder="这一刻的想法…"
+                value={newPostText}
+                onChange={(e) => setNewPostText(e.target.value)}
+              />
+              <input
+                ref={momentReplaceInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden-file-input"
+                aria-hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  const idx = momentReplaceIndexRef.current;
+                  momentReplaceIndexRef.current = null;
+                  e.target.value = "";
+                  if (!file || idx == null || idx < 0) return;
+                  setSquareDraftFiles((prev) => {
+                    if (idx >= prev.length) return prev;
+                    const next = [...prev];
+                    next[idx] = file;
+                    return next;
+                  });
+                }}
+              />
+              <div className="moment-photo-grid">
+                {squareDraftFiles.map((_, idx) => (
+                  <div key={`moment-slot-${idx}`} className="moment-photo-cell">
+                    <button
+                      type="button"
+                      className="moment-photo-remove"
+                      aria-label="移除"
+                      onClick={() =>
+                        setSquareDraftFiles((prev) => prev.filter((__, i) => i !== idx))
+                      }
+                    >
+                      ×
+                    </button>
+                    {squareMomentPreviewUrls[idx] ? (
+                      <button
+                        type="button"
+                        className="moment-photo-thumb"
+                        onClick={() => {
+                          momentReplaceIndexRef.current = idx;
+                          momentReplaceInputRef.current?.click();
+                        }}
+                      >
+                        <img src={squareMomentPreviewUrls[idx]} alt="" />
+                        <span className="moment-photo-replace-hint">换一张</span>
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+                {squareDraftFiles.length < 9 ? (
+                  <label className="moment-photo-add">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden-file-input"
+                      onChange={(e) => {
+                        const incoming = Array.from(e.target.files || []);
+                        e.target.value = "";
+                        momentReplaceIndexRef.current = null;
+                        setSquareDraftFiles((prev) => [...prev, ...incoming].slice(0, 9));
+                      }}
+                    />
+                    <span className="moment-photo-add-plus">+</span>
+                  </label>
+                ) : null}
+              </div>
+              <p className="moment-compose-footnote">最多 9 张图；点击图片可替换；发布后所有人可在「广场」看到。</p>
+            </div>
+          ) : mePage === "settings" ? (
             meDetailPage === "account-security" ? (
               <div className="settings-list">
                 <button className="settings-item" onClick={switchAccount}>
@@ -4372,42 +4492,11 @@ export default function App() {
                 <p>会员状态：{isMembershipValid ? "有效会员" : "免费用户"}</p>
               </div>
 
-              <h3 className="section-title">我的动态</h3>
-              <div className="post-composer">
-                <textarea
-                  rows={3}
-                  placeholder="写点什么，发布到广场（所有人可见）..."
-                  value={newPostText}
-                  onChange={(e) => setNewPostText(e.target.value)}
-                />
-                <input
-                  id="square-draft-file-input"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden-file-input"
-                  onChange={(e) => {
-                    const files = Array.from(e.target.files || []).slice(0, 9);
-                    setSquareDraftFiles(files);
-                    e.target.value = "";
-                  }}
-                />
-                <div className="post-composer-actions">
-                  <label htmlFor="square-draft-file-input" className="btn secondary composer-add-photo">
-                    添加图片{squareDraftFiles.length ? `（${squareDraftFiles.length}）` : ""}
-                  </label>
-                  <button
-                    type="button"
-                    className="composer-publish-btn"
-                    disabled={squarePublishLoading}
-                    onClick={publishMyPost}
-                  >
-                    {squarePublishLoading ? "发布中…" : "发布动态"}
-                  </button>
-                </div>
-                <p className="feed-tip" style={{ marginTop: 8 }}>
-                  发布后同步展示在「广场」，并可附带最多 9 张图。
-                </p>
+              <div className="my-dynamics-head">
+                <h3 className="section-title">我的动态</h3>
+                <button type="button" className="moment-entry-fab" onClick={openMomentCompose} aria-label="发动态">
+                  +
+                </button>
               </div>
               <div className="my-post-list">
                 {myPosts.length === 0 && <p className="feed-tip">你还没有发布动态</p>}

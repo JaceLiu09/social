@@ -970,25 +970,6 @@ body {
   gap: 8px;
 }
 
-.post-composer {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.post-composer textarea {
-  width: 100%;
-  min-height: 72px;
-  border: 1px solid #dce3f2;
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: #fff;
-  font-size: 15px;
-  resize: vertical;
-  box-sizing: border-box;
-}
-
 .hidden-file-input {
   position: absolute;
   width: 1px;
@@ -997,32 +978,151 @@ body {
   pointer-events: none;
 }
 
-.post-composer-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
+.moment-compose-section {
+  padding-bottom: 120px;
 }
 
-.composer-add-photo {
+.moment-compose-inner {
+  padding: 8px 16px 24px;
+}
+
+.moment-compose-text {
+  width: 100%;
+  min-height: 140px;
+  border: none;
+  outline: none;
+  resize: vertical;
+  font-size: 17px;
+  line-height: 1.55;
+  background: transparent;
+  color: #1a2238;
+  box-sizing: border-box;
+}
+
+.moment-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.moment-photo-cell {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #eef1f8;
+}
+
+.moment-photo-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.52);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
   cursor: pointer;
-  display: inline-flex;
+}
+
+.moment-photo-thumb {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  cursor: pointer;
+  display: block;
+  position: relative;
+}
+
+.moment-photo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.moment-photo-replace-hint {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  font-size: 11px;
+  color: #fff;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.5));
+  padding: 8px 4px 5px;
+  text-align: center;
+}
+
+.moment-photo-add {
+  aspect-ratio: 1;
+  border-radius: 10px;
+  background: #f3f5fa;
+  border: 1px dashed #c5cde0;
+  display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
 }
 
-.composer-publish-btn {
-  margin-left: auto;
-  border-radius: 10px;
-  background: #4f86ea;
-  color: #fff;
-  padding: 8px 16px;
-  font-size: 14px;
+.moment-photo-add-plus {
+  font-size: 38px;
+  color: #98a2bd;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.moment-compose-footnote {
+  margin-top: 16px;
+  font-size: 12px;
+  color: #9097b0;
+  line-height: 1.45;
+}
+
+.my-dynamics-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.my-dynamics-head .section-title {
+  margin: 0;
+}
+
+.moment-entry-fab {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
   border: none;
+  background: linear-gradient(145deg, #5ad4e8, #4f86ea);
+  color: #fff;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  box-shadow: 0 4px 14px rgba(79, 134, 234, 0.35);
 }
 
-.composer-publish-btn:disabled {
-  opacity: 0.6;
+.header-btn--publish {
+  background: #07c160 !important;
+  color: #fff !important;
+  border-radius: 8px !important;
+  padding: 8px 16px !important;
+  font-weight: 600;
+  border: none !important;
+}
+
+.header-btn--publish:disabled {
+  opacity: 0.55;
 }
 
 .square-post-avatar {
