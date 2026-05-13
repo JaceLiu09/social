@@ -1107,6 +1107,48 @@ function createSquarePostPool(size = 5000) {
 
 let squarePostPool = createSquarePostPool(5000).sort((a, b) => a.minutesAgo - b.minutesAgo);
 
+function safeParseMomentImageUrls(raw) {
+  try {
+    const j = JSON.parse(raw || "[]");
+    return Array.isArray(j) ? j.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function formatSquareMomentTime(d) {
+  const t = new Date(d).getTime();
+  const diff = Math.max(0, Date.now() - t);
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes}分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}天前`;
+  return new Date(d).toLocaleDateString("zh-CN");
+}
+
+function isAllowedSquareMediaUrl(u) {
+  const s = String(u || "").trim();
+  if (!s) return false;
+  if (s.startsWith("/uploads/") || s.startsWith("/oss-media/")) return true;
+  if (s.startsWith("/avatars/")) return true;
+  try {
+    const x = new URL(s);
+    const p = x.pathname;
+    return (
+      p.includes("/uploads/") ||
+      p.includes("/oss-media/") ||
+      p.includes("/fake-pictures/") ||
+      p.includes("/chat-history-pictures/") ||
+      p.includes("/zhenren-pictures/")
+    );
+  } catch {
+    return false;
+  }
+}
+
 const registerBasicSchema = z.object({
   phone: z.string().min(6),
   password: z.string().min(6),
@@ -1381,27 +1423,151 @@ app.post("/auth/login", async (req, res) => {
   }
 });
 
-app.get("/square/posts", (_req, res) => {
-  const limit = Math.min(Number(_req.query.limit) || 60, 200);
+app.get("/square/posts", async (_req, res) => {
+  const limit = Math.min(Number(_req.query.limit) || 60, 100);
   const offset = Math.max(Number(_req.query.offset) || 0, 0);
   const refresh = String(_req.query.refresh || "0") === "1";
 
-  if (refresh) {
-    squarePostPool = createSquarePostPool(5000).sort((a, b) => a.minutesAgo - b.minutesAgo);
+  try {
+    if (refresh) {
+      squarePostPool = createSquarePostPool(5000).sort((a, b) => a.minutesAgo - b.minutesAgo);
+    }
+
+    const totalReal = await prisma.squareMoment.count();
+
+    if (totalReal === 0) {
+      const sliced = squarePostPool.slice(offset, offset + limit);
+      const posts = sliced.map(({ minutesAgo, ...rest }) => ({
+        ...rest,
+        imageUrls: [],
+        avatarUrl: ""
+      }));
+      const nextOffset = offset + posts.length;
+      return res.json({
+        posts,
+        total: squarePostPool.length,
+        offset,
+        nextOffset,
+        hasMore: nextOffset < squarePostPool.length,
+        feedSource: "demo"
+      });
+    }
+
+    const rows = await prisma.squareMoment.findMany({
+      orderBy: { createdAt: "desc" },
+      skip: offset,
+      take: limit,
+      include: {
+        user: { select: { nickname: true, gender: true, avatarUrl: true } }
+      }
+    });
+
+    const posts = rows.map((row) => ({
+      id: row.id,
+      nickname: row.user.nickname,
+      gender: row.user.gender,
+      avatarUrl: row.user.avatarUrl || "",
+      text: row.text,
+      likes: row.likes,
+      imageUrls: safeParseMomentImageUrls(row.imageUrls),
+      createdAt: formatSquareMomentTime(row.createdAt),
+      distanceKm: Number((Math.random() * 120 + 2).toFixed(1)),
+      feedSource: "user"
+    }));
+
+    const nextOffset = offset + posts.length;
+    res.json({
+      posts,
+      total: totalReal,
+      offset,
+      nextOffset,
+      hasMore: nextOffset < totalReal,
+      feedSource: "user"
+    });
+  } catch (e) {
+    console.error("[square/posts]", e);
+    res.status(500).json({ message: "加载动态失败" });
   }
+});
 
-  const sliced = squarePostPool.slice(offset, offset + limit);
-  const posts = sliced.map(({ minutesAgo, ...rest }) => rest);
-  const nextOffset = offset + posts.length;
-  const hasMore = nextOffset < squarePostPool.length;
+app.get("/square/posts/mine", async (req, res) => {
+  const userId = getAuthUserId(req);
+  if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+  try {
+    const rows = await prisma.squareMoment.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take: 100
+    });
+    res.json({
+      posts: rows.map((row) => ({
+        id: row.id,
+        text: row.text,
+        likes: row.likes,
+        imageUrls: safeParseMomentImageUrls(row.imageUrls),
+        createdAt: formatSquareMomentTime(row.createdAt)
+      }))
+    });
+  } catch (e) {
+    console.error("[square/posts/mine]", e);
+    res.status(500).json({ message: "加载失败" });
+  }
+});
 
-  res.json({
-    posts,
-    total: squarePostPool.length,
-    offset,
-    nextOffset,
-    hasMore
+const squareMomentPostSchema = z
+  .object({
+    text: z.string().max(2000).optional().default(""),
+    imageUrls: z.array(z.string().max(2048)).max(9).optional().default([])
+  })
+  .refine((d) => String(d.text || "").trim().length > 0 || (d.imageUrls && d.imageUrls.length > 0), {
+    message: "至少填写文字或上传一张图片"
   });
+
+app.post("/square/posts", async (req, res) => {
+  const userId = getAuthUserId(req);
+  if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+  try {
+    const parsed = squareMomentPostSchema.parse(req.body);
+    const text = String(parsed.text || "").trim();
+    const urls = (parsed.imageUrls || []).map((u) => String(u).trim()).filter(Boolean);
+    for (const u of urls) {
+      if (!isAllowedSquareMediaUrl(u)) {
+        return res.status(400).json({ message: "包含不允许的图片地址" });
+      }
+    }
+
+    const row = await prisma.squareMoment.create({
+      data: {
+        userId,
+        text,
+        imageUrls: JSON.stringify(urls)
+      },
+      include: {
+        user: { select: { nickname: true, gender: true, avatarUrl: true } }
+      }
+    });
+
+    res.json({
+      post: {
+        id: row.id,
+        nickname: row.user.nickname,
+        gender: row.user.gender,
+        avatarUrl: row.user.avatarUrl || "",
+        text: row.text,
+        likes: row.likes,
+        imageUrls: safeParseMomentImageUrls(row.imageUrls),
+        createdAt: formatSquareMomentTime(row.createdAt),
+        distanceKm: Number((Math.random() * 120 + 2).toFixed(1)),
+        feedSource: "user"
+      }
+    });
+  } catch (e) {
+    if (e instanceof z.ZodError) {
+      return res.status(400).json({ message: e.issues[0]?.message || "参数错误" });
+    }
+    console.error("[square/posts POST]", e);
+    res.status(500).json({ message: e.message || "发布失败" });
+  }
 });
 
 app.get("/match/online-count", (_req, res) => {

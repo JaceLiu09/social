@@ -44,6 +44,7 @@ model User {
   tacitRoomMembers TacitRoomMember[]
   tacitQueueEntries TacitMatchQueue[]
   tacitAnswers TacitAnswer[]
+  squareMoments     SquareMoment[]
 }
 
 model MatchSession {
@@ -95,6 +96,21 @@ model ChatMessage {
 
   @@index([fromUserId, toUserId, createdAt])
   @@index([toUserId, fromUserId, readAt])
+}
+
+// 广场动态：文本 + 可选多图（imageUrls 为 JSON 字符串数组）
+model SquareMoment {
+  id        String   @id @default(cuid())
+  userId    String
+  text      String   @db.Text
+  imageUrls String   @db.Text
+  likes     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
 }
 
 model Friendship {

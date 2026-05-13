@@ -586,6 +586,8 @@ export default function App() {
   const [isTacitMatching, setIsTacitMatching] = useState(false);
   const [myPosts, setMyPosts] = useState([]);
   const [newPostText, setNewPostText] = useState("");
+  const [squareDraftFiles, setSquareDraftFiles] = useState([]);
+  const [squarePublishLoading, setSquarePublishLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [pinnedConversationIds, setPinnedConversationIds] = useState([]);
   const [hiddenConversationIds, setHiddenConversationIds] = useState([]);
@@ -1342,27 +1344,38 @@ export default function App() {
   }, [user?.avatarUrl, user?.photoUrls]);
 
   useEffect(() => {
-    if (!user?.id) return;
-    const key = `my-posts:${user.id}`;
-    try {
-      const raw = window.localStorage.getItem(key);
-      if (!raw) {
-        setMyPosts([]);
-        return;
-      }
-      const parsed = JSON.parse(raw);
-      setMyPosts(Array.isArray(parsed) ? parsed : []);
-    } catch (_error) {
+    if (!user?.id || !authToken) {
       setMyPosts([]);
+      return;
     }
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (!user?.id) return;
-    try {
-      window.localStorage.setItem(`my-posts:${user.id}`, JSON.stringify(myPosts));
-    } catch (_error) {}
-  }, [user?.id, myPosts]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API}/square/posts/mine`, { headers: authHeaders });
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setMyPosts([]);
+          return;
+        }
+        const list = Array.isArray(data.posts) ? data.posts : [];
+        setMyPosts(
+          list.map((p) => ({
+            id: p.id,
+            text: p.text || "",
+            likes: p.likes ?? 0,
+            createdAt: p.createdAt || "",
+            imageUrls: Array.isArray(p.imageUrls) ? p.imageUrls : []
+          }))
+        );
+      } catch {
+        if (!cancelled) setMyPosts([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, authToken, authHeaders]);
 
   useEffect(() => {
     if (mePage !== "profile-edit") return;
@@ -3353,21 +3366,59 @@ export default function App() {
     setWerewolfMode(data.room?.game ? "playing" : "room");
   };
 
-  const publishMyPost = () => {
+  const publishMyPost = async () => {
     const text = newPostText.trim();
-    if (!text) {
-      setMessage("请先输入动态内容");
+    if (!text && squareDraftFiles.length === 0) {
+      setMessage("请输入文字或选择图片");
       return;
     }
-    const post = {
-      id: `mine-${Date.now()}`,
-      text,
-      likes: 0,
-      createdAt: "刚刚"
-    };
-    setMyPosts((prev) => [post, ...prev]);
-    setNewPostText("");
-    setMessage("已发布到我的动态（暂存在本机，刷新后仍在）");
+    if (!authToken) {
+      setMessage("请先登录");
+      return;
+    }
+    setSquarePublishLoading(true);
+    try {
+      const imageUrls = [];
+      for (const file of squareDraftFiles) {
+        const compressed = await compressImageFile(file);
+        const { url } = await uploadMedia(compressed, "IMAGE", "chat");
+        imageUrls.push(url);
+      }
+      const res = await fetch(`${API}/square/posts`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders
+        },
+        body: JSON.stringify({
+          text,
+          imageUrls
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "发布失败");
+      setNewPostText("");
+      setSquareDraftFiles([]);
+      setMessage("发布成功，已在广场展示");
+      const listRes = await fetch(`${API}/square/posts/mine`, { headers: authHeaders });
+      const listData = await listRes.json();
+      if (listRes.ok && Array.isArray(listData.posts)) {
+        setMyPosts(
+          listData.posts.map((p) => ({
+            id: p.id,
+            text: p.text || "",
+            likes: p.likes ?? 0,
+            createdAt: p.createdAt || "",
+            imageUrls: Array.isArray(p.imageUrls) ? p.imageUrls : []
+          }))
+        );
+      }
+      loadSquarePosts(true);
+    } catch (e) {
+      setMessage(e.message || "发布失败");
+    } finally {
+      setSquarePublishLoading(false);
+    }
   };
 
   if (!user) {
@@ -3811,9 +3862,13 @@ export default function App() {
           {posts.map((post) => (
             <div className="post dark-post" key={post.id}>
               <div className="post-head">
-                <div className={`blindbox-avatar ${post.gender === "MALE" ? "male-avatar" : "female-avatar"}`}>
-                  {post.gender === "MALE" ? "♂" : "♀"}
-                </div>
+                {post.avatarUrl ? (
+                  <img src={resolveAssetUrl(post.avatarUrl)} alt="" className="square-post-avatar" />
+                ) : (
+                  <div className={`blindbox-avatar ${post.gender === "MALE" ? "male-avatar" : "female-avatar"}`}>
+                    {post.gender === "MALE" ? "♂" : "♀"}
+                  </div>
+                )}
                 <div className="post-meta">
                   <strong>{post.nickname || "盲盒用户"}</strong>
                   <small>
@@ -3821,7 +3876,14 @@ export default function App() {
                   </small>
                 </div>
               </div>
-              <p>{post.text}</p>
+              {post.text ? <p>{post.text}</p> : null}
+              {Array.isArray(post.imageUrls) && post.imageUrls.length > 0 ? (
+                <div className="post-photos">
+                  {post.imageUrls.map((url, i) => (
+                    <img key={`${post.id}-sq-${i}`} src={resolveAssetUrl(url)} alt="" loading="lazy" />
+                  ))}
+                </div>
+              ) : null}
               <small>点赞 {post.likes}</small>
             </div>
           ))}
@@ -4312,23 +4374,53 @@ export default function App() {
 
               <h3 className="section-title">我的动态</h3>
               <div className="post-composer">
-                <input
-                  placeholder="写点什么，发布到我的动态..."
+                <textarea
+                  rows={3}
+                  placeholder="写点什么，发布到广场（所有人可见）..."
                   value={newPostText}
                   onChange={(e) => setNewPostText(e.target.value)}
                 />
-                <button type="button" onClick={publishMyPost}>
-                  发布动态
-                </button>
+                <input
+                  id="square-draft-file-input"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden-file-input"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []).slice(0, 9);
+                    setSquareDraftFiles(files);
+                    e.target.value = "";
+                  }}
+                />
+                <div className="post-composer-actions">
+                  <label htmlFor="square-draft-file-input" className="btn secondary composer-add-photo">
+                    添加图片{squareDraftFiles.length ? `（${squareDraftFiles.length}）` : ""}
+                  </label>
+                  <button
+                    type="button"
+                    className="composer-publish-btn"
+                    disabled={squarePublishLoading}
+                    onClick={publishMyPost}
+                  >
+                    {squarePublishLoading ? "发布中…" : "发布动态"}
+                  </button>
+                </div>
                 <p className="feed-tip" style={{ marginTop: 8 }}>
-                  动态保存在本机浏览器，不会进入广场信息流（广场为演示数据）。
+                  发布后同步展示在「广场」，并可附带最多 9 张图。
                 </p>
               </div>
               <div className="my-post-list">
                 {myPosts.length === 0 && <p className="feed-tip">你还没有发布动态</p>}
                 {myPosts.map((post) => (
                   <div className="post dark-post" key={post.id}>
-                    <p>{post.text}</p>
+                    {post.text ? <p>{post.text}</p> : null}
+                    {Array.isArray(post.imageUrls) && post.imageUrls.length > 0 ? (
+                      <div className="post-photos">
+                        {post.imageUrls.map((url, i) => (
+                          <img key={`${post.id}-mine-${i}`} src={resolveAssetUrl(url)} alt="" loading="lazy" />
+                        ))}
+                      </div>
+                    ) : null}
                     <small>
                       {post.createdAt} · 点赞 {post.likes}
                     </small>
