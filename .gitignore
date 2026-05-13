@@ -10,3 +10,6 @@ admin-console/node_modules/
 dist/
 build/
 coverage/
+
+# Runtime uploads: must be ignored so `git clean -fd` in deploy.sh does not wipe them each release.
+backend/uploads/

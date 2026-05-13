@@ -100,6 +100,7 @@ else
 
   git checkout -B "${BRANCH}" FETCH_HEAD
   git reset --hard FETCH_HEAD
+  # 仅删「未跟踪且未被 .gitignore 忽略」的文件；backend/uploads/ 已忽略，避免每次发布清空用户图
   git clean -fd
 fi
 

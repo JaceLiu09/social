@@ -311,7 +311,16 @@ export function createAdminRouter(deps) {
       if (e instanceof z.ZodError) {
         return res.status(400).json({ message: e.issues.map((x) => x.message).join("; ") });
       }
-      res.status(500).json({ message: e.message || "创建失败" });
+      console.error("[admin/fake-bots POST]", e);
+      const code = e?.code;
+      const raw = String(e?.message || "");
+      const msg =
+        code === "P2000" || raw.includes("too long") || raw.includes("Data too long")
+          ? "资料字段超出数据库长度（常见：相册张数多导致 photoUrls 过长）。已放宽为 TEXT，请在服务器执行：cd backend && npx prisma db push 后重试。"
+          : code === "P2002"
+            ? "手机号冲突，请再提交一次。"
+            : raw || "创建失败";
+      res.status(500).json({ message: msg });
     }
   });
 

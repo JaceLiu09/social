@@ -25,8 +25,8 @@ model User {
   hobbies            String         @default("")
   partnerExpectation String         @default("")
   profileCompleted   Boolean        @default(false)
-  avatarUrl          String?
-  photoUrls          String
+  avatarUrl          String?          @db.VarChar(2048)
+  photoUrls          String           @db.Text
   fakeRobotLibrary   FakeRobotLibrary @default(NONE)
   membershipType     MembershipType @default(FREE)
   membershipExpireAt DateTime?

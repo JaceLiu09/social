@@ -379,7 +379,7 @@ async function renderFakes(panel) {
       <div class="form-full upload-block">
         <strong>头像（必选）</strong>
         <p class="muted" style="margin:4px 0 8px">从本地上传一张，将作为头像并写入服务器 uploads。</p>
-        <input type="file" id="fake-avatar" accept="image/*" required />
+        <input type="file" id="fake-avatar" accept="image/*" />
       </div>
       <div class="form-full upload-block">
         <strong>相册（可选，可多选）</strong>
@@ -479,7 +479,9 @@ async function renderFakes(panel) {
     const albumInput = document.getElementById("fake-album");
     const avatarFile = avatarInput.files?.[0];
     if (!avatarFile) {
-      flash("请选择头像图片（本地上传）", "err");
+      flash("请先选择头像图片（必选）：点「头像」下的文件框选一张本地图，再提交。", "err");
+      avatarInput.scrollIntoView({ behavior: "smooth", block: "center" });
+      avatarInput.focus();
       return;
     }
 
