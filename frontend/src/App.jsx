@@ -478,6 +478,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [toastMessage, setToastMessage] = useState("");
   const toastDismissTimerRef = useRef(null);
+  const momentPublishHomeTimerRef = useRef(null);
 
   const showToast = useCallback((text) => {
     setToastMessage(text);
@@ -491,6 +492,7 @@ export default function App() {
   useEffect(() => {
     return () => {
       if (toastDismissTimerRef.current) window.clearTimeout(toastDismissTimerRef.current);
+      if (momentPublishHomeTimerRef.current) window.clearTimeout(momentPublishHomeTimerRef.current);
     };
   }, []);
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
@@ -3378,12 +3380,20 @@ export default function App() {
   };
 
   const closeMomentCompose = () => {
+    if (momentPublishHomeTimerRef.current) {
+      window.clearTimeout(momentPublishHomeTimerRef.current);
+      momentPublishHomeTimerRef.current = null;
+    }
     setNewPostText("");
     setSquareDraftFiles([]);
     setMePage("home");
   };
 
   const openMomentCompose = () => {
+    if (momentPublishHomeTimerRef.current) {
+      window.clearTimeout(momentPublishHomeTimerRef.current);
+      momentPublishHomeTimerRef.current = null;
+    }
     setNewPostText("");
     setSquareDraftFiles([]);
     setMePage("moment-compose");
@@ -3423,7 +3433,12 @@ export default function App() {
       setNewPostText("");
       setSquareDraftFiles([]);
       setMePage("home");
-      setMessage("发布成功，已在广场展示");
+      showToast("发布成功，已在广场展示");
+      if (momentPublishHomeTimerRef.current) window.clearTimeout(momentPublishHomeTimerRef.current);
+      momentPublishHomeTimerRef.current = window.setTimeout(() => {
+        momentPublishHomeTimerRef.current = null;
+        navigate("/planet");
+      }, 2000);
       const listRes = await fetch(`${API}/square/posts/mine`, { headers: authHeaders });
       const listData = await listRes.json();
       if (listRes.ok && Array.isArray(listData.posts)) {
