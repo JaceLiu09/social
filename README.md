@@ -98,6 +98,20 @@ npm run dev
 
 打开浏览器访问 Vite 输出地址即可。
 
+## 远端部署：Node 与旧系统（glibc）
+
+- **常见云主机 CentOS 7**：系统 **glibc 较旧**，官方 **Node 20** 预编译包可能无法运行（报 `GLIBC_2.27` / `GLIBC_2.28` 等）。本项目 **`deploy.sh` 使用 Node 16 LTS**，并把 **sharp 固定在 0.32.x**，与 Node 16、旧 glibc 更易共存。
+- **sharp**：聊天缩略图用 **动态 `import('sharp')`**；若原生模块无法加载，仅不写缩略图，聊天仍可用原图。
+- **若系统较新**（Ubuntu 22+ 等），可自行改用 Node 20：升级 `sharp` 至 0.33+ 并调整 `engines`；当前仓库默认面向旧机兼容。
+
+---
+
+## 远端部署后管理后台无法登录（500）
+
+1. **默认账号**：`deploy.sh` 会在构建前执行 `prisma db push` 与 `npm run seed`。后台账号由 seed 写入 **AdminAccount**，默认 **`admin` / `123456`**（全部权限）。用户名 **`ellie`** / **`eliie`** 也可登录，但 **`canManageUsers` 为 false**，用户管理等 Tab 会受限；登录接口应对二者一致。
+2. **若浏览器只显示「Internal Server Error」**：多为后端抛错未落到前端文案，请在服务器查看 **`pm2 logs social-backend`**。常见原因：**数据库连不上**（`P1001`）、**缺列 / 未迁移**（`P2022`，需在同一目录执行 `npx prisma db push` 与 `npm run seed`）、或部署未完成导致进程旧代码。
+3. **自检**：本机 `curl -s http://127.0.0.1:4000/admin/api/health` 应返回 JSON；再 `curl -s -X POST http://127.0.0.1:4000/admin/api/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"123456"}'` 应返回含 `token` 的 JSON。
+
 ## 下一步建议
 
 - 接入真实短信登录、鉴权（JWT）

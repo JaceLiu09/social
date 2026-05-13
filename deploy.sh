@@ -20,15 +20,21 @@ BACKEND_PORT="${BACKEND_PORT:-4000}"
 export VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://${SERVER_IP}:${BACKEND_PORT}}"
 # 管理后台独立构建：直连远端 API（与主站 API 同机同端口时可与 VITE_API_BASE_URL 相同）
 export VITE_ADMIN_API_BASE_URL="${VITE_ADMIN_API_BASE_URL:-http://${SERVER_IP}:${BACKEND_PORT}}"
+# 本地开发管理后台并指向同一套远端 API：在仓库 admin-console 目录执行 npm run dev:remote（见 admin-console/dev-remote.sh）
 
 # Git/SSH 连接参数（不再强制 -p，URL 已含 443）
 export GIT_TERMINAL_PROMPT=0
 export GIT_SSH_COMMAND="ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2"
 
-echo "==> [1/12] Load nvm & node"
+echo "==> [1/12] Load nvm & node（CentOS7 等旧系统 glibc 低，勿用 Node 20；使用 Node 16 LTS + sharp@0.32）"
 export NVM_DIR="/root/.nvm"
 . "$NVM_DIR/nvm.sh"
-nvm use 16 >/dev/null
+if ! nvm use 16 >/dev/null 2>&1; then
+  echo "Node 16 未安装，正在 nvm install 16 …"
+  nvm install 16
+  nvm use 16 >/dev/null
+fi
+node -v
 
 echo "==> [2/12] Preflight GitHub SSH:443 (retry)"
 # 认证提示这句是正常的，不影响
@@ -128,6 +134,8 @@ echo "VITE_ADMIN_API_BASE_URL=${VITE_ADMIN_API_BASE_URL}"
 npm run build
 
 echo "==> [12/12] Restart services (PM2)"
+# 与 backend server.js 中 PORT 一致；勿在 Node 16 环境上升 sharp≥0.33（需 Node≥18.17）
+export PORT="${BACKEND_PORT}"
 if pm2 describe social-backend >/dev/null 2>&1; then
   pm2 restart social-backend --update-env
 else
@@ -156,3 +164,4 @@ echo "Backend API URL:          http://${SERVER_IP}:${BACKEND_PORT}/"
 echo "Health Check URL:         http://${SERVER_IP}:${BACKEND_PORT}/health"
 echo ""
 echo "说明: 管理后台已注入 API（VITE_ADMIN_API_BASE_URL）；使用管理员账号登录（默认 admin / 123456，首次部署由 seed 创建）。"
+echo "若浏览器报 ERR_CONNECTION_REFUSED: 1) 云安全组/防火墙放行 TCP ${BACKEND_PORT}  2) 在服务器上 pm2 logs social-backend 看是否反复崩溃  3) 本机执行 curl -sS http://127.0.0.1:${BACKEND_PORT}/health"

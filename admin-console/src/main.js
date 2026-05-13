@@ -368,11 +368,11 @@ async function renderFakes(panel) {
       <label>性别
         <select name="gender"><option value="FEMALE">女</option><option value="MALE">男</option></select>
       </label>
-      <label>年龄 <input name="age" type="number" value="24" min="18" max="80" /></label>
-      <label>身高 cm <input name="height" type="number" placeholder="默认按性别" /></label>
-      <label>体重 kg <input name="weight" type="number" placeholder="默认按性别" /></label>
+      <label>年龄 <input name="age" type="number" value="21" min="18" max="80" /></label>
+      <label>身高 cm <input name="height" type="number" value="163" placeholder="默认按性别" /></label>
+      <label>体重 kg <input name="weight" type="number" value="48" placeholder="默认按性别" /></label>
       <label>家乡 <input name="hometown" placeholder="杭州" /></label>
-      <label>收入 <input name="income" value="8k-15k" /></label>
+      <label>收入 <input name="income" value="5-6k" /></label>
       <label>行业 <input name="industry" value="互联网" /></label>
       <label class="form-full">爱好（个性展示） <textarea name="hobbies" placeholder="羽毛球, 徒步, 美食"></textarea></label>
       <label class="form-full">对另一半期望（签名感文案） <textarea name="partnerExpectation" placeholder="真诚沟通，彼此尊重"></textarea></label>
@@ -395,21 +395,8 @@ async function renderFakes(panel) {
       </div>
     </form>
     <div id="fake-list-wrap" style="margin-top:24px">
-      <h3 style="font-size:14px;margin-bottom:8px">系统机器人库（种子 / 展示用）· 已有 ${systemData.users.length} 个</h3>
-      <div style="overflow-x:auto;margin-bottom:20px">
-        <table class="data">
-          <thead>
-            <tr><th></th><th>昵称</th><th>手机</th><th>城市</th><th>爱好</th></tr>
-          </thead>
-          <tbody>
-            ${fakeBotTableRows(systemData.users, 80)}
-          </tbody>
-        </table>
-      </div>
-      ${systemData.users.length > 80 ? `<p class="muted">系统库仅显示前 80 条。</p>` : ""}
-
       <h3 style="font-size:14px;margin-bottom:8px">用户机器人库（后台录入 / 匹配用）· 已有 ${userData.users.length} 个</h3>
-      <div style="overflow-x:auto">
+      <div style="overflow-x:auto;margin-bottom:20px">
         <table class="data">
           <thead>
             <tr><th></th><th>昵称</th><th>手机</th><th>城市</th><th>爱好</th></tr>
@@ -420,6 +407,19 @@ async function renderFakes(panel) {
         </table>
       </div>
       ${userData.users.length > 80 ? `<p class="muted">用户库仅显示前 80 条。</p>` : ""}
+
+      <h3 style="font-size:14px;margin-bottom:8px">系统机器人库（种子 / 展示用）· 已有 ${systemData.users.length} 个</h3>
+      <div style="overflow-x:auto">
+        <table class="data">
+          <thead>
+            <tr><th></th><th>昵称</th><th>手机</th><th>城市</th><th>爱好</th></tr>
+          </thead>
+          <tbody>
+            ${fakeBotTableRows(systemData.users, 80)}
+          </tbody>
+        </table>
+      </div>
+      ${systemData.users.length > 80 ? `<p class="muted">系统库仅显示前 80 条。</p>` : ""}
     </div>
   `;
 
@@ -502,7 +502,7 @@ async function renderFakes(panel) {
       const body = {
         nickname: fd.get("nickname"),
         gender: fd.get("gender"),
-        age: Number(fd.get("age") || 24),
+        age: Number(fd.get("age") || 21),
         height: fd.get("height") ? Number(fd.get("height")) : undefined,
         weight: fd.get("weight") ? Number(fd.get("weight")) : undefined,
         hometown: fd.get("hometown") || "",

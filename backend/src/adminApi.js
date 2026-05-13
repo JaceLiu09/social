@@ -49,7 +49,17 @@ export function createAdminRouter(deps) {
         return res.status(400).json({ message: "请输入用户名和密码" });
       }
       const account = await prisma.adminAccount.findUnique({ where: { username } });
-      if (!account || !bcrypt.compareSync(password, account.passwordHash)) {
+      if (!account) {
+        return res.status(401).json({ message: "用户名或密码错误" });
+      }
+      let passwordOk = false;
+      try {
+        passwordOk = bcrypt.compareSync(password, account.passwordHash);
+      } catch (_bcryptErr) {
+        console.error("[admin/auth/login] invalid passwordHash for username=", username);
+        return res.status(401).json({ message: "用户名或密码错误" });
+      }
+      if (!passwordOk) {
         return res.status(401).json({ message: "用户名或密码错误" });
       }
       const token = randomUUID();
@@ -64,7 +74,15 @@ export function createAdminRouter(deps) {
         canManageUsers: account.canManageUsers
       });
     } catch (e) {
-      res.status(500).json({ message: e.message || "登录失败" });
+      console.error("[admin/auth/login]", e);
+      const code = e?.code;
+      const hint =
+        code === "P1001" || code === "P1017"
+          ? "数据库连接失败，请检查部署机网络与 MySQL 是否可达"
+          : code === "P2022" || String(e?.message || "").includes("does not exist")
+            ? "数据库结构未同步，请在服务器执行：cd backend && npx prisma db push && npm run seed"
+            : e?.message || "登录失败，请查看服务端日志";
+      res.status(500).json({ message: hint });
     }
   });
 

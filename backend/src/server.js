@@ -6,7 +6,6 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import sharp from "sharp";
 import { Server } from "socket.io";
 import { prisma } from "./prisma.js";
 import { randomInt, randomFakeBotPhoneDigits } from "./fakeBotPhone.js";
@@ -35,7 +34,7 @@ const __dirname = path.dirname(__filename);
 const uploadRoot = path.join(__dirname, "../uploads");
 const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
 
-/** 聊天图片：写原图并生成缩略图（最长边 360、JPEG）；失败则 thumb 回落为原图 URL */
+/** 聊天图片：写原图并尝试缩略图（sharp 动态加载；旧系统/无 glibc 时跳过，避免进程启动即崩） */
 async function saveChatImageWithThumb(buffer, folder, safeName) {
   const dir = path.join(uploadRoot, folder);
   const thumbDir = path.join(dir, "thumb");
@@ -44,6 +43,7 @@ async function saveChatImageWithThumb(buffer, folder, safeName) {
   await fs.writeFile(fullPath, buffer);
   const mainUrl = `/uploads/${folder}/${safeName}`;
   try {
+    const { default: sharp } = await import("sharp");
     const thumbBuf = await sharp(buffer)
       .rotate()
       .resize({ width: 360, height: 360, fit: "inside", withoutEnlargement: true })
@@ -870,6 +870,20 @@ function buildNamedFriendUser(nickname, index, existingPhones) {
   };
 }
 
+/** 保证所有假机器人可用「手机号 + 123456」登录 App（与种子/后台创建约定一致） */
+async function syncFakeBotLoginPasswords() {
+  try {
+    await prisma.user.updateMany({
+      where: {
+        OR: [{ phone: { startsWith: "fakem" } }, { phone: { startsWith: "fakef" } }]
+      },
+      data: { password: DEFAULT_PASSWORD }
+    });
+  } catch (_e) {
+    /* 避免阻塞启动 */
+  }
+}
+
 /** 迁移旧库：凡 fakem/fakef 默认系统库；历史后台 adm 前缀录入的归用户机器人库 */
 async function backfillFakeRobotLibraryFlags() {
   try {
@@ -894,6 +908,7 @@ async function backfillFakeRobotLibraryFlags() {
 
 async function ensureDefaultUsers() {
   await backfillFakeRobotLibraryFlags();
+  await syncFakeBotLoginPasswords();
 
   const defaults = [
     {
@@ -2776,10 +2791,14 @@ io.on("connection", (socket) => {
 });
 
 const port = process.env.PORT || 4000;
+// 0.0.0.0 才能从公网/其他机器访问；仅本机可设 HOST=127.0.0.1
+const host = process.env.HOST || "0.0.0.0";
 ensureDefaultUsers()
   .catch((error) => {
     console.error("failed to ensure default users", error);
   })
   .finally(() => {
-    httpServer.listen(port, () => console.log(`API running: http://localhost:${port}`));
+    httpServer.listen(port, host, () => {
+      console.log(`API running: http://${host}:${port}`);
+    });
   });
