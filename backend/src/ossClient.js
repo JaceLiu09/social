@@ -12,17 +12,45 @@ export function ossConfigured() {
   );
 }
 
+/** 是否走服务端同源代理 /oss-media/{key}（桶可保持私有，仅用 AK 读） */
+function useOssProxyUrls() {
+  const base = process.env.ALIYUN_OSS_PUBLIC_BASE_URL?.trim();
+  if (base) return false;
+  const mode = process.env.ALIYUN_OSS_READ_MODE?.trim().toLowerCase();
+  if (mode === "direct") return false;
+  const directFlag = process.env.ALIYUN_OSS_USE_DIRECT_URL?.trim().toLowerCase();
+  if (directFlag === "1" || directFlag === "true" || directFlag === "yes") return false;
+  return true;
+}
+
+/** 代理读允许的 object key 前缀（与上传目录一致） */
+export function isAllowedOssProxyKey(objectKey) {
+  const k = String(objectKey || "").replace(/^\/+/, "");
+  if (!k || k.includes("..")) return false;
+  return (
+    k.startsWith("fake-pictures/") ||
+    k.startsWith("chat-history-pictures/") ||
+    k.startsWith("zhenren-pictures/")
+  );
+}
+
 /**
- * 公网读 URL（需 Bucket/对象 ACL 或策略允许匿名读；或用 CDN 自定义域自行填 ALIYUN_OSS_PUBLIC_BASE_URL）
+ * 写入 DB / 返回给客户端的「读」URL。
+ * - 默认：同源 `/oss-media/{key}`，由服务端持 AK 代理读（桶无需匿名读）。
+ * - `ALIYUN_OSS_PUBLIC_BASE_URL`：CDN/自定义域直链（仍公开可读）。
+ * - `ALIYUN_OSS_READ_MODE=direct` 或 `ALIYUN_OSS_USE_DIRECT_URL=1`：虚拟主机式 OSS HTTPS URL。
  * @param {string} objectKey 不含前导 /
  */
 export function publicUrlForObjectKey(objectKey) {
   const key = String(objectKey || "").replace(/^\/+/, "");
   const base = process.env.ALIYUN_OSS_PUBLIC_BASE_URL?.trim().replace(/\/$/, "");
   if (base) return `${base}/${key}`;
-  const bucket = process.env.ALIYUN_OSS_BUCKET.trim();
-  const region = process.env.ALIYUN_OSS_REGION.trim();
-  return `https://${bucket}.${region}.aliyuncs.com/${key}`;
+  if (!useOssProxyUrls()) {
+    const bucket = process.env.ALIYUN_OSS_BUCKET.trim();
+    const region = process.env.ALIYUN_OSS_REGION.trim();
+    return `https://${bucket}.${region}.aliyuncs.com/${key}`;
+  }
+  return `/oss-media/${key}`;
 }
 
 function getOssClient() {
@@ -43,6 +71,22 @@ function getOssClient() {
     authorizationV4: false
   });
   return cachedClient;
+}
+
+/**
+ * @param {string} objectKey
+ */
+export async function getOssObjectBuffer(objectKey) {
+  const client = getOssClient();
+  return client.get(objectKey.replace(/^\/+/, ""));
+}
+
+/**
+ * @param {string} objectKey
+ */
+export async function headOssObject(objectKey) {
+  const client = getOssClient();
+  return client.head(objectKey.replace(/^\/+/, ""));
 }
 
 /**

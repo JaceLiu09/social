@@ -1127,6 +1127,50 @@ const completeProfileSchema = z.object({
 });
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+/** 私有 OSS 同源代理：浏览器请求 API /oss-media/{key}，服务端用 AK 读对象 */
+app.use(async (req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return next();
+  if (!req.path.startsWith("/oss-media/")) return next();
+  if (!oss.ossConfigured()) {
+    return res.status(503).json({ message: "OSS 未配置，无法代理读取" });
+  }
+  let objectKey;
+  try {
+    objectKey = decodeURIComponent(req.path.slice("/oss-media/".length));
+  } catch (_e) {
+    return res.status(400).end();
+  }
+  if (!objectKey || !oss.isAllowedOssProxyKey(objectKey)) {
+    return res.status(404).end();
+  }
+  try {
+    if (req.method === "HEAD") {
+      const h = await oss.headOssObject(objectKey);
+      const headers = h.res?.headers || {};
+      const ct = headers["content-type"] || "application/octet-stream";
+      const cl = headers["content-length"];
+      res.setHeader("Content-Type", ct);
+      if (cl != null) res.setHeader("Content-Length", String(cl));
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.status(200).end();
+    }
+    const result = await oss.getOssObjectBuffer(objectKey);
+    const headers = result.res?.headers || {};
+    const ct = headers["content-type"] || "application/octet-stream";
+    res.setHeader("Content-Type", ct);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    return res.status(200).send(result.content);
+  } catch (e) {
+    const status = e.status || e.statusCode;
+    if (status === 404 || String(e?.code || "").includes("NoSuch")) {
+      return res.status(404).end();
+    }
+    console.error("[oss-media]", e);
+    return res.status(502).json({ message: "读取 OSS 失败" });
+  }
+});
+
 app.use(
   "/admin/api",
   createAdminRouter({
@@ -2522,10 +2566,27 @@ function normalizeChatMediaUrl(url) {
   const s = String(url).trim();
   if (!s) return null;
   if (s.startsWith("/uploads/")) return s;
+  if (s.startsWith("/oss-media/")) return s;
   try {
     const u = new URL(s);
-    if (u.pathname.startsWith("/uploads/")) {
-      return `${u.pathname}${u.search || ""}`;
+    const path = u.pathname.startsWith("/") ? u.pathname : `/${u.pathname}`;
+    if (path.startsWith("/uploads/")) {
+      return `${path}${u.search || ""}`;
+    }
+    const key = path.replace(/^\/+/, "");
+    if (oss.isAllowedOssProxyKey(key)) {
+      return `/oss-media/${key}${u.search || ""}`;
+    }
+    const pubBase = process.env.ALIYUN_OSS_PUBLIC_BASE_URL?.trim().replace(/\/$/, "");
+    if (pubBase) {
+      try {
+        const base = new URL(pubBase.startsWith("http") ? pubBase : `https://${pubBase}`);
+        if (u.host === base.host && oss.isAllowedOssProxyKey(key)) {
+          return `/oss-media/${key}${u.search || ""}`;
+        }
+      } catch (_e2) {
+        /* ignore */
+      }
     }
   } catch (_e) {
     /* ignore */

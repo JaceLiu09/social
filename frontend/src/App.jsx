@@ -241,12 +241,19 @@ function resolveAssetUrl(url) {
     return raw.replace(/^https?:\/\/localhost:5173/, currentOrigin);
   }
   if (raw.startsWith("/avatars/")) return raw;
-  // 上传文件挂在 API 的 /uploads；历史数据可能是任意域名的绝对 URL，统一改到当前 API，避免换设备/换端口后裂开
+  // 上传文件挂在 API 的 /uploads；OSS 私有桶走 API 的 /oss-media；历史绝对 URL 统一到当前 API
   try {
     const u = new URL(raw);
     const path = u.pathname.startsWith("/") ? u.pathname : `/${u.pathname}`;
     if (path.startsWith("/uploads/")) {
       return `${API}${path}${u.search || ""}`;
+    }
+    if (
+      path.startsWith("/fake-pictures/") ||
+      path.startsWith("/chat-history-pictures/") ||
+      path.startsWith("/zhenren-pictures/")
+    ) {
+      return `${API}/oss-media${path}${u.search || ""}`;
     }
   } catch (_e) {
     /* 非绝对 URL */
@@ -260,15 +267,24 @@ function resolveMediaUrl(url) {
   const raw = String(url ?? "").trim();
   if (!raw) return "";
   if (raw.startsWith("data:")) return raw;
-  // 与 resolveAssetUrl 一致：任意域名下的 /uploads 都接到当前 API（含换机、换端口）
+  // 与 resolveAssetUrl 一致：/uploads、OSS 路径都接到当前 API（含换机、换端口）
   let pathish = raw;
   if (/^uploads\//i.test(pathish)) pathish = `/${pathish}`;
   if (pathish.startsWith("/uploads/")) return `${API}${pathish}`;
+  if (/^oss-media\//i.test(pathish)) pathish = `/${pathish}`;
+  if (pathish.startsWith("/oss-media/")) return `${API}${pathish}`;
   try {
     const u = new URL(raw);
     const path = u.pathname.startsWith("/") ? u.pathname : `/${u.pathname}`;
     if (path.startsWith("/uploads/")) {
       return `${API}${path}${u.search || ""}`;
+    }
+    if (
+      path.startsWith("/fake-pictures/") ||
+      path.startsWith("/chat-history-pictures/") ||
+      path.startsWith("/zhenren-pictures/")
+    ) {
+      return `${API}/oss-media${path}${u.search || ""}`;
     }
   } catch (_e) {
     /* 非绝对 URL */
@@ -278,6 +294,13 @@ function resolveMediaUrl(url) {
       const u = new URL(raw, window.location.href);
       const path = u.pathname.startsWith("/") ? u.pathname : `/${u.pathname}`;
       if (path.startsWith("/uploads/")) return `${API}${path}${u.search || ""}`;
+      if (
+        path.startsWith("/fake-pictures/") ||
+        path.startsWith("/chat-history-pictures/") ||
+        path.startsWith("/zhenren-pictures/")
+      ) {
+        return `${API}/oss-media${path}${u.search || ""}`;
+      }
       return `${u.protocol}//${u.host}${path}${u.search || ""}`;
     } catch (_e2) {
       return "";
