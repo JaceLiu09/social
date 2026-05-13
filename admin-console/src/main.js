@@ -76,15 +76,53 @@ async function loginRequest(username, password) {
 
 const showApiOverride = import.meta.env.DEV || !defaultApiBase();
 
+function mediaUrlOssObjectPath(pathname) {
+  const p = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  return (
+    p.startsWith("/fake-pictures/") ||
+    p.startsWith("/chat-history-pictures/") ||
+    p.startsWith("/zhenren-pictures/")
+  );
+}
+
+/** 相册 / Fake 图等在库里可能是完整 OSS HTTPS URL；私有桶会 403，必须改走后端 /oss-media 代理 */
 function mediaUrl(u) {
   if (!u) return "";
   const s = String(u).trim();
-  if (/^https?:\/\//i.test(s)) return s;
+  const base = apiBase();
+
+  const toProxy = (pathname, search = "") => {
+    const p = pathname.startsWith("/") ? pathname : `/${pathname}`;
+    const q = search || "";
+    return base ? `${base}/oss-media${p}${q}` : `/oss-media${p}${q}`;
+  };
+
+  if (/^https?:\/\//i.test(s)) {
+    try {
+      const parsed = new URL(s);
+      const path = parsed.pathname.startsWith("/") ? parsed.pathname : `/${parsed.pathname}`;
+      if (mediaUrlOssObjectPath(path)) return toProxy(path, parsed.search);
+    } catch (_e) {}
+    return s;
+  }
+
   if (s.startsWith("//")) {
+    try {
+      const parsed = new URL(`https:${s}`);
+      const path = parsed.pathname.startsWith("/") ? parsed.pathname : `/${parsed.pathname}`;
+      if (mediaUrlOssObjectPath(path)) return toProxy(path, parsed.search);
+    } catch (_e) {}
     const proto = typeof window !== "undefined" && window.location?.protocol ? window.location.protocol : "https:";
     return `${proto}${s}`;
   }
-  const base = apiBase();
+
+  let pathish = s;
+  if (/^oss-media\//i.test(pathish)) pathish = `/${pathish}`;
+  if (pathish.startsWith("/oss-media/")) return base ? `${base}${pathish}` : pathish;
+
+  const rel = pathish.startsWith("/") ? pathish : `/${pathish}`;
+  if (mediaUrlOssObjectPath(rel)) return toProxy(rel, "");
+
   return base ? `${base}${s}` : s;
 }
 
