@@ -11,10 +11,12 @@
     "start": "node src/server.js",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
-    "seed": "node prisma/seed.js"
+    "seed": "node prisma/seed.js",
+    "test:oss": "node scripts/test-oss-upload.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
+    "ali-oss": "^6.23.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.21.2",
