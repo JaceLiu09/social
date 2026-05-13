@@ -424,10 +424,12 @@ async function renderFakes(panel) {
   `;
 
   async function uploadImageFile(file) {
+    const genderEl = document.querySelector('#fake-form [name="gender"]');
+    const gender = genderEl?.value === "MALE" ? "MALE" : "FEMALE";
     const dataUrl = await fileToDataUrl(file);
     const res = await api("/admin/api/upload", {
       method: "POST",
-      body: JSON.stringify({ fileName: file.name, dataUrl })
+      body: JSON.stringify({ fileName: file.name, dataUrl, gender })
     });
     return res.url;
   }

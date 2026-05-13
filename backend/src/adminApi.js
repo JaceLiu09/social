@@ -5,6 +5,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { allocateUniqueFakeBotPhone } from "./fakeBotPhone.js";
+import * as oss from "./ossClient.js";
 
 const DEFAULT_FAKE_PASSWORD = "123456";
 const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
@@ -402,6 +403,22 @@ export function createAdminRouter(deps) {
         return res.status(400).json({ message: "图片过大，请压缩到 4MB 内" });
       }
       const ext = path.extname(String(fileName)).replace(".", "") || mimeType.split("/")[1] || "jpg";
+
+      let gender = String(req.body?.gender || "")
+        .trim()
+        .toUpperCase();
+      if (gender !== "MALE" && gender !== "FEMALE") gender = "FEMALE";
+
+      if (oss.ossConfigured()) {
+        try {
+          const url = await oss.uploadFakeBotImageBuffer(buffer, ext, gender === "MALE" ? "MALE" : "FEMALE");
+          return res.json({ url });
+        } catch (e) {
+          console.error("[admin/upload OSS]", e);
+          return res.status(500).json({ message: e.message || "OSS 上传失败" });
+        }
+      }
+
       const dir = path.join(uploadRoot, "image");
       await fs.mkdir(dir, { recursive: true });
       const safeName = `admin-${Date.now()}-${randomUUID()}.${ext}`;

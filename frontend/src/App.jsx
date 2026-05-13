@@ -1729,7 +1729,7 @@ export default function App() {
     if (!file) return;
     try {
       const compressed = await compressImageFile(file);
-      const { url: mediaUrl } = await uploadMedia(compressed, "IMAGE");
+      const { url: mediaUrl } = await uploadMedia(compressed, "IMAGE", "profile");
       setProfileSetupPhotos((prev) => [mediaUrl, ...prev.filter((item) => item !== mediaUrl)].slice(0, 6));
       setProfileSetupForm((prev) => ({ ...prev, avatarUrl: mediaUrl }));
     } catch (error) {
@@ -2000,7 +2000,7 @@ export default function App() {
     }).catch(() => null);
   };
 
-  const uploadMedia = async (file, kind) => {
+  const uploadMedia = async (file, kind, uploadCategory = "chat") => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
     const dataUrl = await new Promise((resolve, reject) => {
@@ -2019,7 +2019,8 @@ export default function App() {
         body: JSON.stringify({
           fileName: file.name,
           dataUrl,
-          kind
+          kind,
+          uploadCategory
         }),
         signal: controller.signal
       });
@@ -2172,7 +2173,7 @@ export default function App() {
     );
     try {
       const compressed = await compressImageFile(file);
-      const { url: mediaUrl } = await uploadMedia(compressed, "IMAGE");
+      const { url: mediaUrl } = await uploadMedia(compressed, "IMAGE", "profile");
       setEditProfilePhotos((prev) => {
         const next = Array.from({ length: PROFILE_EDIT_SLOT_LABELS.length }, (_, i) => String(prev[i] || "").trim());
         next[slotIndex] = mediaUrl;

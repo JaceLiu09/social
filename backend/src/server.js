@@ -10,6 +10,7 @@ import { Server } from "socket.io";
 import { prisma } from "./prisma.js";
 import { randomInt, randomFakeBotPhoneDigits } from "./fakeBotPhone.js";
 import { createAdminRouter } from "./adminApi.js";
+import * as oss from "./ossClient.js";
 import { sampleTacitQuestionsForRound } from "./tacitQuestionBank.js";
 import {
   FRIENDLINESS_PER_ROUND,
@@ -1141,6 +1142,9 @@ app.post("/chat/upload", async (req, res) => {
     const userId = getAuthUserId(req);
     if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
     const { fileName, dataUrl, kind } = req.body;
+    const uploadCategory = String(req.body?.uploadCategory || "chat")
+      .trim()
+      .toLowerCase();
     const mediaKind = kind === "AUDIO" ? "AUDIO" : "IMAGE";
     if (!fileName || !dataUrl || !String(dataUrl).startsWith("data:")) {
       return res.status(400).json({ message: "上传参数不完整" });
@@ -1165,6 +1169,22 @@ app.post("/chat/upload", async (req, res) => {
       return res.status(400).json({ message: "语音过大，请压缩到 8MB 内" });
     }
     const ext = path.extname(String(fileName)).replace(".", "") || mimeType.split("/")[1] || "bin";
+
+    if (oss.ossConfigured()) {
+      try {
+        if (mediaKind === "IMAGE") {
+          const prefix = uploadCategory === "profile" ? "zhenren-pictures" : "chat-history-pictures";
+          const { url, thumbUrl } = await oss.uploadProfileOrChatImage(buffer, ext, mimeType, prefix);
+          return res.json({ url, thumbUrl });
+        }
+        const { url, thumbUrl } = await oss.uploadChatAudioBuffer(buffer, ext, mimeType);
+        return res.json({ url, thumbUrl });
+      } catch (e) {
+        console.error("[chat/upload OSS]", e);
+        return res.status(500).json({ message: e.message || "OSS 上传失败" });
+      }
+    }
+
     const folder = mediaKind === "AUDIO" ? "audio" : "image";
     const dir = path.join(uploadRoot, folder);
     await fs.mkdir(dir, { recursive: true });
