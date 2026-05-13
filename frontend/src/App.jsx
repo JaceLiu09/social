@@ -618,6 +618,8 @@ export default function App() {
   const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
   const AUDIO_MAX_BYTES = 8 * 1024 * 1024;
   const UPLOAD_TIMEOUT_MS = 20000;
+  /** 发动态多图：单张上传含压缩+OSS 弱网易超过默认 20s */
+  const UPLOAD_TIMEOUT_MOMENT_IMAGE_MS = 90000;
   const werewolfPollingRef = useRef(null);
   const werewolfSyncRetryRef = useRef(0);
   const tacitPollingRef = useRef(null);
@@ -2070,9 +2072,10 @@ export default function App() {
     }).catch(() => null);
   };
 
-  const uploadMedia = async (file, kind, uploadCategory = "chat") => {
+  const uploadMedia = async (file, kind, uploadCategory = "chat", options = {}) => {
+    const timeoutMs = typeof options.timeoutMs === "number" ? options.timeoutMs : UPLOAD_TIMEOUT_MS;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
@@ -3411,11 +3414,24 @@ export default function App() {
     }
     setSquarePublishLoading(true);
     try {
-      const imageUrls = [];
-      for (const file of squareDraftFiles) {
-        const compressed = await compressImageFile(file);
-        const { url } = await uploadMedia(compressed, "IMAGE", "chat");
-        imageUrls.push(url);
+      const files = squareDraftFiles;
+      let imageUrls = [];
+      if (files.length > 0) {
+        imageUrls = new Array(files.length);
+        let cursor = 0;
+        const worker = async () => {
+          while (true) {
+            const i = cursor++;
+            if (i >= files.length) break;
+            const compressed = await compressImageFile(files[i]);
+            const { url } = await uploadMedia(compressed, "IMAGE", "chat", {
+              timeoutMs: UPLOAD_TIMEOUT_MOMENT_IMAGE_MS
+            });
+            imageUrls[i] = url;
+          }
+        };
+        const pool = Math.min(3, files.length);
+        await Promise.all(Array.from({ length: pool }, () => worker()));
       }
       const res = await fetch(`${API}/square/posts`, {
         method: "POST",
