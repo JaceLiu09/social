@@ -806,7 +806,7 @@ async function loadAvatarUrlsByFolder(folder) {
     return files
       .filter((name) => /\.(jpg|jpeg|png|webp|gif)$/i.test(name))
       .sort()
-      .map((name) => `/avatars/${folder}/${name}`);
+      .map((name) => `/oss-media/fake-pictures/seed-avatars/${folder}/${name}`);
   } catch (_error) {
     return [];
   }

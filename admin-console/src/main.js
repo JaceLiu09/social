@@ -85,11 +85,42 @@ function mediaUrlOssObjectPath(pathname) {
   );
 }
 
+/** 与 App 一致：种子头像 /avatars/... → API 上 OSS 代理（静态后台目录不一定含 public/avatars） */
+function seedAvatarToAdminUrl(s, base) {
+  const str = String(s ?? "").trim();
+  if (!str.includes("/avatars/")) return null;
+  const root = base ? base.replace(/\/$/, "") : "";
+  const tailFrom = (pathname) => {
+    const i = pathname.indexOf("/avatars/");
+    if (i === -1) return null;
+    return pathname.slice(i + "/avatars/".length);
+  };
+  try {
+    if (/^https?:\/\//i.test(str) || str.startsWith("//")) {
+      const u = new URL(str.startsWith("//") ? `https:${str}` : str);
+      const tail = tailFrom(u.pathname);
+      if (!tail) return null;
+      const path = `/oss-media/fake-pictures/seed-avatars/${tail}${u.search || ""}`;
+      return root ? `${root}${path}` : path;
+    }
+  } catch (_e) {
+    return null;
+  }
+  if (str.startsWith("/avatars/")) {
+    const tail = str.slice("/avatars/".length).split("#")[0];
+    const path = `/oss-media/fake-pictures/seed-avatars/${tail}`;
+    return root ? `${root}${path}` : path;
+  }
+  return null;
+}
+
 /** 相册 / Fake 图等在库里可能是完整 OSS HTTPS URL；私有桶会 403，必须改走后端 /oss-media 代理 */
 function mediaUrl(u) {
   if (!u) return "";
   const s = String(u).trim();
   const base = apiBase();
+  const seed = seedAvatarToAdminUrl(s, base);
+  if (seed) return seed;
 
   const toProxy = (pathname, search = "") => {
     const p = pathname.startsWith("/") ? pathname : `/${pathname}`;

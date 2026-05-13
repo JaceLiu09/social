@@ -232,15 +232,34 @@ function formatBirthDateText(value) {
   return `${y}-${m}-${d}`;
 }
 
+/** manifest / 库里相对路径 /avatars/... → OSS 代理（需先在 backend 执行 npm run upload:seed-avatars-oss） */
+function resolveSeedAvatarUrl(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s.includes("/avatars/")) return null;
+  try {
+    if (/^https?:\/\//i.test(s) || s.startsWith("//")) {
+      const u = new URL(s.startsWith("//") ? `https:${s}` : s);
+      const i = u.pathname.indexOf("/avatars/");
+      if (i === -1) return null;
+      const tail = u.pathname.slice(i + "/avatars/".length);
+      return `${API}/oss-media/fake-pictures/seed-avatars/${tail}${u.search || ""}`;
+    }
+  } catch (_e) {
+    return null;
+  }
+  if (s.startsWith("/avatars/")) {
+    const tail = s.replace(/^\/avatars\//, "").split("#")[0];
+    return `${API}/oss-media/fake-pictures/seed-avatars/${tail}`;
+  }
+  return null;
+}
+
 function resolveAssetUrl(url) {
   const raw = String(url ?? "").trim();
   if (!raw) return MALE_SYMBOL_AVATAR;
   if (raw.startsWith("data:")) return raw;
-  const currentOrigin = `${window.location.protocol}//${window.location.host}`;
-  if (raw.startsWith("http://localhost:5173/avatars/") || raw.startsWith("https://localhost:5173/avatars/")) {
-    return raw.replace(/^https?:\/\/localhost:5173/, currentOrigin);
-  }
-  if (raw.startsWith("/avatars/")) return raw;
+  const seedHit = resolveSeedAvatarUrl(raw);
+  if (seedHit) return seedHit;
   // 上传文件挂在 API 的 /uploads；OSS 私有桶走 API 的 /oss-media；历史绝对 URL 统一到当前 API
   try {
     const u = new URL(raw);
@@ -267,6 +286,8 @@ function resolveMediaUrl(url) {
   const raw = String(url ?? "").trim();
   if (!raw) return "";
   if (raw.startsWith("data:")) return raw;
+  const seedHit = resolveSeedAvatarUrl(raw);
+  if (seedHit) return seedHit;
   // 与 resolveAssetUrl 一致：/uploads、OSS 路径都接到当前 API（含换机、换端口）
   let pathish = raw;
   if (/^uploads\//i.test(pathish)) pathish = `/${pathish}`;
