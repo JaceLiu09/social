@@ -13,7 +13,8 @@
     "prisma:push": "prisma db push",
     "seed": "node prisma/seed.js",
     "test:oss": "node scripts/test-oss-upload.mjs",
-    "migrate:oss-fakes": "node scripts/migrate-fake-bots-to-oss.mjs"
+    "migrate:oss-fakes": "node scripts/migrate-fake-bots-to-oss.mjs",
+    "migrate:oss-urls-proxy": "node scripts/migrate-oss-urls-to-proxy.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
