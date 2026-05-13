@@ -3306,6 +3306,61 @@ button:hover {
   padding: 16px 14px 20px;
 }
 
+.chat-plus-grid--soul {
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.chat-plus-call-group {
+  display: flex;
+  align-items: stretch;
+  min-height: 100%;
+  border: 1px solid #e5e9f4;
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.chat-plus-call-btn {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 12px 6px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  color: #3a4668;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.chat-plus-call-btn:active {
+  background: #f3f6fd;
+}
+
+.chat-plus-call-ico {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.chat-plus-call-label {
+  text-align: center;
+  max-width: 100%;
+}
+
+.chat-plus-call-sep {
+  width: 1px;
+  flex-shrink: 0;
+  background: #e8ecf4;
+  align-self: stretch;
+  margin: 8px 0;
+}
+
 .chat-plus-item {
   border: 1px solid #e5e9f4;
   border-radius: 12px;

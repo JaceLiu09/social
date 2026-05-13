@@ -6,6 +6,7 @@
  *   cd backend && node scripts/migrate-fake-bots-to-oss.mjs
  */
 
+import "dotenv/config";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

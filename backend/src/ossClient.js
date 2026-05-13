@@ -82,16 +82,53 @@ function getOssClient() {
   }
   if (cachedClient) return cachedClient;
   const region = process.env.ALIYUN_OSS_REGION.trim();
-  const endpoint = `https://${region}.aliyuncs.com`;
+  const customEndpoint = process.env.ALIYUN_OSS_ENDPOINT?.trim();
+  const regionalEndpoint = `https://${region}.aliyuncs.com`;
+  const isAccessPoint =
+    Boolean(customEndpoint) && customEndpoint.toLowerCase().includes("oss-accesspoint.aliyuncs.com");
+  const forceApSdk = ["1", "true", "yes"].includes(
+    String(process.env.ALIYUN_OSS_USE_AP_FOR_SDK || "").toLowerCase()
+  );
+
+  let endpoint;
+  let sldEnable;
+  let authorizationV4;
+
+  if (customEndpoint && (!isAccessPoint || forceApSdk)) {
+    endpoint = customEndpoint;
+    const endpointLc = endpoint.toLowerCase();
+    const apHost = endpointLc.includes("oss-accesspoint.aliyuncs.com");
+    const envSld = process.env.ALIYUN_OSS_SLD;
+    sldEnable =
+      envSld === "0" || envSld === "false"
+        ? false
+        : envSld === "1" || envSld === "true"
+          ? true
+          : apHost;
+    const envV4 = process.env.ALIYUN_OSS_AUTH_V4;
+    authorizationV4 =
+      envV4 === "0" || envV4 === "false"
+        ? false
+        : envV4 === "1" || envV4 === "true"
+          ? true
+          : apHost;
+  } else {
+    // 配置了接入点但未强制走接入点 SDK 时：ali-oss 对接入点常出现 SignatureDoesNotMatch，与 test-oss-upload 一致改用区域 Endpoint 签名
+    endpoint = regionalEndpoint;
+    sldEnable = false;
+    authorizationV4 = false;
+  }
+
+  const secure = endpoint.startsWith("https://");
   cachedClient = new OSS({
     region,
     accessKeyId: process.env.ALIYUN_OSS_ACCESS_KEY_ID.trim(),
     accessKeySecret: process.env.ALIYUN_OSS_ACCESS_KEY_SECRET.trim(),
     bucket: process.env.ALIYUN_OSS_BUCKET.trim(),
     endpoint,
-    secure: true,
-    sldEnable: false,
-    authorizationV4: false
+    secure,
+    sldEnable,
+    authorizationV4
   });
   return cachedClient;
 }

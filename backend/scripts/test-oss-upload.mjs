@@ -29,6 +29,7 @@
  *   ALIYUN_OSS_AUTH_V4=0
  */
 
+import "dotenv/config";
 import OSS from "ali-oss";
 
 function requireEnv(name) {

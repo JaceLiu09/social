@@ -10,6 +10,7 @@
  *   cd backend && npm run upload:seed-avatars-oss
  */
 
+import "dotenv/config";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

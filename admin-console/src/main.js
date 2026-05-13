@@ -303,6 +303,142 @@ function flash(text, kind) {
   setTimeout(() => el.remove(), 4000);
 }
 
+/**
+ * 用户机器人库表格「发动态」：弹层内上传图 + 文案，走 `POST /admin/api/fake-bots/:id/square-moments`。
+ * @param {{ userId: string; nickname: string; gender: string }} ctx
+ */
+function openFakeMomentModal(ctx) {
+  const userId = String(ctx.userId || "").trim();
+  const gender = ctx.gender === "MALE" ? "MALE" : "FEMALE";
+  if (!userId) return;
+
+  document.getElementById("fake-moment-modal")?.remove();
+
+  const wrap = document.createElement("div");
+  wrap.id = "fake-moment-modal";
+  wrap.className = "modal-overlay";
+  wrap.setAttribute("aria-modal", "true");
+  wrap.innerHTML = `
+    <div class="modal-card" role="document">
+      <div class="modal-head">
+        <h3>发动态 <span id="fake-moment-who" class="muted"></span></h3>
+        <button type="button" class="btn secondary" id="fake-moment-close">关闭</button>
+      </div>
+      <p class="muted" style="margin:0 0 10px;font-size:12px">发布后将出现在广场信息流，以及该机器人账号在 App 内「我的动态」列表（与本人发帖一致）。</p>
+      <label class="fake-moment-label" for="fake-moment-text">文字</label>
+      <textarea id="fake-moment-text" maxlength="2000" placeholder="可只发图、只发文，或图文一起"></textarea>
+      <label class="fake-moment-label" for="fake-moment-files">图片（最多 9 张，每张 ≤4MB）</label>
+      <input type="file" id="fake-moment-files" accept="image/*" multiple />
+      <div id="fake-moment-previews" class="fake-moment-previews"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn secondary" id="fake-moment-cancel">取消</button>
+        <button type="button" class="btn" id="fake-moment-publish">发布</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+
+  const who = wrap.querySelector("#fake-moment-who");
+  if (who) who.textContent = ctx.nickname ? `· ${ctx.nickname}` : "";
+
+  /** @type {File[]} */
+  const draftFiles = [];
+  /** @type {string[]} */
+  let objectUrls = [];
+
+  const previews = wrap.querySelector("#fake-moment-previews");
+  const ta = wrap.querySelector("#fake-moment-text");
+  const fileInput = wrap.querySelector("#fake-moment-files");
+  const publishBtn = wrap.querySelector("#fake-moment-publish");
+
+  function revokeAllPreviews() {
+    objectUrls.forEach((u) => URL.revokeObjectURL(u));
+    objectUrls = [];
+  }
+
+  function renderPreviews() {
+    if (!previews) return;
+    revokeAllPreviews();
+    previews.innerHTML = "";
+    draftFiles.forEach((file, i) => {
+      const url = URL.createObjectURL(file);
+      objectUrls.push(url);
+      const cell = document.createElement("div");
+      cell.className = "fake-moment-thumb";
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = "";
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "fake-moment-remove";
+      rm.textContent = "移除";
+      rm.dataset.index = String(i);
+      rm.addEventListener("click", () => {
+        draftFiles.splice(i, 1);
+        renderPreviews();
+      });
+      cell.appendChild(img);
+      cell.appendChild(rm);
+      previews.appendChild(cell);
+    });
+  }
+
+  function closeModal() {
+    revokeAllPreviews();
+    wrap.remove();
+  }
+
+  fileInput?.addEventListener("change", () => {
+    const add = Array.from(fileInput.files || []).filter((f) => String(f.type || "").startsWith("image/"));
+    fileInput.value = "";
+    for (const f of add) {
+      if (draftFiles.length >= 9) break;
+      draftFiles.push(f);
+    }
+    renderPreviews();
+  });
+
+  wrap.querySelector("#fake-moment-close")?.addEventListener("click", closeModal);
+  wrap.querySelector("#fake-moment-cancel")?.addEventListener("click", closeModal);
+  wrap.addEventListener("click", (e) => {
+    if (e.target === wrap) closeModal();
+  });
+
+  publishBtn?.addEventListener("click", async () => {
+    const text = String(ta?.value || "").trim();
+    if (!text && !draftFiles.length) {
+      flash("请填写文字或选择至少一张图片", "err");
+      return;
+    }
+    publishBtn.disabled = true;
+    const prevLabel = publishBtn.textContent;
+    try {
+      const imageUrls = [];
+      for (let i = 0; i < draftFiles.length; i++) {
+        publishBtn.textContent = `上传 ${i + 1}/${draftFiles.length}…`;
+        const dataUrl = await fileToDataUrl(draftFiles[i]);
+        const up = await api("/admin/api/upload", {
+          method: "POST",
+          body: JSON.stringify({ fileName: draftFiles[i].name, dataUrl, gender })
+        });
+        imageUrls.push(up.url);
+      }
+      publishBtn.textContent = "发布中…";
+      await api(`/admin/api/fake-bots/${encodeURIComponent(userId)}/square-moments`, {
+        method: "POST",
+        body: JSON.stringify({ text, imageUrls })
+      });
+      flash("动态已发布", "ok");
+      closeModal();
+    } catch (e) {
+      flash(e.message || "发布失败", "err");
+    } finally {
+      publishBtn.disabled = false;
+      publishBtn.textContent = prevLabel;
+    }
+  });
+}
+
 let userPage = 1;
 let msgPage = 1;
 let msgFilterTo = "";
@@ -421,7 +557,8 @@ async function renderOnline(panel) {
   `;
 }
 
-function fakeBotTableRows(users, maxRows) {
+function fakeBotTableRows(users, maxRows, opts) {
+  const withMoment = Boolean(opts?.withMomentButton);
   const slice = users.slice(0, maxRows);
   return slice
     .map(
@@ -432,6 +569,11 @@ function fakeBotTableRows(users, maxRows) {
                 <td class="muted">${escapeHtml(u.phone)}</td>
                 <td>${escapeHtml(u.currentCity || "")}</td>
                 <td class="muted">${escapeHtml((u.hobbies || "").slice(0, 40))}${(u.hobbies || "").length > 40 ? "…" : ""}</td>
+                ${
+                  withMoment
+                    ? `<td><button type="button" class="btn secondary fake-moment-open" data-user-id="${escapeAttr(u.id)}" data-nickname="${escapeAttr(u.nickname || "")}" data-gender="${escapeAttr(u.gender === "MALE" ? "MALE" : "FEMALE")}">发动态</button></td>`
+                    : ""
+                }
               </tr>`
     )
     .join("");
@@ -482,10 +624,10 @@ async function renderFakes(panel) {
       <div style="overflow-x:auto;margin-bottom:20px">
         <table class="data">
           <thead>
-            <tr><th></th><th>昵称</th><th>手机</th><th>城市</th><th>爱好</th></tr>
+            <tr><th></th><th>昵称</th><th>手机</th><th>城市</th><th>爱好</th><th>操作</th></tr>
           </thead>
           <tbody>
-            ${fakeBotTableRows(userData.users, 80)}
+            ${fakeBotTableRows(userData.users, 80, { withMomentButton: true })}
           </tbody>
         </table>
       </div>
@@ -556,7 +698,22 @@ async function renderFakes(panel) {
     albumInput.addEventListener("change", updateHint);
     updateHint();
   }
-  bindFakeAlbumDropZone();
+    bindFakeAlbumDropZone();
+
+  if (panel._fakeMomentClick) {
+    panel.removeEventListener("click", panel._fakeMomentClick);
+  }
+  panel._fakeMomentClick = (e) => {
+    const btn = e.target.closest(".fake-moment-open");
+    if (!btn) return;
+    e.preventDefault();
+    openFakeMomentModal({
+      userId: btn.getAttribute("data-user-id") || "",
+      nickname: btn.getAttribute("data-nickname") || "",
+      gender: btn.getAttribute("data-gender") === "MALE" ? "MALE" : "FEMALE"
+    });
+  };
+  panel.addEventListener("click", panel._fakeMomentClick);
 
   document.getElementById("fake-form").onsubmit = async (ev) => {
     ev.preventDefault();

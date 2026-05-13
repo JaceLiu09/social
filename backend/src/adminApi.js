@@ -25,6 +25,36 @@ function parsePhotoUrls(raw) {
   }
 }
 
+/** 与 `server.js` 中广场发帖校验一致，避免写入任意外链 */
+function isAllowedSquareMediaUrl(u) {
+  const s = String(u || "").trim();
+  if (!s) return false;
+  if (s.startsWith("/uploads/") || s.startsWith("/oss-media/")) return true;
+  if (s.startsWith("/avatars/")) return true;
+  try {
+    const x = new URL(s);
+    const p = x.pathname;
+    return (
+      p.includes("/uploads/") ||
+      p.includes("/oss-media/") ||
+      p.includes("/fake-pictures/") ||
+      p.includes("/chat-history-pictures/") ||
+      p.includes("/zhenren-pictures/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+const adminSquareMomentPostSchema = z
+  .object({
+    text: z.string().max(2000).optional().default(""),
+    imageUrls: z.array(z.string().max(2048)).max(9).optional().default([])
+  })
+  .refine((d) => String(d.text || "").trim().length > 0 || (d.imageUrls && d.imageUrls.length > 0), {
+    message: "至少填写文字或上传一张图片"
+  });
+
 /**
  * @param {{ prisma: import("@prisma/client").PrismaClient; uploadRoot: string; getOnlineUserIds: () => string[] }} deps
  */
@@ -322,6 +352,53 @@ export function createAdminRouter(deps) {
             ? "手机号冲突，请再提交一次。"
             : raw || "创建失败";
       res.status(500).json({ message: msg });
+    }
+  });
+
+  /**
+   * 代「用户机器人库」账号发布广场动态（写入 SquareMoment，广场 / 该用户「我的动态」一致）
+   */
+  r.post("/fake-bots/:userId/square-moments", async (req, res) => {
+    try {
+      const userId = String(req.params.userId || "").trim();
+      if (!userId) return res.status(400).json({ message: "用户 ID 无效" });
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, phone: true, fakeRobotLibrary: true }
+      });
+      if (!user) return res.status(404).json({ message: "用户不存在" });
+      if (!isFakeBotPhone(user.phone)) {
+        return res.status(400).json({ message: "仅支持 fake 机器人账号" });
+      }
+      if (user.fakeRobotLibrary !== "USER") {
+        return res.status(403).json({ message: "仅「用户机器人库」账号可由后台代发动态" });
+      }
+
+      const parsed = adminSquareMomentPostSchema.parse(req.body);
+      const text = String(parsed.text || "").trim();
+      const urls = (parsed.imageUrls || []).map((x) => String(x).trim()).filter(Boolean);
+      for (const u of urls) {
+        if (!isAllowedSquareMediaUrl(u)) {
+          return res.status(400).json({ message: "包含不允许的图片地址" });
+        }
+      }
+
+      const row = await prisma.squareMoment.create({
+        data: {
+          userId: user.id,
+          text,
+          imageUrls: JSON.stringify(urls)
+        }
+      });
+
+      res.status(201).json({ ok: true, moment: { id: row.id, createdAt: row.createdAt } });
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: e.issues[0]?.message || "参数错误" });
+      }
+      console.error("[admin/fake-bots/:userId/square-moments]", e);
+      res.status(500).json({ message: e.message || "发布失败" });
     }
   });
 

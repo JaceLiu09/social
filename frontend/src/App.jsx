@@ -4345,7 +4345,7 @@ export default function App() {
                   )}
                   {chatComposerPanel === "plus" && (
                     <div className="chat-composer-sheet chat-plus-sheet" role="menu" aria-label="更多功能">
-                      <div className="chat-plus-grid">
+                      <div className="chat-plus-grid chat-plus-grid--soul">
                         <button
                           type="button"
                           className="chat-plus-item"
@@ -4359,32 +4359,35 @@ export default function App() {
                           </span>
                           <span>照片</span>
                         </button>
-                        <button
-                          type="button"
-                          className="chat-plus-item"
-                          onClick={() => {
-                            setChatComposerPanel("none");
-                            showToast("语音通话功能开发中");
-                          }}
-                        >
-                          <span className="chat-plus-icon" aria-hidden>
-                            📞
-                          </span>
-                          <span>语音通话</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="chat-plus-item"
-                          onClick={() => {
-                            setChatComposerPanel("none");
-                            showToast("视频通话功能开发中");
-                          }}
-                        >
-                          <span className="chat-plus-icon" aria-hidden>
-                            📹
-                          </span>
-                          <span>视频通话</span>
-                        </button>
+                        <div className="chat-plus-call-group" role="group" aria-label="音视频通话">
+                          <button
+                            type="button"
+                            className="chat-plus-call-btn"
+                            onClick={() => {
+                              setChatComposerPanel("none");
+                              showToast("语音通话功能开发中");
+                            }}
+                          >
+                            <span className="chat-plus-call-ico" aria-hidden>
+                              📞
+                            </span>
+                            <span className="chat-plus-call-label">语音通话</span>
+                          </button>
+                          <span className="chat-plus-call-sep" aria-hidden />
+                          <button
+                            type="button"
+                            className="chat-plus-call-btn"
+                            onClick={() => {
+                              setChatComposerPanel("none");
+                              showToast("视频通话功能开发中");
+                            }}
+                          >
+                            <span className="chat-plus-call-ico" aria-hidden>
+                              📹
+                            </span>
+                            <span className="chat-plus-call-label">视频通话</span>
+                          </button>
+                        </div>
                         <button
                           type="button"
                           className="chat-plus-item"
