@@ -19,6 +19,15 @@
  *
  * 可选：
  *   ALIYUN_OSS_SLD=0   强制关闭 path 样式（极少用）
+ *
+ * 403 signature mismatch：
+ *   接入点域名通常需 OSS V4 签名。脚本在检测到 oss-accesspoint 时会设置 authorizationV4。
+ *   若仍 403，可改用经典 Endpoint（同一 Bucket，仍可用目录前缀区分业务）：
+ *   ALIYUN_OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
+ *   且不要对接入点域名（此时可设 ALIYUN_OSS_SLD=0）。
+ *
+ * 可选：
+ *   ALIYUN_OSS_AUTH_V4=0   对接入点也强制关 V4（一般不需要）
  */
 
 import OSS from "ali-oss";
@@ -58,6 +67,15 @@ async function main() {
         ? true
         : endpointLc.includes("oss-accesspoint.aliyuncs.com");
 
+  const apHost = endpointLc.includes("oss-accesspoint.aliyuncs.com");
+  const envV4 = process.env.ALIYUN_OSS_AUTH_V4;
+  const authorizationV4 =
+    envV4 === "0" || envV4 === "false"
+      ? false
+      : envV4 === "1" || envV4 === "true"
+        ? true
+        : apHost;
+
   const client = new OSS({
     region,
     accessKeyId,
@@ -65,10 +83,11 @@ async function main() {
     bucket,
     endpoint,
     secure: endpoint.startsWith("https://"),
-    sldEnable
+    sldEnable,
+    authorizationV4
   });
 
-  console.log("Uploading…", { bucket, key, endpoint, sldEnable });
+  console.log("Uploading…", { bucket, key, endpoint, sldEnable, authorizationV4 });
   const putRes = await client.put(key, body, {
     headers: { "Content-Type": "text/plain; charset=utf-8" }
   });
