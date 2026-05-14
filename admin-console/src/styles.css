@@ -416,6 +416,12 @@ button.btn:disabled {
   margin: 14px 0 4px;
 }
 
+/* 机器人表单：无图时不占垂直空间 */
+.fake-form-previews:empty {
+  display: none;
+  margin: 0;
+}
+
 .fake-moment-thumb {
   position: relative;
   width: 76px;

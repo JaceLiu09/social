@@ -603,17 +603,19 @@ async function renderFakes(panel) {
       <label class="form-full">对另一半期望（签名感文案） <textarea name="partnerExpectation" placeholder="真诚沟通，彼此尊重"></textarea></label>
       <div class="form-full upload-block">
         <strong>头像（必选）</strong>
-        <p class="muted" style="margin:4px 0 8px">从本地上传一张，将作为头像并写入服务器 uploads。</p>
+        <p class="muted" style="margin:4px 0 8px">从本地上传一张，将作为头像并写入服务器 uploads。选错可点缩略图上的移除后重选。</p>
         <input type="file" id="fake-avatar" accept="image/*" />
+        <div id="fake-avatar-preview" class="fake-moment-previews fake-form-previews" aria-live="polite"></div>
       </div>
       <div class="form-full upload-block">
         <strong>相册（可选，可多选）</strong>
-        <p class="muted" style="margin:4px 0 8px">支持拖拽多张到下方区域批量添加；或点按钮在系统文件框内按住 Ctrl/Cmd 点选多张。提交后与头像一起写入相册列表。</p>
+        <p class="muted" style="margin:4px 0 8px">支持拖拽多张到下方区域批量添加；或点按钮在系统文件框内按住 Ctrl/Cmd 点选多张。下方可预览，点「移除」可删掉单张后再追加。</p>
         <div id="fake-album-drop" class="drop-zone" aria-label="相册拖放区">
           <p id="fake-album-hint" class="drop-hint muted">将多张图片拖到此处释放（可分批追加）</p>
           <button type="button" class="btn secondary" id="fake-album-browse">选择多张图片…</button>
           <input type="file" id="fake-album" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="hidden" tabindex="-1" />
         </div>
+        <div id="fake-album-preview" class="fake-moment-previews fake-form-previews" aria-live="polite"></div>
       </div>
       <div class="form-full">
         <button type="submit" class="btn" id="fake-submit-btn">提交到用户机器人库</button>
@@ -659,27 +661,112 @@ async function renderFakes(panel) {
     return res.url;
   }
 
+  /** @type {File | null} */
+  let avatarDraftFile = null;
+  let avatarPreviewObjectUrl = null;
+  const avatarInput = document.getElementById("fake-avatar");
+  const avatarPreviewWrap = document.getElementById("fake-avatar-preview");
+
+  function revokeAvatarPreviewUrl() {
+    if (avatarPreviewObjectUrl) {
+      URL.revokeObjectURL(avatarPreviewObjectUrl);
+      avatarPreviewObjectUrl = null;
+    }
+  }
+
+  function renderAvatarPreview() {
+    revokeAvatarPreviewUrl();
+    if (!avatarPreviewWrap) return;
+    avatarPreviewWrap.innerHTML = "";
+    if (!avatarDraftFile) return;
+    avatarPreviewObjectUrl = URL.createObjectURL(avatarDraftFile);
+    const cell = document.createElement("div");
+    cell.className = "fake-moment-thumb";
+    const img = document.createElement("img");
+    img.src = avatarPreviewObjectUrl;
+    img.alt = "";
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "fake-moment-remove";
+    rm.textContent = "移除";
+    rm.addEventListener("click", () => {
+      avatarDraftFile = null;
+      if (avatarInput) avatarInput.value = "";
+      renderAvatarPreview();
+    });
+    cell.appendChild(img);
+    cell.appendChild(rm);
+    avatarPreviewWrap.appendChild(cell);
+  }
+
+  avatarInput?.addEventListener("change", () => {
+    const f = avatarInput.files?.[0];
+    avatarInput.value = "";
+    if (!f || !String(f.type || "").startsWith("image/")) {
+      avatarDraftFile = null;
+      renderAvatarPreview();
+      return;
+    }
+    avatarDraftFile = f;
+    renderAvatarPreview();
+  });
+
+  /** @type {File[]} */
+  const albumDraftFiles = [];
+  /** @type {string[]} */
+  let albumPreviewObjectUrls = [];
+
   function bindFakeAlbumDropZone() {
     const albumInput = document.getElementById("fake-album");
     const zone = document.getElementById("fake-album-drop");
     const hint = document.getElementById("fake-album-hint");
     const browse = document.getElementById("fake-album-browse");
-    if (!albumInput || !zone || !hint) return;
+    const albumPreviewEl = document.getElementById("fake-album-preview");
+    if (!albumInput || !zone || !hint || !albumPreviewEl) return;
+
+    function revokeAlbumPreviewUrls() {
+      albumPreviewObjectUrls.forEach((u) => URL.revokeObjectURL(u));
+      albumPreviewObjectUrls = [];
+    }
+
+    function renderAlbumPreviews() {
+      revokeAlbumPreviewUrls();
+      albumPreviewEl.innerHTML = "";
+      albumDraftFiles.forEach((file, i) => {
+        const url = URL.createObjectURL(file);
+        albumPreviewObjectUrls.push(url);
+        const cell = document.createElement("div");
+        cell.className = "fake-moment-thumb";
+        const img = document.createElement("img");
+        img.src = url;
+        img.alt = "";
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "fake-moment-remove";
+        rm.textContent = "移除";
+        rm.addEventListener("click", () => {
+          albumDraftFiles.splice(i, 1);
+          renderAlbumPreviews();
+          updateHint();
+        });
+        cell.appendChild(img);
+        cell.appendChild(rm);
+        albumPreviewEl.appendChild(cell);
+      });
+    }
 
     function updateHint() {
-      const n = albumInput.files?.length || 0;
+      const n = albumDraftFiles.length;
       hint.textContent = n
-        ? `已添加 ${n} 张相册图（可继续拖拽或点击按钮追加）`
+        ? `已选择 ${n} 张相册图（可继续拖拽或点击按钮追加；缩略图可单张移除）`
         : "将多张图片拖到此处释放（可分批追加）；或点击下方按钮多选";
     }
 
     function mergeIncoming(incomingList) {
       const add = Array.from(incomingList || []).filter((f) => String(f.type || "").startsWith("image/"));
       if (!add.length) return;
-      const prev = albumInput.files?.length ? Array.from(albumInput.files) : [];
-      const dt = new DataTransfer();
-      [...prev, ...add].forEach((f) => dt.items.add(f));
-      albumInput.files = dt.files;
+      for (const f of add) albumDraftFiles.push(f);
+      renderAlbumPreviews();
       updateHint();
     }
 
@@ -695,10 +782,13 @@ async function renderFakes(panel) {
       mergeIncoming(e.dataTransfer?.files);
     });
     browse?.addEventListener("click", () => albumInput.click());
-    albumInput.addEventListener("change", updateHint);
+    albumInput.addEventListener("change", () => {
+      mergeIncoming(albumInput.files);
+      albumInput.value = "";
+    });
     updateHint();
   }
-    bindFakeAlbumDropZone();
+  bindFakeAlbumDropZone();
 
   if (panel._fakeMomentClick) {
     panel.removeEventListener("click", panel._fakeMomentClick);
@@ -717,25 +807,22 @@ async function renderFakes(panel) {
 
   document.getElementById("fake-form").onsubmit = async (ev) => {
     ev.preventDefault();
-    const avatarInput = document.getElementById("fake-avatar");
-    const albumInput = document.getElementById("fake-album");
-    const avatarFile = avatarInput.files?.[0];
-    if (!avatarFile) {
+    if (!avatarDraftFile) {
       flash("请先选择头像图片（必选）：点「头像」下的文件框选一张本地图，再提交。", "err");
-      avatarInput.scrollIntoView({ behavior: "smooth", block: "center" });
-      avatarInput.focus();
+      avatarInput?.scrollIntoView({ behavior: "smooth", block: "center" });
+      avatarInput?.focus();
       return;
     }
 
     const submitBtn = document.getElementById("fake-submit-btn");
     const fd = new FormData(ev.target);
-    const albumFiles = albumInput.files ? Array.from(albumInput.files) : [];
+    const albumFiles = [...albumDraftFiles];
 
     submitBtn.disabled = true;
     const prevText = submitBtn.textContent;
     try {
       submitBtn.textContent = "正在上传图片…";
-      const avatarUrl = await uploadImageFile(avatarFile);
+      const avatarUrl = await uploadImageFile(avatarDraftFile);
       const albumUrls = [];
       for (let i = 0; i < albumFiles.length; i++) {
         submitBtn.textContent = `上传相册 ${i + 1}/${albumFiles.length}…`;
