@@ -1138,12 +1138,25 @@ body {
   object-fit: cover;
 }
 
-/* 广场 / 我的动态：与发动态一致的 3 列缩略图，点击看原图 */
+/* 广场 / 我的动态：多图网格，点击看原图（4 张为 2×2；6 张为每行 3 张共两行；其余默认 3 列） */
 .square-post-photo-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin: 10px 0 8px;
+}
+
+/* 四张：上下各两张（2×2），单格比 3 列时更大 */
+.square-post-photo-grid--four {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+/* 六张：上下各三张（3×2），略收间距让整块更紧凑 */
+.square-post-photo-grid--six {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 7px;
 }
 
 .square-post-photo-cell {

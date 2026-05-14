@@ -3568,8 +3568,11 @@ export default function App() {
     if (!Array.isArray(imageUrls) || imageUrls.length === 0) return null;
     const list = imageUrls.map((u) => String(u ?? "").trim()).filter(Boolean);
     if (list.length === 0) return null;
+    const n = list.length;
+    const gridMods =
+      n === 4 ? "square-post-photo-grid--four" : n === 6 ? "square-post-photo-grid--six" : "";
     return (
-      <div className="square-post-photo-grid">
+      <div className={`square-post-photo-grid${gridMods ? ` ${gridMods}` : ""}`}>
         {list.map((url, i) => {
           const thumb = thumbUrlForChatHistoryImageUrl(url) || url;
           return (
