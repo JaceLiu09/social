@@ -1922,7 +1922,7 @@ export default function App() {
     planetMatchFlowLockRef.current = true;
     planetMatchDismissedRef.current = false;
 
-    let countdownIntervalId = null;
+    let waitHintIntervalId = null;
     try {
       try {
         flushSync(() => {
@@ -1939,21 +1939,18 @@ export default function App() {
       }
 
       const minWaitMs = Math.round(3000 + Math.random() * 4000);
+      const matchWaitStartedAt = Date.now();
+      const refreshPlanetMatchElapsed = () => {
+        const sec = Math.floor((Date.now() - matchWaitStartedAt) / 1000);
+        setPlanetMatchWaitHint(`附近雷达扫描中，已 ${sec} 秒`);
+      };
+      refreshPlanetMatchElapsed();
+      waitHintIntervalId = window.setInterval(refreshPlanetMatchElapsed, 250);
       try {
         playPlanetMatchSearchSfx();
       } catch (_e) {
         /* 音效失败不影响匹配流程 */
       }
-
-      const matchEndAt = Date.now() + minWaitMs;
-      const refreshPlanetMatchCountdown = () => {
-        const secLeft = Math.max(0, Math.ceil((matchEndAt - Date.now()) / 1000));
-        setPlanetMatchWaitHint(
-          secLeft > 0 ? `附近雷达扫描中，约 ${secLeft} 秒` : "正在连接匹配服务…"
-        );
-      };
-      refreshPlanetMatchCountdown();
-      countdownIntervalId = window.setInterval(refreshPlanetMatchCountdown, 250);
 
       /* 先完整跑完随机动画时长，再请求接口，避免并行/静默匹配路径在任何环境下被“秒完成” */
       await new Promise((resolve) => {
@@ -1986,7 +1983,7 @@ export default function App() {
         navigate("/planet");
       }
     } finally {
-      if (countdownIntervalId !== null) window.clearInterval(countdownIntervalId);
+      if (waitHintIntervalId !== null) window.clearInterval(waitHintIntervalId);
       setPlanetMatchWaitHint("");
       setPlanetMatchLoading(false);
       planetMatchFlowLockRef.current = false;
@@ -5900,7 +5897,7 @@ export default function App() {
                   正在为你匹配隐藏款
                 </h2>
                 <p className="planet-match-page-caption">
-                  {planetMatchWaitHint || "星际巡航中，大约 3～7 秒"}
+                  {planetMatchWaitHint || "附近雷达扫描中，已 0 秒"}
                 </p>
                 <div className="planet-match-dots planet-match-dots--cosmic" aria-hidden>
                   <span />
@@ -5937,6 +5934,9 @@ export default function App() {
                     </button>
                     <button type="button" className="planet-match-cyber-btn planet-match-cyber-btn--glow" onClick={handlePlanetContact}>
                       联系对方
+                    </button>
+                    <button type="button" className="planet-match-cyber-btn planet-match-cyber-btn--continue" onClick={startPlanetMatchFlow}>
+                      继续匹配
                     </button>
                   </div>
                 </article>

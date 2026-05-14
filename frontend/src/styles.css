@@ -2478,6 +2478,17 @@ button:hover {
     0 2px 10px rgba(192, 132, 252, 0.2);
 }
 
+.planet-match-cyber-btn--continue {
+  grid-column: 1 / -1;
+  background: rgba(255, 255, 255, 0.92);
+  color: #9333ea;
+  border: 1px solid rgba(192, 132, 252, 0.5);
+}
+
+.planet-match-cyber-btn--continue:active {
+  opacity: 0.92;
+}
+
 .planet-match-page-backlink {
   margin-top: 4px;
   background: none;
