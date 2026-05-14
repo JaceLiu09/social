@@ -1643,6 +1643,11 @@ function mapPlanetRobotProfile(item) {
     nickname: item.nickname,
     age: item.age,
     city: item.currentCity || "",
+    hometown: item.hometown || "",
+    height: typeof item.height === "number" ? item.height : item.height != null ? Number(item.height) : null,
+    weight: typeof item.weight === "number" ? item.weight : item.weight != null ? Number(item.weight) : null,
+    income: item.income != null ? String(item.income) : "",
+    industry: item.industry || "",
     hobbies: item.hobbies || "",
     avatar: item.avatarUrl || "",
     gender: item.gender,
@@ -1688,15 +1693,20 @@ async function planetRobotLibrary(req, res, library) {
         nickname: true,
         age: true,
         currentCity: true,
+        hometown: true,
+        height: true,
+        weight: true,
+        income: true,
+        industry: true,
         hobbies: true,
         partnerExpectation: true,
         photoUrls: true,
         avatarUrl: true,
         gender: true
       },
-      take: 12
+      take: 80
     });
-    const shuffled = shuffleList(list).slice(0, 6);
+    const shuffled = shuffleList(list).slice(0, 36);
     return res.json({
       profiles: shuffled.map(mapPlanetRobotProfile)
     });
@@ -1736,39 +1746,29 @@ app.post("/match/start", async (req, res) => {
     ]
   };
 
-  const lastSession = await prisma.matchSession.findFirst({
+  const pastSessions = await prisma.matchSession.findMany({
     where: {
       OR: [{ maleUserId: currentUser.id }, { femaleUserId: currentUser.id }]
     },
-    orderBy: { startedAt: "desc" }
+    select: { maleUserId: true, femaleUserId: true },
+    orderBy: { startedAt: "desc" },
+    take: 400
   });
-  const lastOpponentId = lastSession
-    ? lastSession.maleUserId === currentUser.id
-      ? lastSession.femaleUserId
-      : lastSession.maleUserId
-    : null;
-
-  let userBotWhere = baseUserBotWhere;
-  if (lastOpponentId) {
-    const poolWithoutLast = await prisma.user.count({
-      where: {
-        ...baseUserBotWhere,
-        id: { notIn: [currentUser.id, lastOpponentId] }
-      }
-    });
-    if (poolWithoutLast > 0) {
-      userBotWhere = {
-        ...baseUserBotWhere,
-        id: { notIn: [currentUser.id, lastOpponentId] }
-      };
-    }
+  const pastOpponentIds = new Set();
+  for (const s of pastSessions) {
+    const opp = s.maleUserId === currentUser.id ? s.femaleUserId : s.maleUserId;
+    if (opp && opp !== currentUser.id) pastOpponentIds.add(opp);
   }
+  const excludeIds = Array.from(new Set([currentUser.id, ...pastOpponentIds]));
+  let userBotWhere =
+    excludeIds.length > 1 ? { ...baseUserBotWhere, id: { notIn: excludeIds } } : baseUserBotWhere;
 
-  const botCount = await prisma.user.count({ where: userBotWhere });
+  let botCount = await prisma.user.count({ where: userBotWhere });
   if (!botCount) {
-    return res.status(404).json({ message: "暂时没有可用的用户机器人，请在后台「用户机器人库」中添加后再匹配" });
+    userBotWhere = baseUserBotWhere;
+    botCount = await prisma.user.count({ where: userBotWhere });
   }
-  // 稳定排序 + 随机 skip：均匀抽池；上一条已尽量排除「连续两次同一人」
+  // 稳定排序 + 随机 skip：在可选池（尽量排除所有历史对手）内均匀抽取
   const skip = Math.floor(Math.random() * botCount);
   const target = await prisma.user.findFirst({
     where: userBotWhere,
@@ -1783,7 +1783,11 @@ app.post("/match/start", async (req, res) => {
     currentUser.gender === "MALE" ? [currentUser.id, target.id] : [target.id, currentUser.id];
 
   const session = await prisma.matchSession.create({ data: { maleUserId, femaleUserId } });
-  return res.json({ session, targetBlindBox: { id: target.id, nickname: "盲盒用户" } });
+  return res.json({
+    session,
+    targetBlindBox: { id: target.id, nickname: target.nickname || "盲盒用户" },
+    targetPlanetProfile: mapPlanetRobotProfile(target)
+  });
 });
 
 app.post("/game/dice-round", async (req, res) => {

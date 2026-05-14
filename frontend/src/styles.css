@@ -2529,6 +2529,44 @@ button:hover {
   color: rgba(91, 78, 99, 0.85);
 }
 
+.planet-match-cyber-age-km {
+  display: block;
+  margin-top: 2px;
+}
+
+.planet-match-cyber-details {
+  margin: 10px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(244, 114, 182, 0.18);
+  display: grid;
+  gap: 8px 12px;
+}
+
+.planet-match-cyber-detail-row {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  align-items: start;
+}
+
+.planet-match-cyber-detail-row dt {
+  margin: 0;
+  color: rgba(157, 110, 136, 0.95);
+  font-weight: 600;
+}
+
+.planet-match-cyber-detail-row dd {
+  margin: 0;
+  color: rgba(58, 53, 64, 0.92);
+  word-break: break-word;
+}
+
+.planet-match-cyber-hobbies-block {
+  margin-top: 8px;
+}
+
 .planet-match-cyber-meta small {
   font-size: 12px;
   color: rgba(157, 110, 136, 0.9);

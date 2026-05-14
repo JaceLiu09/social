@@ -658,6 +658,7 @@ export default function App() {
   const [planetMatchLoading, setPlanetMatchLoading] = useState(false);
   const [planetMatchProfile, setPlanetMatchProfile] = useState(null);
   const [planetMatchGalleryIndex, setPlanetMatchGalleryIndex] = useState(0);
+  const [planetMatchRandomKm, setPlanetMatchRandomKm] = useState(null);
   const [planetMatchWaitHint, setPlanetMatchWaitHint] = useState("");
   const [showSentenceModal, setShowSentenceModal] = useState(false);
   const [sentenceMode, setSentenceMode] = useState("menu");
@@ -1980,6 +1981,7 @@ export default function App() {
     setPlanetMatchWaitHint("");
     setPlanetMatchProfile(null);
     setPlanetMatchGalleryIndex(0);
+    setPlanetMatchRandomKm(null);
     setPlanetMatchLoading(false);
     navigate("/planet");
   };
@@ -2002,6 +2004,7 @@ export default function App() {
           setPlanetMatchLoading(true);
           setPlanetMatchProfile(null);
           setPlanetMatchGalleryIndex(0);
+          setPlanetMatchRandomKm(null);
         });
       } catch {
         setMessage("");
@@ -2009,6 +2012,7 @@ export default function App() {
         setPlanetMatchLoading(true);
         setPlanetMatchProfile(null);
         setPlanetMatchGalleryIndex(0);
+        setPlanetMatchRandomKm(null);
       }
 
       const minWaitMs = Math.round(3000 + Math.random() * 4000);
@@ -2037,7 +2041,12 @@ export default function App() {
         if (!res.ok) throw new Error(data.message || "匹配失败");
         const matchedId = data?.targetBlindBox?.id || "";
         const pool = userRobotProfiles.length ? userRobotProfiles : [];
+        const fromApi =
+          data.targetPlanetProfile && typeof data.targetPlanetProfile === "object" && data.targetPlanetProfile.id
+            ? data.targetPlanetProfile
+            : null;
         const picked =
+          fromApi ||
           pool.find((item) => item.id === matchedId) ||
           (pool.length ? pool[Math.floor(Math.random() * pool.length)] : null);
         return { data, picked };
@@ -2051,6 +2060,7 @@ export default function App() {
         setBlindBoxTarget(data.targetBlindBox);
         setPlanetMatchProfile(picked);
         setPlanetMatchGalleryIndex(0);
+        setPlanetMatchRandomKm(picked ? 1 + Math.floor(Math.random() * 120) : null);
       });
       if (!picked && !planetMatchDismissedRef.current) {
         setChatNotice("已匹配成功，可继续点击“开始寻找”刷新匹配对象");
@@ -2060,6 +2070,7 @@ export default function App() {
     } catch (error) {
       stopPlanetMatchSearchSfx();
       setPlanetMatchProfile(null);
+      setPlanetMatchRandomKm(null);
       if (!planetMatchDismissedRef.current) {
         setChatNotice(error.message || "匹配失败，请稍后再试");
         navigate("/planet");
@@ -6046,16 +6057,44 @@ export default function App() {
                   </div>
                   <div className="planet-match-cyber-meta">
                     <strong>{planetMatchProfile.nickname || blindBoxTarget?.nickname || "隐藏款用户"}</strong>
-                    <span>
-                      {planetMatchProfile.age || "-"}岁 · {planetMatchProfile.city || "同城"}
+                    <span className="planet-match-cyber-age-km">
+                      {planetMatchProfile.age ?? "-"}岁 · 距离你约 {planetMatchRandomKm != null ? planetMatchRandomKm : "—"}km
                     </span>
+                    <dl className="planet-match-cyber-details">
+                      {(() => {
+                        const pm = planetMatchProfile;
+                        const h = Number(pm.height);
+                        const w = Number(pm.weight);
+                        const pairs = [];
+                        if (pm.gender === "MALE") pairs.push(["性别", "男"]);
+                        else if (pm.gender === "FEMALE") pairs.push(["性别", "女"]);
+                        else if (pm.gender) pairs.push(["性别", String(pm.gender)]);
+                        if (Number.isFinite(h) && h > 0) pairs.push(["身高", `${h} cm`]);
+                        if (Number.isFinite(w) && w > 0) pairs.push(["体重", `${w} kg`]);
+                        if (String(pm.hometown || "").trim()) pairs.push(["家乡", String(pm.hometown).trim()]);
+                        if (String(pm.city || "").trim()) pairs.push(["现居地", String(pm.city).trim()]);
+                        if (String(pm.income || "").trim()) pairs.push(["收入", String(pm.income).trim()]);
+                        if (String(pm.industry || "").trim()) pairs.push(["行业", String(pm.industry).trim()]);
+                        return pairs.map(([label, val], idx) => (
+                          <div className="planet-match-cyber-detail-row" key={`${label}-${idx}`}>
+                            <dt>{label}</dt>
+                            <dd>{val}</dd>
+                          </div>
+                        ));
+                      })()}
+                    </dl>
                     {planetMatchManifesto ? (
                       <div className="planet-match-cyber-manifesto">
                         <span className="planet-match-cyber-manifesto-label">交友宣言</span>
                         <p className="planet-match-manifesto-text">{planetMatchManifesto}</p>
                       </div>
                     ) : null}
-                    <small>{isMembershipValid ? planetMatchProfile.hobbies || "这个人很有趣，快去认识TA" : ""}</small>
+                    {String(planetMatchProfile.hobbies || "").trim() ? (
+                      <div className="planet-match-cyber-hobbies-block">
+                        <span className="planet-match-cyber-manifesto-label">爱好</span>
+                        <p className="planet-match-manifesto-text">{String(planetMatchProfile.hobbies).trim()}</p>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="planet-match-cyber-actions">
                     <button type="button" className="planet-match-cyber-btn planet-match-cyber-btn--ghost" onClick={handlePlanetDetailGate}>
