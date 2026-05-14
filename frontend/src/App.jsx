@@ -2040,20 +2040,21 @@ export default function App() {
         const picked =
           pool.find((item) => item.id === matchedId) ||
           (pool.length ? pool[Math.floor(Math.random() * pool.length)] : null);
-        flushSync(() => {
-          setSession(data.session);
-          setBlindBoxTarget(data.targetBlindBox);
-          setPlanetMatchProfile(picked);
-          setPlanetMatchGalleryIndex(0);
-        });
-        if (!picked && !planetMatchDismissedRef.current) {
-          setChatNotice("已匹配成功，可继续点击“开始寻找”刷新匹配对象");
-        }
-        return data;
+        return { data, picked };
       });
 
-      await Promise.all([minWaitP, matchP]);
+      const [, matchOut] = await Promise.all([minWaitP, matchP]);
       if (planetMatchDismissedRef.current) return;
+      const { data, picked } = matchOut;
+      flushSync(() => {
+        setSession(data.session);
+        setBlindBoxTarget(data.targetBlindBox);
+        setPlanetMatchProfile(picked);
+        setPlanetMatchGalleryIndex(0);
+      });
+      if (!picked && !planetMatchDismissedRef.current) {
+        setChatNotice("已匹配成功，可继续点击“开始寻找”刷新匹配对象");
+      }
       playPlanetMatchFoundSfx();
       setMessage("匹配成功");
     } catch (error) {
@@ -5985,62 +5986,6 @@ export default function App() {
                   <span />
                   <span />
                 </div>
-                {planetMatchProfile && (
-                  <div className="planet-match-loading-reveal">
-                    <p className="planet-match-loading-reveal-label">对方 · 交友宣言</p>
-                    <p className="planet-match-manifesto-text">
-                      {planetMatchManifesto || "对方暂未填写交友宣言"}
-                    </p>
-                    {planetMatchGalleryUrls.length > 0 ? (
-                      <div className="planet-match-cyber-gallery-wrap planet-match-cyber-gallery-wrap--compact">
-                        <div
-                          ref={planetMatchGalleryRef}
-                          className="planet-match-cyber-gallery"
-                          onScroll={syncPlanetMatchGalleryScroll}
-                        >
-                          {planetMatchGalleryUrls.map((url, i) => (
-                            <div className="planet-match-cyber-gallery-slide" key={`pm-load-${planetMatchProfile.id}-${i}`}>
-                              <img
-                                src={resolveAssetUrl(url)}
-                                alt=""
-                                onError={(e) => {
-                                  e.currentTarget.onerror = null;
-                                  e.currentTarget.src =
-                                    planetMatchProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
-                                }}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                        {planetMatchGalleryUrls.length > 1 && (
-                          <div className="planet-match-cyber-gallery-dots" role="tablist" aria-label="相册">
-                            {planetMatchGalleryUrls.map((_, i) => (
-                              <button
-                                key={i}
-                                type="button"
-                                className={`planet-match-cyber-gallery-dot${i === planetMatchGalleryIndex ? " active" : ""}`}
-                                aria-label={`第 ${i + 1} 张`}
-                                aria-current={i === planetMatchGalleryIndex ? "true" : undefined}
-                                onClick={() => scrollPlanetMatchGalleryToIndex(i)}
-                              />
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <img
-                        className="planet-match-cyber-cover planet-match-cyber-cover--compact"
-                        src={resolveAssetUrl(planetMatchProfile.avatar || "")}
-                        alt=""
-                        onError={(e) => {
-                          e.currentTarget.onerror = null;
-                          e.currentTarget.src =
-                            planetMatchProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
-                        }}
-                      />
-                    )}
-                  </div>
-                )}
               </div>
             ) : planetMatchProfile ? (
               <div className="planet-match-page-result">
