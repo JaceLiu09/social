@@ -358,6 +358,41 @@ function resolveMediaUrl(url) {
   return "";
 }
 
+/** 星球匹配卡片：头像优先，合并相册 URL 去重（photoUrls 为 JSON 字符串或已解析数组） */
+function buildPlanetRobotGalleryUrls(avatar, photoUrlsField) {
+  const primary = String(avatar ?? "").trim();
+  let slots = [];
+  if (Array.isArray(photoUrlsField)) {
+    slots = photoUrlsField;
+  } else if (typeof photoUrlsField === "string") {
+    try {
+      const p = JSON.parse(photoUrlsField || "[]");
+      if (Array.isArray(p)) slots = p;
+    } catch (_e) {
+      slots = [];
+    }
+  }
+  const seen = new Set();
+  const out = [];
+  const push = (u) => {
+    const s = String(u ?? "").trim();
+    if (!s || seen.has(s)) return;
+    seen.add(s);
+    out.push(s);
+  };
+  push(primary);
+  for (const u of slots) push(u);
+  return out.length > 0 ? out : primary ? [primary] : [];
+}
+
+function getPlanetMatchGalleryUrls(profile) {
+  if (!profile) return [];
+  if (Array.isArray(profile.galleryUrls) && profile.galleryUrls.length > 0) {
+    return profile.galleryUrls.map((u) => String(u ?? "").trim()).filter(Boolean);
+  }
+  return buildPlanetRobotGalleryUrls(profile.avatar, profile.photoUrls);
+}
+
 /** 相册数组（可含空槽）里第一张有效图 */
 function firstNonEmptyPhotoSlot(arrOrJson) {
   let arr = arrOrJson;
@@ -622,6 +657,7 @@ export default function App() {
   const [membershipGateContext, setMembershipGateContext] = useState("invite");
   const [planetMatchLoading, setPlanetMatchLoading] = useState(false);
   const [planetMatchProfile, setPlanetMatchProfile] = useState(null);
+  const [planetMatchGalleryIndex, setPlanetMatchGalleryIndex] = useState(0);
   const [planetMatchWaitHint, setPlanetMatchWaitHint] = useState("");
   const [showSentenceModal, setShowSentenceModal] = useState(false);
   const [sentenceMode, setSentenceMode] = useState("menu");
@@ -715,6 +751,7 @@ export default function App() {
   const planetMatchSfxIntervalRef = useRef(null);
   const planetMatchFlowLockRef = useRef(false);
   const planetMatchDismissedRef = useRef(false);
+  const planetMatchGalleryRef = useRef(null);
   const truthInviteTimersRef = useRef([]);
 
   const profilePhotos = useMemo(() => {
@@ -1720,6 +1757,39 @@ export default function App() {
     return new Date(user.membershipExpireAt) > new Date();
   }, [user]);
 
+  const planetMatchGalleryUrls = useMemo(
+    () => getPlanetMatchGalleryUrls(planetMatchProfile),
+    [planetMatchProfile]
+  );
+  const planetMatchManifesto = String(planetMatchProfile?.partnerExpectation ?? "").trim();
+
+  const syncPlanetMatchGalleryScroll = useCallback(() => {
+    const el = planetMatchGalleryRef.current;
+    if (!el || el.clientWidth <= 0) return;
+    const urls = getPlanetMatchGalleryUrls(planetMatchProfile);
+    if (!urls.length) return;
+    const idx = Math.min(urls.length - 1, Math.max(0, Math.round(el.scrollLeft / el.clientWidth)));
+    setPlanetMatchGalleryIndex(idx);
+  }, [planetMatchProfile]);
+
+  const scrollPlanetMatchGalleryToIndex = useCallback(
+    (idx) => {
+      const el = planetMatchGalleryRef.current;
+      const urls = getPlanetMatchGalleryUrls(planetMatchProfile);
+      if (!el || !urls.length) return;
+      const i = Math.max(0, Math.min(idx, urls.length - 1));
+      el.scrollTo({ left: i * el.clientWidth, behavior: "smooth" });
+      setPlanetMatchGalleryIndex(i);
+    },
+    [planetMatchProfile]
+  );
+
+  useEffect(() => {
+    setPlanetMatchGalleryIndex(0);
+    const el = planetMatchGalleryRef.current;
+    if (el) el.scrollTo({ left: 0 });
+  }, [planetMatchProfile?.id, planetMatchLoading]);
+
   const membershipGateCopy =
     membershipGateContext === "planet" || membershipGateContext === "truth"
       ? {
@@ -1909,6 +1979,7 @@ export default function App() {
     stopPlanetMatchSearchSfx();
     setPlanetMatchWaitHint("");
     setPlanetMatchProfile(null);
+    setPlanetMatchGalleryIndex(0);
     setPlanetMatchLoading(false);
     navigate("/planet");
   };
@@ -1930,12 +2001,14 @@ export default function App() {
           navigate("/match");
           setPlanetMatchLoading(true);
           setPlanetMatchProfile(null);
+          setPlanetMatchGalleryIndex(0);
         });
       } catch {
         setMessage("");
         navigate("/match");
         setPlanetMatchLoading(true);
         setPlanetMatchProfile(null);
+        setPlanetMatchGalleryIndex(0);
       }
 
       const minWaitMs = Math.round(3000 + Math.random() * 4000);
@@ -1952,32 +2025,40 @@ export default function App() {
         /* 音效失败不影响匹配流程 */
       }
 
-      /* 先完整跑完随机动画时长，再请求接口，避免并行/静默匹配路径在任何环境下被“秒完成” */
-      await new Promise((resolve) => {
+      const minWaitP = new Promise((resolve) => {
         window.setTimeout(resolve, minWaitMs);
       });
-
-      const res = await fetch(`${API}/match/start`, {
+      const matchP = fetch(`${API}/match/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: user.id })
+      }).then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || "匹配失败");
+        const matchedId = data?.targetBlindBox?.id || "";
+        const pool = userRobotProfiles.length ? userRobotProfiles : [];
+        const picked =
+          pool.find((item) => item.id === matchedId) ||
+          (pool.length ? pool[Math.floor(Math.random() * pool.length)] : null);
+        flushSync(() => {
+          setSession(data.session);
+          setBlindBoxTarget(data.targetBlindBox);
+          setPlanetMatchProfile(picked);
+          setPlanetMatchGalleryIndex(0);
+        });
+        if (!picked && !planetMatchDismissedRef.current) {
+          setChatNotice("已匹配成功，可继续点击“开始寻找”刷新匹配对象");
+        }
+        return data;
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "匹配失败");
+
+      await Promise.all([minWaitP, matchP]);
       if (planetMatchDismissedRef.current) return;
       playPlanetMatchFoundSfx();
-      setSession(data.session);
-      setBlindBoxTarget(data.targetBlindBox);
       setMessage("匹配成功");
-      const matchedId = data?.targetBlindBox?.id || "";
-      const pool = userRobotProfiles.length ? userRobotProfiles : [];
-      const picked =
-        pool.find((item) => item.id === matchedId) ||
-        (pool.length ? pool[Math.floor(Math.random() * pool.length)] : null);
-      setPlanetMatchProfile(picked);
-      if (!picked) setChatNotice("已匹配成功，可继续点击“开始寻找”刷新匹配对象");
     } catch (error) {
       stopPlanetMatchSearchSfx();
+      setPlanetMatchProfile(null);
       if (!planetMatchDismissedRef.current) {
         setChatNotice(error.message || "匹配失败，请稍后再试");
         navigate("/planet");
@@ -5904,6 +5985,62 @@ export default function App() {
                   <span />
                   <span />
                 </div>
+                {planetMatchProfile && (
+                  <div className="planet-match-loading-reveal">
+                    <p className="planet-match-loading-reveal-label">对方 · 交友宣言</p>
+                    <p className="planet-match-manifesto-text">
+                      {planetMatchManifesto || "对方暂未填写交友宣言"}
+                    </p>
+                    {planetMatchGalleryUrls.length > 0 ? (
+                      <div className="planet-match-cyber-gallery-wrap planet-match-cyber-gallery-wrap--compact">
+                        <div
+                          ref={planetMatchGalleryRef}
+                          className="planet-match-cyber-gallery"
+                          onScroll={syncPlanetMatchGalleryScroll}
+                        >
+                          {planetMatchGalleryUrls.map((url, i) => (
+                            <div className="planet-match-cyber-gallery-slide" key={`pm-load-${planetMatchProfile.id}-${i}`}>
+                              <img
+                                src={resolveAssetUrl(url)}
+                                alt=""
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null;
+                                  e.currentTarget.src =
+                                    planetMatchProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        {planetMatchGalleryUrls.length > 1 && (
+                          <div className="planet-match-cyber-gallery-dots" role="tablist" aria-label="相册">
+                            {planetMatchGalleryUrls.map((_, i) => (
+                              <button
+                                key={i}
+                                type="button"
+                                className={`planet-match-cyber-gallery-dot${i === planetMatchGalleryIndex ? " active" : ""}`}
+                                aria-label={`第 ${i + 1} 张`}
+                                aria-current={i === planetMatchGalleryIndex ? "true" : undefined}
+                                onClick={() => scrollPlanetMatchGalleryToIndex(i)}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <img
+                        className="planet-match-cyber-cover planet-match-cyber-cover--compact"
+                        src={resolveAssetUrl(planetMatchProfile.avatar || "")}
+                        alt=""
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src =
+                            planetMatchProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
+                        }}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
             ) : planetMatchProfile ? (
               <div className="planet-match-page-result">
@@ -5912,20 +6049,67 @@ export default function App() {
                 </h2>
                 <article className="planet-match-cyber-card">
                   <div className="planet-match-cyber-card-frame" aria-hidden />
-                  <img
-                    className="planet-match-cyber-cover"
-                    src={resolveAssetUrl(planetMatchProfile.avatar || "")}
-                    alt={planetMatchProfile.nickname || "匹配对象"}
-                    onError={(e) => {
-                      e.currentTarget.onerror = null;
-                      e.currentTarget.src = planetMatchProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
-                    }}
-                  />
+                  <div className="planet-match-cyber-gallery-wrap">
+                    {planetMatchGalleryUrls.length > 0 ? (
+                      <>
+                        <div
+                          ref={planetMatchGalleryRef}
+                          className="planet-match-cyber-gallery"
+                          onScroll={syncPlanetMatchGalleryScroll}
+                        >
+                          {planetMatchGalleryUrls.map((url, i) => (
+                            <div className="planet-match-cyber-gallery-slide" key={`pm-res-${planetMatchProfile.id}-${i}`}>
+                              <img
+                                src={resolveAssetUrl(url)}
+                                alt={planetMatchProfile.nickname || "匹配对象"}
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null;
+                                  e.currentTarget.src =
+                                    planetMatchProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        {planetMatchGalleryUrls.length > 1 && (
+                          <div className="planet-match-cyber-gallery-dots" role="tablist" aria-label="相册">
+                            {planetMatchGalleryUrls.map((_, i) => (
+                              <button
+                                key={i}
+                                type="button"
+                                className={`planet-match-cyber-gallery-dot${i === planetMatchGalleryIndex ? " active" : ""}`}
+                                aria-label={`第 ${i + 1} 张`}
+                                aria-current={i === planetMatchGalleryIndex ? "true" : undefined}
+                                onClick={() => scrollPlanetMatchGalleryToIndex(i)}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <img
+                        className="planet-match-cyber-cover"
+                        src={resolveAssetUrl(planetMatchProfile.avatar || "")}
+                        alt={planetMatchProfile.nickname || "匹配对象"}
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src =
+                            planetMatchProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
+                        }}
+                      />
+                    )}
+                  </div>
                   <div className="planet-match-cyber-meta">
                     <strong>{planetMatchProfile.nickname || blindBoxTarget?.nickname || "隐藏款用户"}</strong>
                     <span>
                       {planetMatchProfile.age || "-"}岁 · {planetMatchProfile.city || "同城"}
                     </span>
+                    {planetMatchManifesto ? (
+                      <div className="planet-match-cyber-manifesto">
+                        <span className="planet-match-cyber-manifesto-label">交友宣言</span>
+                        <p className="planet-match-manifesto-text">{planetMatchManifesto}</p>
+                      </div>
+                    ) : null}
                     <small>{isMembershipValid ? planetMatchProfile.hobbies || "这个人很有趣，快去认识TA" : ""}</small>
                   </div>
                   <div className="planet-match-cyber-actions">

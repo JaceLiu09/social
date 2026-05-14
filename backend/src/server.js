@@ -1615,6 +1615,28 @@ app.get("/public/robot-library/system", async (_req, res) => {
   }
 });
 
+function buildRobotGalleryUrls(avatarUrl, photoUrlsJson) {
+  const primary = String(avatarUrl ?? "").trim();
+  let slots = [];
+  try {
+    const parsed = typeof photoUrlsJson === "string" ? JSON.parse(photoUrlsJson || "[]") : photoUrlsJson;
+    if (Array.isArray(parsed)) slots = parsed;
+  } catch (_e) {
+    slots = [];
+  }
+  const seen = new Set();
+  const out = [];
+  const push = (u) => {
+    const s = String(u ?? "").trim();
+    if (!s || seen.has(s)) return;
+    seen.add(s);
+    out.push(s);
+  };
+  push(primary);
+  for (const u of slots) push(u);
+  return out.length > 0 ? out : primary ? [primary] : [];
+}
+
 function mapPlanetRobotProfile(item) {
   return {
     id: item.id,
@@ -1623,7 +1645,9 @@ function mapPlanetRobotProfile(item) {
     city: item.currentCity || "",
     hobbies: item.hobbies || "",
     avatar: item.avatarUrl || "",
-    gender: item.gender
+    gender: item.gender,
+    partnerExpectation: String(item.partnerExpectation ?? "").trim(),
+    galleryUrls: buildRobotGalleryUrls(item.avatarUrl, item.photoUrls)
   };
 }
 
@@ -1665,6 +1689,8 @@ async function planetRobotLibrary(req, res, library) {
         age: true,
         currentCity: true,
         hobbies: true,
+        partnerExpectation: true,
+        photoUrls: true,
         avatarUrl: true,
         gender: true
       },

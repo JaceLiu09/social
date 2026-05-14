@@ -2422,6 +2422,126 @@ button:hover {
   border: 1px solid rgba(244, 114, 182, 0.2);
 }
 
+.planet-match-cyber-cover--compact {
+  max-height: 200px;
+  aspect-ratio: 4/3;
+  margin: 0 auto;
+}
+
+.planet-match-cyber-gallery-wrap {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+}
+
+.planet-match-cyber-gallery-wrap--compact .planet-match-cyber-gallery {
+  max-height: 200px;
+  aspect-ratio: 4/3;
+}
+
+.planet-match-cyber-gallery {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 10px;
+  border: 1px solid rgba(244, 114, 182, 0.2);
+  aspect-ratio: 16/10;
+  scrollbar-width: none;
+}
+
+.planet-match-cyber-gallery::-webkit-scrollbar {
+  display: none;
+}
+
+.planet-match-cyber-gallery-slide {
+  flex: 0 0 100%;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+.planet-match-cyber-gallery-slide img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  vertical-align: middle;
+}
+
+.planet-match-cyber-gallery-dots {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.planet-match-cyber-gallery-dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(180, 77, 122, 0.28);
+  cursor: pointer;
+}
+
+.planet-match-cyber-gallery-dot.active {
+  background: linear-gradient(135deg, #f472b6, #c084fc);
+  transform: scale(1.15);
+}
+
+.planet-match-loading-reveal {
+  width: 100%;
+  max-width: 340px;
+  margin-top: 18px;
+  padding: 14px 14px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(244, 114, 182, 0.22);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.planet-match-loading-reveal-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(91, 78, 99, 0.88);
+  letter-spacing: 0.02em;
+}
+
+.planet-match-manifesto-text {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(58, 53, 64, 0.92);
+  text-align: left;
+}
+
+.planet-match-cyber-manifesto {
+  margin-top: 8px;
+}
+
+.planet-match-cyber-manifesto-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  font-style: normal;
+  color: rgba(180, 77, 122, 0.95);
+  margin-bottom: 4px;
+  letter-spacing: 0.04em;
+}
+
+.planet-match-cyber-manifesto .planet-match-manifesto-text {
+  margin-bottom: 0;
+}
+
 .planet-match-cyber-meta {
   position: relative;
   z-index: 1;
