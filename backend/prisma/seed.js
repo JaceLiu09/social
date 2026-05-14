@@ -182,6 +182,32 @@ async function main() {
     },
     update: {}
   });
+
+  // 与 ellie 相同：可登录管理后台，但无「用户管理」等 canManageUsers 能力
+  await prisma.adminAccount.upsert({
+    where: { username: "juni" },
+    create: {
+      username: "juni",
+      passwordHash: bcrypt.hashSync(DEFAULT_PASSWORD, 10),
+      canManageUsers: false
+    },
+    update: {
+      passwordHash: bcrypt.hashSync(DEFAULT_PASSWORD, 10),
+      canManageUsers: false
+    }
+  });
+  await prisma.adminAccount.upsert({
+    where: { username: "jace" },
+    create: {
+      username: "jace",
+      passwordHash: bcrypt.hashSync(DEFAULT_PASSWORD, 10),
+      canManageUsers: false
+    },
+    update: {
+      passwordHash: bcrypt.hashSync(DEFAULT_PASSWORD, 10),
+      canManageUsers: false
+    }
+  });
 }
 
 main()

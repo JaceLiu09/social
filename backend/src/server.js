@@ -1694,22 +1694,60 @@ app.post("/match/start", async (req, res) => {
   if (!currentUser) return res.status(404).json({ message: "用户不存在" });
 
   const oppGender = currentUser.gender === "MALE" ? "FEMALE" : "MALE";
-  const target = await prisma.user.findFirst({
+  const baseUserBotWhere = {
+    id: { not: currentUser.id },
+    gender: oppGender,
+    OR: [
+      { fakeRobotLibrary: "USER" },
+      {
+        AND: [
+          { fakeRobotLibrary: "NONE" },
+          {
+            OR: [{ phone: { startsWith: "fakefadm" } }, { phone: { startsWith: "fakemadm" } }]
+          }
+        ]
+      }
+    ]
+  };
+
+  const lastSession = await prisma.matchSession.findFirst({
     where: {
-      id: { not: currentUser.id },
-      gender: oppGender,
-      OR: [
-        { fakeRobotLibrary: "USER" },
-        {
-          AND: [
-            { fakeRobotLibrary: "NONE" },
-            {
-              OR: [{ phone: { startsWith: "fakefadm" } }, { phone: { startsWith: "fakemadm" } }]
-            }
-          ]
-        }
-      ]
+      OR: [{ maleUserId: currentUser.id }, { femaleUserId: currentUser.id }]
+    },
+    orderBy: { startedAt: "desc" }
+  });
+  const lastOpponentId = lastSession
+    ? lastSession.maleUserId === currentUser.id
+      ? lastSession.femaleUserId
+      : lastSession.maleUserId
+    : null;
+
+  let userBotWhere = baseUserBotWhere;
+  if (lastOpponentId) {
+    const poolWithoutLast = await prisma.user.count({
+      where: {
+        ...baseUserBotWhere,
+        id: { notIn: [currentUser.id, lastOpponentId] }
+      }
+    });
+    if (poolWithoutLast > 0) {
+      userBotWhere = {
+        ...baseUserBotWhere,
+        id: { notIn: [currentUser.id, lastOpponentId] }
+      };
     }
+  }
+
+  const botCount = await prisma.user.count({ where: userBotWhere });
+  if (!botCount) {
+    return res.status(404).json({ message: "暂时没有可用的用户机器人，请在后台「用户机器人库」中添加后再匹配" });
+  }
+  // 稳定排序 + 随机 skip：均匀抽池；上一条已尽量排除「连续两次同一人」
+  const skip = Math.floor(Math.random() * botCount);
+  const target = await prisma.user.findFirst({
+    where: userBotWhere,
+    skip,
+    orderBy: { id: "asc" }
   });
   if (!target) {
     return res.status(404).json({ message: "暂时没有可用的用户机器人，请在后台「用户机器人库」中添加后再匹配" });
