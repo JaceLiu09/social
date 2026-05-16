@@ -61,7 +61,11 @@ function sampleItems(list, count) {
 }
 
 function createHeroAvatars() {
-  return sampleItems(localAvatarPool, 5);
+  const maleCount = Math.ceil(5 / 2);
+  const femaleCount = 5 - maleCount;
+  return [...sampleItems(maleAvatarPool, maleCount), ...sampleItems(femaleAvatarPool, femaleCount)].sort(
+    () => Math.random() - 0.5
+  );
 }
 
 const SENTENCE_CHAIN_BANK = [

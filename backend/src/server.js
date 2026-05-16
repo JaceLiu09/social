@@ -1594,15 +1594,35 @@ function systemRobotLibraryWhereExtras() {
   };
 }
 
+/** 登录页头像：按性别各抽一批再混洗，避免 findMany 默认顺序先返回整批男号 */
+async function pickBalancedSystemRobotAvatars(total = 10) {
+  const baseWhere = systemRobotLibraryWhereExtras();
+  const select = { avatarUrl: true, nickname: true, gender: true };
+  const poolSize = Math.max(total * 4, 24);
+  const perGender = Math.ceil(total / 2);
+  const [males, females] = await Promise.all([
+    prisma.user.findMany({
+      where: { AND: [baseWhere, { gender: "MALE" }] },
+      select,
+      take: poolSize
+    }),
+    prisma.user.findMany({
+      where: { AND: [baseWhere, { gender: "FEMALE" }] },
+      select,
+      take: poolSize
+    })
+  ]);
+  const picked = [
+    ...shuffleList(males).slice(0, perGender),
+    ...shuffleList(females).slice(0, perGender)
+  ];
+  return shuffleList(picked).slice(0, total);
+}
+
 /** 登录 / 落地页：系统机器人头像展示（无需登录） */
 app.get("/public/robot-library/system", async (_req, res) => {
   try {
-    const list = await prisma.user.findMany({
-      where: systemRobotLibraryWhereExtras(),
-      select: { avatarUrl: true, nickname: true, gender: true },
-      take: 48
-    });
-    const shuffled = shuffleList(list).slice(0, 10);
+    const shuffled = await pickBalancedSystemRobotAvatars(10);
     return res.json({
       items: shuffled.map((u) => ({
         avatar: u.avatarUrl || "",
