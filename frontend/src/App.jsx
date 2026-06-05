@@ -50,8 +50,30 @@ const CHAT_COMPOSER_EMOJIS = [
   "😲", "😳", "🥺", "😦", "😧", "😨", "😰", "😥",
   "😢", "😭", "😱", "😖", "😣", "😞", "😓", "😩",
   "👍", "👎", "👏", "🙌", "🤝", "🙏", "💪", "❤️",
-  "💔", "💖", "💯", "🔥", "✨", "🎉", "🌹", "🍀"
+  "💔", "💖", "💯", "🔥", "✨", "🎉",   "🌹", "🍀"
 ];
+
+const COIN_PAY_CHANNELS = [
+  { id: "WECHAT", label: "微信支付" },
+  { id: "ALIPAY", label: "支付宝" }
+];
+
+function parseGiftPayload(text) {
+  try {
+    const data = JSON.parse(String(text || "{}"));
+    if (data?.giftName) return data;
+  } catch (_e) {
+    /* ignore */
+  }
+  return null;
+}
+
+function wealthLevelLabel(profile) {
+  if (!profile) return "";
+  const level = profile.wealthLevel ?? 0;
+  if (level <= 0) return "";
+  return profile.wealthLevelName || `Lv.${level}`;
+}
 
 function sampleItems(list, count) {
   return [...list]
@@ -643,6 +665,15 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [chatComposerPanel, setChatComposerPanel] = useState("none");
+  const [showGiftPanel, setShowGiftPanel] = useState(false);
+  const [giftCatalog, setGiftCatalog] = useState([]);
+  const [giftSending, setGiftSending] = useState(false);
+  const [showCoinRecharge, setShowCoinRecharge] = useState(false);
+  const [coinPackages, setCoinPackages] = useState([]);
+  const [coinRechargeSubmitting, setCoinRechargeSubmitting] = useState(false);
+  const [coinPayChannel, setCoinPayChannel] = useState("WECHAT");
+  const [coinPendingOrderId, setCoinPendingOrderId] = useState("");
+  const [coinSelectedPackage, setCoinSelectedPackage] = useState(null);
   const chatAttachPhotoInputRef = useRef(null);
   const [chatNotice, setChatNotice] = useState("");
   const [squareImageLightbox, setSquareImageLightbox] = useState(null);
@@ -662,6 +693,26 @@ export default function App() {
     showToast(chatNotice);
     setChatNotice("");
   }, [chatNotice, showToast]);
+
+  useEffect(() => {
+    if (!user?.id || !authToken) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API}/wallet`, {
+          headers: { Authorization: `Bearer ${authToken}` }
+        });
+        const data = await res.json();
+        if (cancelled || !res.ok || !data.wallet) return;
+        setUser((prev) => (prev ? { ...prev, ...data.wallet } : prev));
+      } catch (_e) {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, authToken]);
 
   useEffect(() => {
     if (!squareImageLightbox) return undefined;
@@ -686,6 +737,7 @@ export default function App() {
 
   useEffect(() => {
     setChatComposerPanel("none");
+    setShowGiftPanel(false);
   }, [activeConversation?.id]);
 
   const [showAddFriendModal, setShowAddFriendModal] = useState(false);
@@ -1883,6 +1935,9 @@ export default function App() {
     return MEMBERSHIP_TYPE_LABEL[user?.membershipType] || "有效会员";
   }, [isMembershipValid, user?.membershipType]);
 
+  const myWealthLabel = useMemo(() => wealthLevelLabel(user), [user]);
+  const coinBalance = user?.coinBalance ?? 0;
+
   const planetMatchGalleryUrls = useMemo(
     () => getPlanetMatchGalleryUrls(planetMatchProfile),
     [planetMatchProfile]
@@ -2679,6 +2734,159 @@ export default function App() {
     } catch (_error) {
       setMessage("无法启用麦克风，请检查浏览器权限");
     }
+  };
+
+  const refreshWallet = async () => {
+    if (!authToken) return;
+    try {
+      const res = await fetch(`${API}/wallet`, { headers: authHeaders });
+      const data = await res.json();
+      if (res.ok && data.wallet) {
+        setUser((prev) => (prev ? { ...prev, ...data.wallet } : prev));
+      }
+    } catch (_e) {
+      /* ignore */
+    }
+  };
+
+  const openGiftPanel = async () => {
+    if (!activeConversation) return;
+    setChatComposerPanel("none");
+    setShowGiftPanel(true);
+    try {
+      const [giftRes, walletRes] = await Promise.all([
+        fetch(`${API}/gifts/catalog`),
+        fetch(`${API}/wallet`, { headers: authHeaders })
+      ]);
+      const giftData = await giftRes.json();
+      const walletData = await walletRes.json();
+      setGiftCatalog(Array.isArray(giftData.gifts) ? giftData.gifts : []);
+      if (walletRes.ok && walletData.wallet) {
+        setUser((prev) => (prev ? { ...prev, ...walletData.wallet } : prev));
+      }
+    } catch (_e) {
+      showToast("加载礼物失败");
+    }
+  };
+
+  const sendGift = async (giftId) => {
+    if (!activeConversation || !user || giftSending) return;
+    setGiftSending(true);
+    try {
+      const res = await fetch(`${API}/gifts/send`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ toUserId: activeConversation.id, giftId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "送礼失败");
+      appendOwnMessage(data.message);
+      if (data.wallet) {
+        setUser((prev) => (prev ? { ...prev, ...data.wallet } : prev));
+      }
+      setShowGiftPanel(false);
+      showToast("礼物已送出");
+    } catch (error) {
+      const msg = error.message || "送礼失败";
+      showToast(msg);
+      if (msg.includes("不足")) {
+        setShowCoinRecharge(true);
+      }
+    } finally {
+      setGiftSending(false);
+    }
+  };
+
+  const openCoinRecharge = async () => {
+    setShowCoinRecharge(true);
+    try {
+      const res = await fetch(`${API}/coins/packages`);
+      const data = await res.json();
+      setCoinPackages(Array.isArray(data.packages) ? data.packages : []);
+      await refreshWallet();
+    } catch (_e) {
+      showToast("加载充值档位失败");
+    }
+  };
+
+  const startCoinRecharge = async (pkg) => {
+    if (!user?.id || coinRechargeSubmitting) return;
+    setCoinSelectedPackage(pkg);
+    setCoinRechargeSubmitting(true);
+    try {
+      const res = await fetch(`${API}/coins/recharge/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: user.id,
+          packageId: pkg.id,
+          paymentChannel: coinPayChannel
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "创建订单失败");
+      setCoinPendingOrderId(data.order?.id || "");
+    } catch (error) {
+      showToast(error.message || "创建订单失败");
+      setCoinSelectedPackage(null);
+    } finally {
+      setCoinRechargeSubmitting(false);
+    }
+  };
+
+  const payCoinRecharge = async () => {
+    if (!user?.id || !coinPendingOrderId || coinRechargeSubmitting) return;
+    setCoinRechargeSubmitting(true);
+    try {
+      const res = await fetch(`${API}/coins/recharge/orders/${encodeURIComponent(coinPendingOrderId)}/pay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "支付失败");
+      if (data.wallet) {
+        setUser((prev) => (prev ? { ...prev, ...data.wallet } : prev));
+      } else if (data.user) {
+        setUser((prev) =>
+          prev
+            ? {
+                ...prev,
+                coinBalance: data.user.coinBalance ?? prev.coinBalance,
+                totalCoinRecharged: data.user.totalCoinRecharged ?? prev.totalCoinRecharged,
+                wealthLevel: data.user.wealthLevel ?? prev.wealthLevel
+              }
+            : prev
+        );
+      }
+      setCoinPendingOrderId("");
+      setCoinSelectedPackage(null);
+      showToast("充值成功，盲盒币已到账");
+    } catch (error) {
+      showToast(error.message || "支付失败");
+    } finally {
+      setCoinRechargeSubmitting(false);
+    }
+  };
+
+  const closeCoinRecharge = async () => {
+    if (coinPendingOrderId && user?.id) {
+      try {
+        await fetch(`${API}/coins/recharge/orders/${encodeURIComponent(coinPendingOrderId)}/cancel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: user.id })
+        });
+      } catch (_e) {
+        /* ignore */
+      }
+    }
+    setShowCoinRecharge(false);
+    setCoinPendingOrderId("");
+    setCoinSelectedPackage(null);
   };
 
   const onConversationTouchStart = (e, conversationId) => {
@@ -4592,14 +4800,22 @@ export default function App() {
           {activeConversation ? (
             <>
               <div className="chat-detail-page">
-                <div className="chat-detail-header">
+                <div className="chat-detail-header chat-detail-header--momo">
                   <button className="chat-detail-back" onClick={() => setActiveConversation(null)}>
-                    返回
+                    ‹
                   </button>
-                  <strong>{activeConversation.name}</strong>
-                  <button className="chat-detail-more" onClick={() => setMessage("会话设置功能开发中")}>
-                    ⋯
-                  </button>
+                  <div className="chat-detail-head-main">
+                    <strong>{activeConversation.name}</strong>
+                    <small>在线</small>
+                  </div>
+                  <img
+                    src={chatDetailPeerAvatarSrc}
+                    alt=""
+                    className="chat-detail-peer-avatar"
+                    onError={(e) => {
+                      e.currentTarget.src = MALE_SYMBOL_AVATAR;
+                    }}
+                  />
                 </div>
                 <div className="chat-detail-list">
                   {chatMessages.length === 0 ? (
@@ -4654,6 +4870,24 @@ export default function App() {
                                 <audio controls preload="metadata" src={resolveMediaUrl(msg.mediaUrl)} />
                                 <span>{msg.audioDurationSec ? `${msg.audioDurationSec}s` : "语音"}</span>
                               </div>
+                            ) : msg.kind === "GIFT" ? (
+                              <div className="chat-gift-bubble">
+                                {(() => {
+                                  const gift = parseGiftPayload(msg.text);
+                                  if (!gift) return msg.text;
+                                  return (
+                                    <>
+                                      <span className="chat-gift-icon" aria-hidden>
+                                        {gift.giftIcon}
+                                      </span>
+                                      <div className="chat-gift-copy">
+                                        <strong>{isMe ? `送出 ${gift.giftName}` : `收到 ${gift.giftName}`}</strong>
+                                        <small>{gift.coinPrice} 盲盒币</small>
+                                      </div>
+                                    </>
+                                  );
+                                })()}
+                              </div>
                             ) : (
                               msg.text
                             )}
@@ -4682,31 +4916,30 @@ export default function App() {
                     aria-hidden
                     onChange={onPickImage}
                   />
-                  <div className="chat-composer-bar">
+                  <div className="chat-composer-bar chat-composer-bar--momo">
                     <button
                       type="button"
-                      className={`chat-composer-iconbtn chat-composer-voice ${isRecording ? "is-recording" : ""}`}
-                      onClick={toggleRecord}
-                      title={isRecording ? "结束录音并发送" : "语音消息"}
-                      aria-label={isRecording ? "结束录音并发送" : "语音消息"}
+                      className="chat-composer-camera"
+                      onClick={() => chatAttachPhotoInputRef.current?.click()}
+                      aria-label="发送照片"
+                      title="照片"
                     >
-                      {isRecording ? (
-                        <span className="chat-rec-stop" aria-hidden />
-                      ) : (
-                        <svg className="chat-voice-svg" viewBox="0 0 24 24" width="22" height="22" aria-hidden>
-                          <path
-                            fill="currentColor"
-                            d="M3 10v4h4l5 5V5L7 10H3zm13.5 3a4.5 4.5 0 000-4l-1.41 1.41a2.5 2.5 0 010 3.18L16.5 13zm3-3a8 8 0 010 4l-1.41-1.41a6 6 0 000-2.82L19.5 10zm-3-3a12 12 0 010 10l-1.41-1.41a10 10 0 000-7.18L16.5 7z"
-                          />
-                        </svg>
-                      )}
+                      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden>
+                        <path
+                          fill="currentColor"
+                          d="M9.5 7A2.5 2.5 0 1114.5 9.5 2.5 2.5 0 019.5 7zm-4 2.5A5.5 5.5 0 1116.5 15 5.5 5.5 0 015.5 9.5zM4 6.5A2.5 2.5 0 016.5 4h2.1l1-2h4.8l1 2H17.5A2.5 2.5 0 0120 6.5v11A2.5 2.5 0 0117.5 20h-11A2.5 2.5 0 014 17.5z"
+                        />
+                      </svg>
                     </button>
                     <div className="chat-composer-inputbox">
                       <input
-                        placeholder="文明聊天，友善交友～"
+                        placeholder="请输入消息..."
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
-                        onFocus={() => setChatComposerPanel("none")}
+                        onFocus={() => {
+                          setChatComposerPanel("none");
+                          setShowGiftPanel(false);
+                        }}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") sendChatMessage();
                         }}
@@ -4714,7 +4947,10 @@ export default function App() {
                       <button
                         type="button"
                         className={`chat-composer-emoji-toggle ${chatComposerPanel === "emoji" ? "active" : ""}`}
-                        onClick={() => setChatComposerPanel((p) => (p === "emoji" ? "none" : "emoji"))}
+                        onClick={() => {
+                          setShowGiftPanel(false);
+                          setChatComposerPanel((p) => (p === "emoji" ? "none" : "emoji"));
+                        }}
                         aria-label="表情"
                         title="表情"
                       >
@@ -4723,18 +4959,25 @@ export default function App() {
                         </span>
                       </button>
                     </div>
-                    <button
-                      type="button"
-                      className={`chat-composer-iconbtn chat-composer-plus ${chatComposerPanel === "plus" ? "active" : ""}`}
-                      onClick={() => setChatComposerPanel((p) => (p === "plus" ? "none" : "plus"))}
-                      aria-label="更多"
-                      title="照片、通话、礼物、游戏"
-                    >
-                      +
-                    </button>
-                    <button type="button" className="chat-composer-sendbtn" onClick={sendChatMessage}>
-                      发送
-                    </button>
+                    {chatInput.trim() ? (
+                      <button
+                        type="button"
+                        className="chat-composer-sendbtn chat-composer-sendbtn--compact"
+                        onClick={sendChatMessage}
+                      >
+                        发送
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="chat-composer-giftbtn"
+                        onClick={openGiftPanel}
+                        aria-label="送礼物"
+                        title="送礼物"
+                      >
+                        🎁
+                      </button>
+                    )}
                   </div>
                   {chatComposerPanel === "emoji" && (
                     <div className="chat-composer-sheet chat-emoji-sheet" role="region" aria-label="表情">
@@ -4752,76 +4995,40 @@ export default function App() {
                       </div>
                     </div>
                   )}
-                  {chatComposerPanel === "plus" && (
-                    <div className="chat-composer-sheet chat-plus-sheet" role="menu" aria-label="更多功能">
-                      <div className="chat-plus-grid chat-plus-grid--soul">
-                        <button
-                          type="button"
-                          className="chat-plus-item"
-                          onClick={() => {
-                            setChatComposerPanel("none");
-                            chatAttachPhotoInputRef.current?.click();
-                          }}
-                        >
-                          <span className="chat-plus-icon" aria-hidden>
-                            🖼
+                  {showGiftPanel && (
+                    <div className="gift-panel" role="dialog" aria-label="送礼物">
+                      <div className="gift-panel-head">
+                        <span>
+                          送给 {activeConversation.name}
+                        </span>
+                      </div>
+                      <div className="gift-panel-grid">
+                        {giftCatalog.map((gift) => (
+                          <button
+                            key={gift.id}
+                            type="button"
+                            className="gift-panel-item"
+                            disabled={giftSending}
+                            onClick={() => sendGift(gift.id)}
+                          >
+                            {gift.badge ? <em className="gift-panel-badge">{gift.badge}</em> : null}
+                            <span className="gift-panel-icon" aria-hidden>
+                              {gift.icon}
+                            </span>
+                            <span className="gift-panel-name">{gift.name}</span>
+                            <span className="gift-panel-price">{gift.coinPrice} 盲盒币</span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="gift-panel-foot">
+                        <div className="gift-panel-balance">
+                          <span className="gift-coin-ico" aria-hidden>
+                            🪙
                           </span>
-                          <span>照片</span>
-                        </button>
-                        <div className="chat-plus-call-group" role="group" aria-label="音视频通话">
-                          <button
-                            type="button"
-                            className="chat-plus-call-btn"
-                            onClick={() => {
-                              setChatComposerPanel("none");
-                              showToast("语音通话功能开发中");
-                            }}
-                          >
-                            <span className="chat-plus-call-ico" aria-hidden>
-                              📞
-                            </span>
-                            <span className="chat-plus-call-label">语音通话</span>
-                          </button>
-                          <span className="chat-plus-call-sep" aria-hidden />
-                          <button
-                            type="button"
-                            className="chat-plus-call-btn"
-                            onClick={() => {
-                              setChatComposerPanel("none");
-                              showToast("视频通话功能开发中");
-                            }}
-                          >
-                            <span className="chat-plus-call-ico" aria-hidden>
-                              📹
-                            </span>
-                            <span className="chat-plus-call-label">视频通话</span>
-                          </button>
+                          <strong>{coinBalance}</strong>
                         </div>
-                        <button
-                          type="button"
-                          className="chat-plus-item"
-                          onClick={() => {
-                            setChatComposerPanel("none");
-                            showToast("送礼物功能开发中");
-                          }}
-                        >
-                          <span className="chat-plus-icon" aria-hidden>
-                            🎁
-                          </span>
-                          <span>送礼物</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="chat-plus-item"
-                          onClick={() => {
-                            setChatComposerPanel("none");
-                            showToast("请返回「盲盒星球」进入狼人杀、默契挑战等玩法");
-                          }}
-                        >
-                          <span className="chat-plus-icon" aria-hidden>
-                            🎮
-                          </span>
-                          <span>邀请游戏</span>
+                        <button type="button" className="gift-panel-recharge" onClick={openCoinRecharge}>
+                          充值
                         </button>
                       </div>
                     </div>
@@ -5080,6 +5287,10 @@ export default function App() {
                         setMeDetailPage("account-security");
                         return;
                       }
+                      if (item === "盲盒币充值") {
+                        openCoinRecharge();
+                        return;
+                      }
                       setMessage(`${item} 功能开发中`);
                     }}
                   >
@@ -5264,7 +5475,14 @@ export default function App() {
                 <p>
                   {user.gender === "MALE" ? "男生" : "女生"} · {user.age}岁 · 在线
                 </p>
-                <p>使用 iPhone 17 Pro Max</p>
+                {myWealthLabel ? (
+                  <p>
+                    <span className={`wealth-level-badge wealth-level-badge--${user.wealthLevel || 0}`}>
+                      财富 {myWealthLabel}
+                    </span>
+                  </p>
+                ) : null}
+                <p>盲盒币：{coinBalance}</p>
               </div>
 
               <div className="status-card my-stats">
@@ -6083,6 +6301,15 @@ export default function App() {
                     {peerProfile.age ?? "—"}岁
                     {peerProfile.currentCity ? ` · ${peerProfile.currentCity}` : ""}
                   </p>
+                  {wealthLevelLabel(peerProfile) ? (
+                    <p>
+                      <span
+                        className={`wealth-level-badge wealth-level-badge--${peerProfile.wealthLevel || 0}`}
+                      >
+                        财富 {wealthLevelLabel(peerProfile)}
+                      </span>
+                    </p>
+                  ) : null}
                   {peerProfile.industry ? <p>{peerProfile.industry}</p> : null}
                 </div>
 
@@ -6111,6 +6338,79 @@ export default function App() {
               </>
             ) : (
               <p className="feed-tip">暂无资料</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showCoinRecharge && (
+        <div className="profile-setup-overlay membership-gate-overlay" onClick={closeCoinRecharge}>
+          <div className="profile-setup-card membership-gate-card coin-recharge-card" onClick={(e) => e.stopPropagation()}>
+            <div className="membership-sheet-handle" aria-hidden="true" />
+            <h3>盲盒币充值</h3>
+            <p>充值后自动提升财富等级，可在个人主页展示</p>
+            {!coinSelectedPackage ? (
+              <>
+                <div className="coin-package-grid">
+                  {coinPackages.map((pkg) => (
+                    <button
+                      key={pkg.id}
+                      type="button"
+                      disabled={coinRechargeSubmitting}
+                      onClick={() => startCoinRecharge(pkg)}
+                    >
+                      <strong>{pkg.coins} 盲盒币</strong>
+                      <span>¥{pkg.price}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="feed-tip">当前余额：{coinBalance} 盲盒币</p>
+                <button type="button" onClick={closeCoinRecharge}>
+                  关闭
+                </button>
+              </>
+            ) : (
+              <div className="membership-checkout">
+                <div className="membership-checkout-plan">
+                  <strong>
+                    {coinSelectedPackage.coins} 盲盒币 ¥{coinSelectedPackage.price}
+                  </strong>
+                  <span>支付成功后立即到账</span>
+                </div>
+                <div className="membership-channel-list">
+                  {COIN_PAY_CHANNELS.map((channel) => (
+                    <button
+                      key={channel.id}
+                      type="button"
+                      className={coinPayChannel === channel.id ? "active" : ""}
+                      onClick={() => setCoinPayChannel(channel.id)}
+                      disabled={coinRechargeSubmitting}
+                    >
+                      <strong>{channel.label}</strong>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="membership-pay-btn"
+                  disabled={coinRechargeSubmitting || !coinPendingOrderId}
+                  onClick={payCoinRecharge}
+                >
+                  {coinRechargeSubmitting
+                    ? "支付处理中..."
+                    : `确认支付 ¥${coinSelectedPackage.price}`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCoinSelectedPackage(null);
+                    setCoinPendingOrderId("");
+                  }}
+                  disabled={coinRechargeSubmitting}
+                >
+                  返回档位选择
+                </button>
+              </div>
             )}
           </div>
         </div>

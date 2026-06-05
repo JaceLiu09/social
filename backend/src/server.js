@@ -14,11 +14,14 @@ import { createAdminRouter } from "./adminApi.js";
 import * as oss from "./ossClient.js";
 import { sampleTacitQuestionsForRound } from "./tacitQuestionBank.js";
 import {
+  COIN_PACKAGES,
+  DEFAULT_GIFTS,
   FRIENDLINESS_PER_ROUND,
   MALE_UNLOCK_FEE,
   MEMBERSHIP_PRICE,
   MIN_ROUNDS_FOR_UNLOCK
 } from "./config.js";
+import { computeWealthLevel, walletSnapshot } from "./wealthLevel.js";
 
 const app = express();
 app.use(cors());
@@ -933,9 +936,25 @@ async function backfillFakeRobotLibraryFlags() {
   }
 }
 
+async function ensureGiftCatalog() {
+  const count = await prisma.giftCatalog.count();
+  if (count > 0) return;
+  await prisma.giftCatalog.createMany({
+    data: DEFAULT_GIFTS.map((g) => ({
+      name: g.name,
+      icon: g.icon,
+      coinPrice: g.coinPrice,
+      sortOrder: g.sortOrder,
+      badge: g.badge || null,
+      enabled: true
+    }))
+  });
+}
+
 async function ensureDefaultUsers() {
   await backfillFakeRobotLibraryFlags();
   await syncFakeBotLoginPasswords();
+  await ensureGiftCatalog();
 
   const defaults = [
     {
@@ -2093,6 +2112,230 @@ app.post("/membership/orders/:orderId/cancel", async (req, res) => {
 });
 
 // 兼容旧版前端：一键开通（内部仍按订单流转）
+function findCoinPackage(packageId) {
+  return COIN_PACKAGES.find((p) => p.id === String(packageId || "").trim()) || null;
+}
+
+async function applyWealthLevel(tx, userId, totalCoinRecharged) {
+  const { wealthLevel } = computeWealthLevel(totalCoinRecharged);
+  return tx.user.update({
+    where: { id: userId },
+    data: { wealthLevel }
+  });
+}
+
+async function payCoinRechargeOrder(orderId, userId) {
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.coinRechargeOrder.findUnique({ where: { id: orderId } });
+    if (!order || order.userId !== userId) {
+      throw new Error("订单不存在或无权限");
+    }
+    if (order.status === "PAID") {
+      const paidUser = await tx.user.findUnique({ where: { id: userId } });
+      return { order, user: paidUser, wallet: walletSnapshot(paidUser) };
+    }
+    if (order.status !== "PENDING") {
+      throw new Error("订单状态不可支付");
+    }
+    const currentUser = await tx.user.findUnique({ where: { id: userId } });
+    if (!currentUser) throw new Error("用户不存在");
+    const nextBalance = (currentUser.coinBalance || 0) + order.coins;
+    const nextRecharged = (currentUser.totalCoinRecharged || 0) + order.amount;
+    const [paidOrder, updatedUser] = await Promise.all([
+      tx.coinRechargeOrder.update({
+        where: { id: order.id },
+        data: { status: "PAID", paidAt: new Date() }
+      }),
+      tx.user.update({
+        where: { id: userId },
+        data: {
+          coinBalance: nextBalance,
+          totalCoinRecharged: nextRecharged
+        }
+      })
+    ]);
+    const userWithLevel = await applyWealthLevel(tx, userId, nextRecharged);
+    return { order: paidOrder, user: userWithLevel, wallet: walletSnapshot(userWithLevel) };
+  });
+}
+
+async function cancelCoinRechargeOrder(orderId, userId) {
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.coinRechargeOrder.findUnique({ where: { id: orderId } });
+    if (!order || order.userId !== userId) {
+      throw new Error("订单不存在或无权限");
+    }
+    if (order.status === "PAID") throw new Error("订单已支付，无法取消");
+    if (order.status === "FAILED") return order;
+    return tx.coinRechargeOrder.update({
+      where: { id: order.id },
+      data: { status: "FAILED" }
+    });
+  });
+}
+
+app.get("/wallet", async (req, res) => {
+  const userId = getAuthUserId(req);
+  if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { coinBalance: true, totalCoinRecharged: true, wealthLevel: true }
+  });
+  if (!user) return res.status(404).json({ message: "用户不存在" });
+  return res.json({ wallet: walletSnapshot(user) });
+});
+
+app.get("/gifts/catalog", async (_req, res) => {
+  const gifts = await prisma.giftCatalog.findMany({
+    where: { enabled: true },
+    orderBy: { sortOrder: "asc" }
+  });
+  return res.json({ gifts });
+});
+
+const giftSendSchema = z.object({
+  toUserId: z.string().min(1),
+  giftId: z.string().min(1)
+});
+
+app.post("/gifts/send", async (req, res) => {
+  try {
+    const fromUserId = getAuthUserId(req);
+    if (!fromUserId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const parsed = giftSendSchema.parse(req.body || {});
+    const gift = await prisma.giftCatalog.findFirst({
+      where: { id: parsed.giftId, enabled: true }
+    });
+    if (!gift) return res.status(404).json({ message: "礼物不存在" });
+    const toUser = await prisma.user.findUnique({ where: { id: parsed.toUserId } });
+    if (!toUser) return res.status(404).json({ message: "对方用户不存在" });
+
+    const result = await prisma.$transaction(async (tx) => {
+      const sender = await tx.user.findUnique({ where: { id: fromUserId } });
+      if (!sender) throw new Error("用户不存在");
+      if ((sender.coinBalance || 0) < gift.coinPrice) {
+        throw new Error("盲盒币不足，请先充值");
+      }
+      const giftText = JSON.stringify({
+        giftId: gift.id,
+        giftName: gift.name,
+        giftIcon: gift.icon,
+        coinPrice: gift.coinPrice
+      });
+      const message = await tx.chatMessage.create({
+        data: {
+          fromUserId,
+          toUserId: parsed.toUserId,
+          kind: "GIFT",
+          text: giftText,
+          mediaUrl: gift.icon
+        }
+      });
+      await tx.giftTransaction.create({
+        data: {
+          giftId: gift.id,
+          fromUserId,
+          toUserId: parsed.toUserId,
+          coinCost: gift.coinPrice,
+          giftName: gift.name,
+          giftIcon: gift.icon,
+          messageId: message.id
+        }
+      });
+      const updatedSender = await tx.user.update({
+        where: { id: fromUserId },
+        data: { coinBalance: (sender.coinBalance || 0) - gift.coinPrice }
+      });
+      return { message, wallet: walletSnapshot(updatedSender) };
+    });
+
+    const payload = {
+      id: result.message.id,
+      fromUserId,
+      toUserId: parsed.toUserId,
+      kind: "GIFT",
+      text: result.message.text,
+      mediaUrl: result.message.mediaUrl,
+      thumbMediaUrl: null,
+      audioDurationSec: null,
+      createdAt: result.message.createdAt.toISOString()
+    };
+    const targetSockets = userSockets.get(String(parsed.toUserId));
+    if (targetSockets?.size) {
+      targetSockets.forEach((socketId) => {
+        io.to(socketId).emit("chat:message", payload);
+      });
+    }
+    return res.json({ message: payload, wallet: result.wallet });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.issues[0]?.message || "参数错误" });
+    }
+    return res.status(400).json({ message: error.message || "送礼失败" });
+  }
+});
+
+app.get("/coins/packages", (_req, res) => {
+  return res.json({ packages: COIN_PACKAGES });
+});
+
+const coinOrderCreateSchema = z.object({
+  userId: z.string().min(1),
+  packageId: z.string().min(1),
+  paymentChannel: z.enum(["WECHAT", "ALIPAY"])
+});
+
+app.post("/coins/recharge/orders", async (req, res) => {
+  try {
+    const parsed = coinOrderCreateSchema.parse(req.body || {});
+    const pkg = findCoinPackage(parsed.packageId);
+    if (!pkg) return res.status(400).json({ message: "充值档位无效" });
+    const user = await prisma.user.findUnique({ where: { id: parsed.userId }, select: { id: true } });
+    if (!user) return res.status(404).json({ message: "用户不存在" });
+    const order = await prisma.coinRechargeOrder.create({
+      data: {
+        userId: parsed.userId,
+        packageId: pkg.id,
+        coins: pkg.coins,
+        amount: pkg.price,
+        paymentChannel: parsed.paymentChannel
+      }
+    });
+    return res.json({ order, package: pkg });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.issues[0]?.message || "参数错误" });
+    }
+    return res.status(400).json({ message: error.message || "创建订单失败" });
+  }
+});
+
+app.post("/coins/recharge/orders/:orderId/pay", async (req, res) => {
+  try {
+    const orderId = String(req.params.orderId || "").trim();
+    if (!orderId) return res.status(400).json({ message: "订单号无效" });
+    const userId = String(req.body?.userId || "").trim();
+    if (!userId) return res.status(400).json({ message: "缺少 userId" });
+    const result = await payCoinRechargeOrder(orderId, userId);
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error.message || "支付失败" });
+  }
+});
+
+app.post("/coins/recharge/orders/:orderId/cancel", async (req, res) => {
+  try {
+    const orderId = String(req.params.orderId || "").trim();
+    if (!orderId) return res.status(400).json({ message: "订单号无效" });
+    const userId = String(req.body?.userId || "").trim();
+    if (!userId) return res.status(400).json({ message: "缺少 userId" });
+    const order = await cancelCoinRechargeOrder(orderId, userId);
+    return res.json({ order });
+  } catch (error) {
+    return res.status(400).json({ message: error.message || "取消订单失败" });
+  }
+});
+
 app.post("/membership/subscribe", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
@@ -3289,6 +3532,8 @@ app.get("/users/:id/profile", async (req, res) => {
     take: 100
   });
 
+  const wealth = walletSnapshot(target);
+
   const safeProfile = {
     id: target.id,
     nickname: target.nickname,
@@ -3303,6 +3548,8 @@ app.get("/users/:id/profile", async (req, res) => {
     industry: target.industry,
     income: target.income,
     avatarUrl: target.avatarUrl,
+    wealthLevel: wealth.wealthLevel,
+    wealthLevelName: wealth.wealthLevelName,
     photoUrls,
     posts: momentRows.map((row) => ({
       id: row.id,

@@ -30,6 +30,9 @@ model User {
   fakeRobotLibrary   FakeRobotLibrary @default(NONE)
   membershipType     MembershipType @default(FREE)
   membershipExpireAt DateTime?
+  coinBalance        Int            @default(0)
+  totalCoinRecharged Float          @default(0)
+  wealthLevel        Int            @default(0)
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
   maleUnlocks        MaleUnlock[]
@@ -46,6 +49,59 @@ model User {
   tacitAnswers TacitAnswer[]
   squareMoments     SquareMoment[]
   membershipOrders  MembershipOrder[]
+  coinRechargeOrders CoinRechargeOrder[]
+  giftsSent         GiftTransaction[] @relation("GiftSender")
+  giftsReceived     GiftTransaction[] @relation("GiftReceiver")
+}
+
+model GiftCatalog {
+  id        String   @id @default(cuid())
+  name      String
+  icon      String
+  coinPrice Int
+  sortOrder Int      @default(0)
+  enabled   Boolean  @default(true)
+  badge     String?
+  createdAt DateTime @default(now())
+
+  transactions GiftTransaction[]
+}
+
+model GiftTransaction {
+  id         String   @id @default(cuid())
+  giftId     String
+  fromUserId String
+  toUserId   String
+  coinCost   Int
+  giftName   String
+  giftIcon   String
+  messageId  String?
+  createdAt  DateTime @default(now())
+
+  gift     GiftCatalog @relation(fields: [giftId], references: [id])
+  fromUser User        @relation("GiftSender", fields: [fromUserId], references: [id])
+  toUser   User        @relation("GiftReceiver", fields: [toUserId], references: [id])
+
+  @@index([fromUserId, createdAt])
+  @@index([toUserId, createdAt])
+}
+
+model CoinRechargeOrder {
+  id             String                @id @default(cuid())
+  userId         String
+  packageId      String
+  coins          Int
+  amount         Float
+  paymentChannel PaymentChannel
+  status         MembershipOrderStatus @default(PENDING)
+  paidAt         DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
 }
 
 model MatchSession {
@@ -308,6 +364,7 @@ enum MessageKind {
   TEXT
   IMAGE
   AUDIO
+  GIFT
 }
 
 enum WerewolfRoomType {
