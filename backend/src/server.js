@@ -31,6 +31,8 @@ const io = new Server(httpServer, {
 });
 const userSockets = new Map();
 const authTokens = new Map();
+const impersonationCodes = new Map();
+const IMPERSONATION_TTL_MS = 5 * 60 * 1000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const uploadRoot = path.join(__dirname, "../uploads");
@@ -94,6 +96,29 @@ function issueAuthToken(userId) {
   const token = randomUUID();
   authTokens.set(token, { userId: String(userId), issuedAt: Date.now() });
   return token;
+}
+
+function createImpersonationCode(userId) {
+  const code = randomUUID();
+  impersonationCodes.set(code, {
+    userId: String(userId),
+    expiresAt: Date.now() + IMPERSONATION_TTL_MS
+  });
+  return code;
+}
+
+function consumeImpersonationCode(code) {
+  const entry = impersonationCodes.get(String(code || ""));
+  if (!entry || entry.expiresAt < Date.now()) {
+    impersonationCodes.delete(String(code || ""));
+    return null;
+  }
+  impersonationCodes.delete(String(code || ""));
+  return entry.userId;
+}
+
+function getPublicSiteUrl() {
+  return String(process.env.PUBLIC_SITE_URL || "").trim().replace(/\/$/, "");
 }
 
 function getAuthUserId(req) {
@@ -1220,6 +1245,8 @@ app.use(
     prisma,
     uploadRoot,
     getOnlineUserIds: () => Array.from(userSockets.keys()),
+    createImpersonationCode,
+    getPublicSiteUrl,
     emitChatMessage: (toUserId, payload) => {
       const targetSockets = userSockets.get(String(toUserId));
       if (targetSockets?.size) {
@@ -1429,6 +1456,21 @@ app.post("/auth/login", async (req, res) => {
       return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
     }
     return res.status(500).json({ message: "登录失败，请稍后重试" });
+  }
+});
+
+app.get("/auth/impersonate", async (req, res) => {
+  try {
+    const code = String(req.query.code || req.query.asUser || "").trim();
+    if (!code) return res.status(400).json({ message: "登录凭证无效" });
+    const userId = consumeImpersonationCode(code);
+    if (!userId) return res.status(401).json({ message: "登录链接已失效，请从后台重新打开" });
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return res.status(404).json({ message: "用户不存在" });
+    const token = issueAuthToken(user.id);
+    return res.json({ user, token, needsProfile: !user.profileCompleted });
+  } catch (error) {
+    return res.status(500).json({ message: "自动登录失败" });
   }
 });
 

@@ -21,6 +21,21 @@ function apiBase() {
   return defaultApiBase();
 }
 
+function publicAppUrl() {
+  const base = apiBase();
+  if (base) return base.replace(/\/$/, "");
+  return window.location.origin;
+}
+
+async function loginFakeBotToApp(userId) {
+  const data = await api(`/admin/api/fake-bots/${encodeURIComponent(userId)}/impersonate`, {
+    method: "POST"
+  });
+  const loginUrl =
+    data.url || `${publicAppUrl()}/?asUser=${encodeURIComponent(String(data.code || ""))}`;
+  window.open(loginUrl, "_blank", "noopener,noreferrer");
+}
+
 function headers() {
   const h = { "Content-Type": "application/json" };
   const t = getToken();
@@ -330,6 +345,8 @@ async function openFakeBotProfileModal(ctx) {
   `;
   document.body.appendChild(wrap);
 
+  let currentUser = null;
+
   function closeModal() {
     wrap.remove();
   }
@@ -339,9 +356,10 @@ async function openFakeBotProfileModal(ctx) {
     if (e.target === wrap) closeModal();
   });
 
-  try {
-    const data = await api(`/admin/api/fake-bots/${encodeURIComponent(userId)}`);
-    const u = data.user || {};
+  function renderProfileView(u) {
+    currentUser = u;
+    const body = wrap.querySelector("#fake-bot-profile-body");
+    if (!body) return;
     const photos = Array.isArray(u.photoUrls) ? u.photoUrls.filter(Boolean) : [];
     const gallery = photos
       .map(
@@ -349,8 +367,6 @@ async function openFakeBotProfileModal(ctx) {
           `<a href="${escapeAttr(mediaUrl(url))}" target="_blank" rel="noopener" class="fake-moment-thumb"><img src="${escapeAttr(mediaUrl(url))}" alt="" /></a>`
       )
       .join("");
-    const body = wrap.querySelector("#fake-bot-profile-body");
-    if (!body) return;
     body.innerHTML = `
       <div class="fake-bot-profile-head">
         ${
@@ -378,7 +394,8 @@ async function openFakeBotProfileModal(ctx) {
       </dl>
       ${gallery ? `<div class="fake-moment-previews">${gallery}</div>` : ""}
       <div class="modal-actions">
-        <button type="button" class="btn secondary" id="fake-bot-profile-goto">去机器人库</button>
+        <button type="button" class="btn" id="fake-bot-profile-edit">编辑</button>
+        <button type="button" class="btn secondary" id="fake-bot-profile-login">登陆盲盒</button>
         ${
           u.fakeRobotLibrary === "USER"
             ? `<button type="button" class="btn secondary" id="fake-bot-profile-moment">发动态</button>`
@@ -386,9 +403,22 @@ async function openFakeBotProfileModal(ctx) {
         }
       </div>
     `;
-    body.querySelector("#fake-bot-profile-goto")?.addEventListener("click", () => {
-      closeModal();
-      switchAdminTab("fakes");
+    body.querySelector("#fake-bot-profile-edit")?.addEventListener("click", () => renderProfileEdit(u));
+    body.querySelector("#fake-bot-profile-login")?.addEventListener("click", async () => {
+      const btn = body.querySelector("#fake-bot-profile-login");
+      if (!btn) return;
+      btn.disabled = true;
+      const prev = btn.textContent;
+      btn.textContent = "打开中…";
+      try {
+        await loginFakeBotToApp(u.id);
+        flash(`已打开盲盒主页：${u.nickname || ""}`, "ok");
+      } catch (e) {
+        flash(e.message || "打开盲盒失败", "err");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
     });
     body.querySelector("#fake-bot-profile-moment")?.addEventListener("click", () => {
       closeModal();
@@ -400,17 +430,97 @@ async function openFakeBotProfileModal(ctx) {
         });
       });
     });
+  }
+
+  function renderProfileEdit(u) {
+    const body = wrap.querySelector("#fake-bot-profile-body");
+    if (!body) return;
+    body.innerHTML = `
+      <form id="fake-bot-profile-form" class="form-grid">
+        <label>昵称 <input name="nickname" required value="${escapeAttr(u.nickname || "")}" /></label>
+        <label>年龄 <input name="age" type="number" min="18" max="80" value="${escapeAttr(String(u.age ?? ""))}" /></label>
+        <label>身高 cm <input name="height" type="number" value="${escapeAttr(String(u.height ?? ""))}" /></label>
+        <label>体重 kg <input name="weight" type="number" value="${escapeAttr(String(u.weight ?? ""))}" /></label>
+        <label>家乡 <input name="hometown" value="${escapeAttr(u.hometown || "")}" /></label>
+        <label>现居 <input name="currentCity" value="${escapeAttr(u.currentCity || "")}" /></label>
+        <label>收入 <input name="income" value="${escapeAttr(u.income || "")}" /></label>
+        <label>行业 <input name="industry" value="${escapeAttr(u.industry || "")}" /></label>
+        <label class="form-full">爱好 <textarea name="hobbies">${escapeHtml(u.hobbies || "")}</textarea></label>
+        <label class="form-full">交友宣言 <textarea name="partnerExpectation">${escapeHtml(u.partnerExpectation || "")}</textarea></label>
+        <div class="modal-actions form-full">
+          <button type="button" class="btn secondary" id="fake-bot-profile-cancel-edit">取消</button>
+          <button type="submit" class="btn" id="fake-bot-profile-save">保存</button>
+        </div>
+      </form>
+    `;
+    body.querySelector("#fake-bot-profile-cancel-edit")?.addEventListener("click", () => renderProfileView(currentUser || u));
+    body.querySelector("#fake-bot-profile-form")?.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(ev.target);
+      const saveBtn = body.querySelector("#fake-bot-profile-save");
+      saveBtn.disabled = true;
+      const prev = saveBtn.textContent;
+      saveBtn.textContent = "保存中…";
+      try {
+        const payload = {
+          nickname: String(fd.get("nickname") || "").trim(),
+          age: Number(fd.get("age") || u.age || 24),
+          height: fd.get("height") ? Number(fd.get("height")) : undefined,
+          weight: fd.get("weight") ? Number(fd.get("weight")) : undefined,
+          hometown: String(fd.get("hometown") || ""),
+          currentCity: String(fd.get("currentCity") || ""),
+          income: String(fd.get("income") || ""),
+          industry: String(fd.get("industry") || ""),
+          hobbies: String(fd.get("hobbies") || ""),
+          partnerExpectation: String(fd.get("partnerExpectation") || "")
+        };
+        const data = await api(`/admin/api/fake-bots/${encodeURIComponent(userId)}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload)
+        });
+        flash("资料已更新", "ok");
+        renderProfileView(data.user || u);
+      } catch (e) {
+        flash(e.message || "保存失败", "err");
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = prev;
+      }
+    });
+  }
+
+  try {
+    const data = await api(`/admin/api/fake-bots/${encodeURIComponent(userId)}`);
+    renderProfileView(data.user || {});
   } catch (e) {
     const body = wrap.querySelector("#fake-bot-profile-body");
     if (body) body.innerHTML = `<p class="msg err">${escapeHtml(e.message || String(e))}</p>`;
   }
 }
 
+function renderAdminThreadBubble(m, botUserId) {
+  const isBot = m.fromUserId === botUserId;
+  const content =
+    m.kind === "TEXT"
+      ? escapeHtml(m.text || "")
+      : m.kind === "IMAGE"
+        ? `<a href="${escapeAttr(mediaUrl(m.mediaUrl))}" target="_blank" rel="noopener">[图片]</a>`
+        : m.kind === "AUDIO"
+          ? `<a href="${escapeAttr(mediaUrl(m.mediaUrl))}" target="_blank" rel="noopener">[语音]</a>`
+          : escapeHtml(m.text || "");
+  return `
+    <div class="admin-thread-bubble ${isBot ? "admin-thread-bubble--bot" : "admin-thread-bubble--user"}">
+      <div class="admin-thread-bubble-meta">${isBot ? "机器人" : "用户"} · ${formatDate(m.createdAt)}</div>
+      <div class="admin-thread-bubble-text">${content}</div>
+    </div>
+  `;
+}
+
 /**
- * 消息管理：以 Fake 机器人身份回复用户。
+ * 消息管理：会话线程（历史记录 + 代机器人回复）。
  * @param {{ botUserId: string; botName: string; toUserId: string; toName: string; onSent?: () => void }} ctx
  */
-function openMessageReplyModal(ctx) {
+async function openMessageReplyModal(ctx) {
   const botUserId = String(ctx.botUserId || "").trim();
   const toUserId = String(ctx.toUserId || "").trim();
   if (!botUserId || !toUserId) return;
@@ -422,25 +532,21 @@ function openMessageReplyModal(ctx) {
   wrap.className = "modal-overlay";
   wrap.setAttribute("aria-modal", "true");
   wrap.innerHTML = `
-    <div class="modal-card" role="document">
+    <div class="modal-card modal-card--thread" role="document">
       <div class="modal-head">
-        <h3>回复消息</h3>
+        <h3>${escapeHtml(ctx.botName || "机器人")} ↔ ${escapeHtml(ctx.toName || "用户")}</h3>
         <button type="button" class="btn secondary" id="msg-reply-close">关闭</button>
       </div>
-      <p class="muted" style="margin:0 0 10px;font-size:12px">
-        以 <strong>${escapeHtml(ctx.botName || "机器人")}</strong> 回复
-        <strong>${escapeHtml(ctx.toName || "用户")}</strong>
-      </p>
-      <label class="fake-moment-label" for="msg-reply-text">回复内容</label>
-      <textarea id="msg-reply-text" maxlength="2000" placeholder="输入要发送给对方的消息"></textarea>
-      <div class="modal-actions">
-        <button type="button" class="btn secondary" id="msg-reply-cancel">取消</button>
+      <div id="msg-thread-list" class="admin-thread-list"><p class="muted">加载历史记录…</p></div>
+      <div class="admin-thread-compose">
+        <textarea id="msg-reply-text" maxlength="2000" placeholder="以机器人身份回复…"></textarea>
         <button type="button" class="btn" id="msg-reply-send">发送</button>
       </div>
     </div>
   `;
   document.body.appendChild(wrap);
 
+  const listEl = wrap.querySelector("#msg-thread-list");
   const ta = wrap.querySelector("#msg-reply-text");
   const sendBtn = wrap.querySelector("#msg-reply-send");
 
@@ -449,10 +555,23 @@ function openMessageReplyModal(ctx) {
   }
 
   wrap.querySelector("#msg-reply-close")?.addEventListener("click", closeModal);
-  wrap.querySelector("#msg-reply-cancel")?.addEventListener("click", closeModal);
   wrap.addEventListener("click", (e) => {
     if (e.target === wrap) closeModal();
   });
+
+  async function loadThread() {
+    const data = await api(
+      `/admin/api/messages/thread?botUserId=${encodeURIComponent(botUserId)}&peerUserId=${encodeURIComponent(toUserId)}`
+    );
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+    if (!listEl) return;
+    if (!messages.length) {
+      listEl.innerHTML = `<p class="muted admin-thread-empty">暂无聊天记录，发送第一条回复吧</p>`;
+      return;
+    }
+    listEl.innerHTML = messages.map((m) => renderAdminThreadBubble(m, botUserId)).join("");
+    listEl.scrollTop = listEl.scrollHeight;
+  }
 
   sendBtn?.addEventListener("click", async () => {
     const text = String(ta?.value || "").trim();
@@ -464,12 +583,20 @@ function openMessageReplyModal(ctx) {
     const prev = sendBtn.textContent;
     sendBtn.textContent = "发送中…";
     try {
-      await api("/admin/api/messages/reply", {
+      const data = await api("/admin/api/messages/reply", {
         method: "POST",
         body: JSON.stringify({ botUserId, toUserId, text })
       });
-      flash("回复已发送", "ok");
-      closeModal();
+      ta.value = "";
+      const msg = data.message;
+      if (msg && listEl) {
+        const empty = listEl.querySelector(".admin-thread-empty");
+        if (empty) empty.remove();
+        listEl.insertAdjacentHTML("beforeend", renderAdminThreadBubble(msg, botUserId));
+        listEl.scrollTop = listEl.scrollHeight;
+      } else {
+        await loadThread();
+      }
       ctx.onSent?.();
     } catch (e) {
       flash(e.message || "发送失败", "err");
@@ -479,7 +606,12 @@ function openMessageReplyModal(ctx) {
     }
   });
 
-  ta?.focus();
+  try {
+    await loadThread();
+    ta?.focus();
+  } catch (e) {
+    if (listEl) listEl.innerHTML = `<p class="msg err">${escapeHtml(e.message || String(e))}</p>`;
+  }
 }
 
 /**
@@ -1123,7 +1255,7 @@ async function renderMessages(panel) {
     .join("");
   panel.innerHTML = `
     <h2>发往 Fake 机器人的消息</h2>
-    <p class="muted">仅展示 <code>toUserId</code> 为 fakem/fakef 机器人的聊天消息。点击机器人昵称可查看账号，支持代机器人回复。</p>
+    <p class="muted">按「用户 + 机器人」合并为会话。点击回复可查看完整聊天记录并代机器人回复；点击机器人昵称可查看/编辑账号。</p>
     <div class="toolbar">
       <label>筛选接收机器人
         <select id="msg-to">
@@ -1133,49 +1265,42 @@ async function renderMessages(panel) {
       </label>
       <button type="button" class="btn secondary" id="msg-apply">应用</button>
       <button type="button" class="btn secondary" id="msg-refresh">刷新</button>
-      <span class="muted">共 ${data.total} 条</span>
+      <span class="muted">共 ${data.total} 个会话</span>
     </div>
     <div style="overflow-x:auto">
       <table class="data">
         <thead>
           <tr>
-            <th>时间</th><th>发送者</th><th>接收机器人</th><th>类型</th><th>内容</th><th>操作</th>
+            <th>最近时间</th><th>用户</th><th>机器人</th><th>消息数</th><th>最近一条</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
-          ${data.messages
-            .map((m) => {
-              const content =
-                m.kind === "TEXT"
-                  ? escapeHtml(m.text || "")
-                  : m.kind === "IMAGE"
-                    ? `<a href="${escapeAttr(mediaUrl(m.mediaUrl))}" target="_blank" rel="noopener">图片</a>`
-                    : m.kind === "AUDIO"
-                      ? `<a href="${escapeAttr(mediaUrl(m.mediaUrl))}" target="_blank" rel="noopener">语音</a>`
-                      : escapeHtml(m.text || "");
-              const botId = m.toUser?.id || "";
-              const botName = m.toUser?.nickname || "";
-              const senderId = m.fromUser?.id || "";
-              const senderName = m.fromUser?.nickname || "";
+          ${(data.conversations || [])
+            .map((c) => {
+              const botId = c.botUserId || c.botUser?.id || "";
+              const botName = c.botUser?.nickname || "";
+              const peerId = c.peerUserId || c.peerUser?.id || "";
+              const peerName = c.peerUser?.nickname || "";
+              const preview = escapeHtml(c.lastPreview || "");
               return `
             <tr>
-              <td class="muted">${formatDate(m.createdAt)}</td>
-              <td>${escapeHtml(senderName)}<div class="muted">${escapeHtml(m.fromUser?.phone || "")}</div></td>
+              <td class="muted">${formatDate(c.lastAt)}</td>
+              <td>${escapeHtml(peerName)}<div class="muted">${escapeHtml(c.peerUser?.phone || "")}</div></td>
               <td>
                 <button type="button" class="link-btn msg-bot-open" data-bot-id="${escapeAttr(botId)}" data-bot-name="${escapeAttr(botName)}">
                   ${escapeHtml(botName)}
                 </button>
               </td>
-              <td>${escapeHtml(m.kind)}</td>
-              <td style="max-width:280px;word-break:break-word">${content}</td>
+              <td>${Number(c.messageCount || 0)}</td>
+              <td style="max-width:280px;word-break:break-word">${preview}</td>
               <td>
                 <button
                   type="button"
                   class="btn secondary msg-reply-open"
                   data-bot-id="${escapeAttr(botId)}"
                   data-bot-name="${escapeAttr(botName)}"
-                  data-to-id="${escapeAttr(senderId)}"
-                  data-to-name="${escapeAttr(senderName)}"
+                  data-to-id="${escapeAttr(peerId)}"
+                  data-to-name="${escapeAttr(peerName)}"
                 >回复</button>
               </td>
             </tr>`;

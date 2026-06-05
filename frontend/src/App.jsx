@@ -626,6 +626,7 @@ export default function App() {
   const [profileSetupForm, setProfileSetupForm] = useState(profileSetupInitial);
   const [profileSetupPhotos, setProfileSetupPhotos] = useState([]);
   const [needsProfileSetup, setNeedsProfileSetup] = useState(false);
+  const impersonateHandledRef = useRef(false);
   const registerPhoneRef = useRef(null);
   const registerPasswordRef = useRef(null);
   const [chatKeyword, setChatKeyword] = useState("");
@@ -782,6 +783,37 @@ export default function App() {
   const swipeStartXRef = useRef(0);
   const swipeActiveIdRef = useRef("");
   const hiddenConversationIdsRef = useRef([]);
+
+  useEffect(() => {
+    if (impersonateHandledRef.current) return;
+    const code = new URLSearchParams(window.location.search).get("asUser");
+    if (!code) return;
+    impersonateHandledRef.current = true;
+    (async () => {
+      try {
+        const res = await fetch(`${API}/auth/impersonate?code=${encodeURIComponent(code)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || "自动登录失败");
+        setContacts([]);
+        setConversations([]);
+        setChatMessages([]);
+        setActiveConversation(null);
+        setChatInput("");
+        setHiddenConversationIds([]);
+        setUser(data.user);
+        setAuthToken(data.token || "");
+        setNeedsProfileSetup(Boolean(data.needsProfile || !data.user?.profileCompleted));
+        setProfileSetupPhotos(data.user?.avatarUrl ? [data.user.avatarUrl] : []);
+        setMessage("");
+        navigate("/planet", { replace: true });
+        window.history.replaceState({}, "", window.location.pathname);
+      } catch (error) {
+        showToast(error.message || "自动登录失败");
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    })();
+  }, [navigate, showToast]);
+
   const [brokenImageIds, setBrokenImageIds] = useState([]);
   const mediaRecorderRef = useRef(null);
   const recordChunksRef = useRef([]);

@@ -76,10 +76,13 @@ const adminMessageReplySchema = z.object({
  *   uploadRoot: string;
  *   getOnlineUserIds: () => string[];
  *   emitChatMessage?: (toUserId: string, payload: object) => void;
+ *   createImpersonationCode?: (userId: string) => string;
+ *   getPublicSiteUrl?: () => string;
  * }} deps
  */
 export function createAdminRouter(deps) {
-  const { prisma, uploadRoot, getOnlineUserIds, emitChatMessage } = deps;
+  const { prisma, uploadRoot, getOnlineUserIds, emitChatMessage, createImpersonationCode, getPublicSiteUrl } =
+    deps;
   const r = Router();
   /** @type {Map<string, { id: string; username: string; canManageUsers: boolean }>} */
   const adminSessions = new Map();
@@ -378,6 +381,111 @@ export function createAdminRouter(deps) {
   /**
    * 代「用户机器人库」账号发布广场动态（写入 SquareMoment，广场 / 该用户「我的动态」一致）
    */
+  const updateFakeSchema = createFakeSchema.partial();
+
+  r.patch("/fake-bots/:userId", async (req, res) => {
+    try {
+      const userId = String(req.params.userId || "").trim();
+      if (!userId) return res.status(400).json({ message: "用户 ID 无效" });
+
+      const existing = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, phone: true, fakeRobotLibrary: true }
+      });
+      if (!existing) return res.status(404).json({ message: "用户不存在" });
+      if (!isFakeBotUser(existing)) {
+        return res.status(400).json({ message: "仅支持编辑 Fake 机器人账号" });
+      }
+
+      const data = updateFakeSchema.parse(req.body || {});
+      const patch = {};
+      if (data.nickname !== undefined) patch.nickname = data.nickname.trim();
+      if (data.age !== undefined) patch.age = data.age;
+      if (data.height !== undefined) patch.height = data.height;
+      if (data.weight !== undefined) patch.weight = data.weight;
+      if (data.hometown !== undefined) patch.hometown = data.hometown;
+      if (data.currentCity !== undefined) patch.currentCity = data.currentCity;
+      if (data.income !== undefined) patch.income = data.income;
+      if (data.industry !== undefined) patch.industry = data.industry;
+      if (data.hobbies !== undefined) patch.hobbies = data.hobbies;
+      if (data.partnerExpectation !== undefined) patch.partnerExpectation = data.partnerExpectation;
+      if (data.avatarUrl !== undefined) patch.avatarUrl = data.avatarUrl.trim() || null;
+      if (data.photoUrls !== undefined) patch.photoUrls = JSON.stringify(data.photoUrls);
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ message: "没有可更新的字段" });
+      }
+
+      const user = await prisma.user.update({
+        where: { id: userId },
+        data: patch,
+        select: {
+          id: true,
+          phone: true,
+          nickname: true,
+          gender: true,
+          age: true,
+          height: true,
+          weight: true,
+          hometown: true,
+          currentCity: true,
+          income: true,
+          industry: true,
+          hobbies: true,
+          partnerExpectation: true,
+          avatarUrl: true,
+          photoUrls: true,
+          profileCompleted: true,
+          fakeRobotLibrary: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: { select: { squareMoments: true } }
+        }
+      });
+      res.json({
+        user: {
+          ...user,
+          isFakeBot: true,
+          photoUrls: parsePhotoUrls(user.photoUrls)
+        }
+      });
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: e.issues.map((x) => x.message).join("; ") });
+      }
+      res.status(500).json({ message: e.message || "更新失败" });
+    }
+  });
+
+  r.post("/fake-bots/:userId/impersonate", async (req, res) => {
+    try {
+      const userId = String(req.params.userId || "").trim();
+      if (!userId) return res.status(400).json({ message: "用户 ID 无效" });
+      if (!createImpersonationCode) {
+        return res.status(503).json({ message: "登录盲盒功能未启用" });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, phone: true, nickname: true, fakeRobotLibrary: true }
+      });
+      if (!user) return res.status(404).json({ message: "用户不存在" });
+      if (!isFakeBotUser(user)) {
+        return res.status(400).json({ message: "仅支持 Fake 机器人账号登录盲盒" });
+      }
+
+      const code = createImpersonationCode(user.id);
+      const site = getPublicSiteUrl?.() || "";
+      const url = site ? `${site}/?asUser=${encodeURIComponent(code)}` : null;
+      res.json({
+        code,
+        url,
+        user: { id: user.id, nickname: user.nickname, phone: user.phone }
+      });
+    } catch (e) {
+      res.status(500).json({ message: e.message || "生成登录链接失败" });
+    }
+  });
+
   r.get("/fake-bots/:userId", async (req, res) => {
     try {
       const userId = String(req.params.userId || "").trim();
@@ -528,6 +636,120 @@ export function createAdminRouter(deps) {
     }
   });
 
+  function previewTextForMessage(m) {
+    if (m.kind === "IMAGE") return "[图片]";
+    if (m.kind === "AUDIO") return "[语音]";
+    return String(m.text || "").trim();
+  }
+
+  function buildFakeBotConversations(messages, fakeIds, filterBotId = "") {
+    const convMap = new Map();
+    const userCache = new Map();
+
+    const rememberUser = (u) => {
+      if (!u?.id) return;
+      userCache.set(u.id, u);
+    };
+
+    for (const m of messages) {
+      rememberUser(m.fromUser);
+      rememberUser(m.toUser);
+
+      let botId = "";
+      let peerId = "";
+      if (fakeIds.has(m.toUserId)) {
+        botId = m.toUserId;
+        peerId = m.fromUserId;
+      } else if (fakeIds.has(m.fromUserId)) {
+        botId = m.fromUserId;
+        peerId = m.toUserId;
+      } else {
+        continue;
+      }
+      if (!botId || !peerId || botId === peerId) continue;
+      if (filterBotId && botId !== filterBotId) continue;
+
+      const key = `${botId}:${peerId}`;
+      const existing = convMap.get(key);
+      if (!existing) {
+        convMap.set(key, {
+          botUserId: botId,
+          peerUserId: peerId,
+          messageCount: 1,
+          lastMessage: m,
+          lastAt: m.createdAt
+        });
+      } else {
+        existing.messageCount += 1;
+      }
+    }
+
+    return Array.from(convMap.values())
+      .map((item) => ({
+        botUserId: item.botUserId,
+        peerUserId: item.peerUserId,
+        botUser: userCache.get(item.botUserId) || null,
+        peerUser: userCache.get(item.peerUserId) || null,
+        messageCount: item.messageCount,
+        lastAt: item.lastAt,
+        lastPreview: previewTextForMessage(item.lastMessage),
+        lastKind: item.lastMessage.kind
+      }))
+      .sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime());
+  }
+
+  r.get("/messages/thread", async (req, res) => {
+    try {
+      const botUserId = String(req.query.botUserId || "").trim();
+      const peerUserId = String(req.query.peerUserId || "").trim();
+      if (!botUserId || !peerUserId) {
+        return res.status(400).json({ message: "缺少 botUserId 或 peerUserId" });
+      }
+
+      const bot = await prisma.user.findUnique({
+        where: { id: botUserId },
+        select: { id: true, nickname: true, phone: true, fakeRobotLibrary: true }
+      });
+      if (!bot || !isFakeBotUser(bot)) {
+        return res.status(400).json({ message: "无效的 Fake 机器人账号" });
+      }
+
+      const peer = await prisma.user.findUnique({
+        where: { id: peerUserId },
+        select: { id: true, nickname: true, phone: true, avatarUrl: true }
+      });
+      if (!peer) return res.status(404).json({ message: "用户不存在" });
+
+      const messages = await prisma.chatMessage.findMany({
+        where: {
+          OR: [
+            { fromUserId: botUserId, toUserId: peerUserId },
+            { fromUserId: peerUserId, toUserId: botUserId }
+          ]
+        },
+        orderBy: { createdAt: "asc" },
+        take: 500
+      });
+
+      res.json({
+        bot,
+        peer,
+        messages: messages.map((m) => ({
+          id: m.id,
+          kind: m.kind,
+          text: m.text,
+          mediaUrl: m.mediaUrl,
+          audioDurationSec: m.audioDurationSec,
+          fromUserId: m.fromUserId,
+          toUserId: m.toUserId,
+          createdAt: m.createdAt
+        }))
+      });
+    } catch (e) {
+      res.status(500).json({ message: e.message || "拉取会话失败" });
+    }
+  });
+
   r.get("/messages", async (req, res) => {
     try {
       const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
@@ -540,47 +762,39 @@ export function createAdminRouter(deps) {
       });
       const fakeIds = new Set(fakeUsers.map((u) => u.id));
       if (!fakeIds.size) {
-        return res.json({ total: 0, page, pageSize, messages: [], fakeBots: [] });
+        return res.json({ total: 0, page, pageSize, conversations: [], fakeBots: [] });
       }
 
-      const where = {
-        toUserId: toUserId && fakeIds.has(toUserId) ? toUserId : { in: [...fakeIds] }
-      };
-
-      const [total, messages] = await Promise.all([
-        prisma.chatMessage.count({ where }),
-        prisma.chatMessage.findMany({
-          where,
-          orderBy: { createdAt: "desc" },
-          skip: (page - 1) * pageSize,
-          take: pageSize,
-          include: {
-            fromUser: {
-              select: { id: true, nickname: true, phone: true, avatarUrl: true }
-            },
-            toUser: {
-              select: { id: true, nickname: true, phone: true, avatarUrl: true }
-            }
+      const messages = await prisma.chatMessage.findMany({
+        where: {
+          OR: [{ toUserId: { in: [...fakeIds] } }, { fromUserId: { in: [...fakeIds] } }]
+        },
+        orderBy: { createdAt: "desc" },
+        take: 8000,
+        include: {
+          fromUser: {
+            select: { id: true, nickname: true, phone: true, avatarUrl: true }
+          },
+          toUser: {
+            select: { id: true, nickname: true, phone: true, avatarUrl: true }
           }
-        })
-      ]);
+        }
+      });
+
+      const allConversations = buildFakeBotConversations(
+        messages,
+        fakeIds,
+        toUserId && fakeIds.has(toUserId) ? toUserId : ""
+      );
+      const total = allConversations.length;
+      const slice = allConversations.slice((page - 1) * pageSize, page * pageSize);
 
       res.json({
         total,
         page,
         pageSize,
         fakeBots: fakeUsers,
-        messages: messages.map((m) => ({
-          id: m.id,
-          kind: m.kind,
-          text: m.text,
-          mediaUrl: m.mediaUrl,
-          audioDurationSec: m.audioDurationSec,
-          readAt: m.readAt,
-          createdAt: m.createdAt,
-          fromUser: m.fromUser,
-          toUser: m.toUser
-        }))
+        conversations: slice
       });
     } catch (e) {
       res.status(500).json({ message: e.message || "查询失败" });
