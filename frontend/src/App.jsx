@@ -1141,7 +1141,14 @@ export default function App() {
       const incoming = Array.isArray(convData.conversations) ? convData.conversations : [];
       const hiddenIds = hiddenConversationIdsRef.current;
       const visible = incoming.filter((item) => !hiddenIds.includes(item.id));
-      setConversations(sortConversations(visible));
+      setConversations((prev) => {
+        const activeId = activeConversationIdRef.current;
+        if (activeId && !visible.some((item) => item.id === activeId)) {
+          const pinned = prev.find((item) => item.id === activeId);
+          if (pinned) return sortConversations([pinned, ...visible]);
+        }
+        return sortConversations(visible);
+      });
       setActiveConversation((prev) => {
         if (!prev?.id) return prev;
         const fromConv = visible.find((c) => c.id === prev.id);
@@ -2184,18 +2191,36 @@ export default function App() {
     }
   };
 
-  const contactPeer = async (targetUserId, name, gateContext = "planet") => {
-    if (!targetUserId) return;
+  const openChatWithPeer = async ({
+    targetUserId,
+    name,
+    avatar = "",
+    gateContext = "planet",
+    onBeforeNavigate
+  }) => {
+    if (!targetUserId || !user?.id) return;
     if (!isMembershipValid) {
       openMembershipGateFor(gateContext);
       return;
     }
-    try {
-      await sendFriendRequest(targetUserId, name || "TA");
-      navigate("/chat");
-    } catch (error) {
-      setChatNotice(error.message || "联系失败，请稍后重试");
-    }
+    const conversation = {
+      id: targetUserId,
+      name: name || "对方",
+      avatar: resolveAssetUrl(avatar) || "https://picsum.photos/80/80?chat",
+      preview: "",
+      time: new Date().toISOString(),
+      unread: 0
+    };
+    setConversations((prev) => {
+      if (prev.some((item) => item.id === targetUserId)) return prev;
+      return sortConversations([conversation, ...prev]);
+    });
+    setActiveConversation(conversation);
+    setChatInput("");
+    setChatMessages([]);
+    onBeforeNavigate?.();
+    navigate("/chat");
+    await refreshActiveMessages(user.id, targetUserId);
   };
 
   const closePeerProfileModal = () => {
@@ -2211,11 +2236,12 @@ export default function App() {
 
   const handlePlanetContact = () => {
     if (!planetMatchProfile?.id) return;
-    contactPeer(
-      planetMatchProfile.id,
-      planetMatchProfile.nickname || blindBoxTarget?.nickname || "对方",
-      "planet"
-    );
+    openChatWithPeer({
+      targetUserId: planetMatchProfile.id,
+      name: planetMatchProfile.nickname || blindBoxTarget?.nickname || "对方",
+      avatar: planetMatchProfile.avatar || "",
+      gateContext: "planet"
+    });
   };
 
   const onSquareScroll = async () => {
@@ -2429,25 +2455,31 @@ export default function App() {
     });
 
   const appendOwnMessage = (message) => {
+    if (!activeConversation) return;
     setChatMessages((prev) => [...prev, message]);
-    setConversations((prev) =>
-      sortConversations(
+    const preview =
+      message.kind === "IMAGE" ? "[图片]" : message.kind === "AUDIO" ? "[语音]" : message.text || "";
+    setConversations((prev) => {
+      const exists = prev.some((item) => item.id === activeConversation.id);
+      if (!exists) {
+        return sortConversations([
+          {
+            id: activeConversation.id,
+            name: activeConversation.name,
+            avatar: activeConversation.avatar,
+            preview,
+            time: message.createdAt,
+            unread: 0
+          },
+          ...prev
+        ]);
+      }
+      return sortConversations(
         prev.map((item) =>
-          item.id === activeConversation.id
-            ? {
-                ...item,
-                preview:
-                  message.kind === "IMAGE"
-                    ? "[图片]"
-                    : message.kind === "AUDIO"
-                      ? "[语音]"
-                      : message.text || "",
-                time: message.createdAt
-              }
-            : item
+          item.id === activeConversation.id ? { ...item, preview, time: message.createdAt } : item
         )
-      )
-    );
+      );
+    });
   };
 
   const sendChatPayload = async (payload) => {
@@ -3213,20 +3245,18 @@ export default function App() {
     openPeerProfile(truthOpponent.id, "truth");
   };
 
-  const handleTruthContact = async () => {
+  const handleTruthContact = () => {
     if (!truthOpponent?.id) return;
-    if (!isMembershipValid) {
-      openMembershipGateFor("truth");
-      return;
-    }
-    try {
-      await sendFriendRequest(truthOpponent.id, truthOpponent.name || "TA");
-      setShowTruthModal(false);
-      resetTruthState();
-      navigate("/chat");
-    } catch (error) {
-      setChatNotice(error.message || "联系失败，请稍后重试");
-    }
+    openChatWithPeer({
+      targetUserId: truthOpponent.id,
+      name: truthOpponent.name || "TA",
+      avatar: truthOpponent.avatar || "",
+      gateContext: "truth",
+      onBeforeNavigate: () => {
+        setShowTruthModal(false);
+        resetTruthState();
+      }
+    });
   };
 
   const closeTruthModal = () => {
