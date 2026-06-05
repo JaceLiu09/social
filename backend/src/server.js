@@ -1219,7 +1219,15 @@ app.use(
   createAdminRouter({
     prisma,
     uploadRoot,
-    getOnlineUserIds: () => Array.from(userSockets.keys())
+    getOnlineUserIds: () => Array.from(userSockets.keys()),
+    emitChatMessage: (toUserId, payload) => {
+      const targetSockets = userSockets.get(String(toUserId));
+      if (targetSockets?.size) {
+        targetSockets.forEach((socketId) => {
+          io.to(socketId).emit("chat:message", payload);
+        });
+      }
+    }
   })
 );
 app.use("/uploads", express.static(uploadRoot));

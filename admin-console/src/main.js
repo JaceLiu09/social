@@ -306,6 +306,183 @@ function flash(text, kind) {
 }
 
 /**
+ * 消息管理 / 机器人库：查看 Fake 机器人账号资料。
+ * @param {{ userId: string; nickname?: string }} ctx
+ */
+async function openFakeBotProfileModal(ctx) {
+  const userId = String(ctx.userId || "").trim();
+  if (!userId) return;
+
+  document.getElementById("fake-bot-profile-modal")?.remove();
+
+  const wrap = document.createElement("div");
+  wrap.id = "fake-bot-profile-modal";
+  wrap.className = "modal-overlay";
+  wrap.setAttribute("aria-modal", "true");
+  wrap.innerHTML = `
+    <div class="modal-card modal-card--wide" role="document">
+      <div class="modal-head">
+        <h3>Fake 机器人账号</h3>
+        <button type="button" class="btn secondary" id="fake-bot-profile-close">关闭</button>
+      </div>
+      <div id="fake-bot-profile-body"><p class="muted">加载中…</p></div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+
+  function closeModal() {
+    wrap.remove();
+  }
+
+  wrap.querySelector("#fake-bot-profile-close")?.addEventListener("click", closeModal);
+  wrap.addEventListener("click", (e) => {
+    if (e.target === wrap) closeModal();
+  });
+
+  try {
+    const data = await api(`/admin/api/fake-bots/${encodeURIComponent(userId)}`);
+    const u = data.user || {};
+    const photos = Array.isArray(u.photoUrls) ? u.photoUrls.filter(Boolean) : [];
+    const gallery = photos
+      .map(
+        (url) =>
+          `<a href="${escapeAttr(mediaUrl(url))}" target="_blank" rel="noopener" class="fake-moment-thumb"><img src="${escapeAttr(mediaUrl(url))}" alt="" /></a>`
+      )
+      .join("");
+    const body = wrap.querySelector("#fake-bot-profile-body");
+    if (!body) return;
+    body.innerHTML = `
+      <div class="fake-bot-profile-head">
+        ${
+          u.avatarUrl
+            ? `<img class="fake-bot-profile-avatar" src="${escapeAttr(mediaUrl(u.avatarUrl))}" alt="" />`
+            : `<div class="fake-bot-profile-avatar fake-bot-profile-avatar--empty">无头像</div>`
+        }
+        <div>
+          <strong class="fake-bot-profile-name">${escapeHtml(u.nickname || ctx.nickname || "—")}</strong>
+          <div class="muted">${escapeHtml(u.phone || "")}</div>
+          <div class="muted">库：${escapeHtml(u.fakeRobotLibrary || "—")} · 动态 ${Number(u._count?.squareMoments || 0)} 条</div>
+        </div>
+      </div>
+      <dl class="fake-bot-profile-dl">
+        <div><dt>性别</dt><dd>${u.gender === "MALE" ? "男" : u.gender === "FEMALE" ? "女" : "—"}</dd></div>
+        <div><dt>年龄</dt><dd>${u.age ?? "—"}</dd></div>
+        <div><dt>身高</dt><dd>${u.height ? `${u.height} cm` : "—"}</dd></div>
+        <div><dt>体重</dt><dd>${u.weight ? `${u.weight} kg` : "—"}</dd></div>
+        <div><dt>家乡</dt><dd>${escapeHtml(u.hometown || "—")}</dd></div>
+        <div><dt>现居</dt><dd>${escapeHtml(u.currentCity || "—")}</dd></div>
+        <div><dt>收入</dt><dd>${escapeHtml(u.income || "—")}</dd></div>
+        <div><dt>行业</dt><dd>${escapeHtml(u.industry || "—")}</dd></div>
+        <div class="fake-bot-profile-span"><dt>爱好</dt><dd>${escapeHtml(u.hobbies || "—")}</dd></div>
+        <div class="fake-bot-profile-span"><dt>交友宣言</dt><dd>${escapeHtml(u.partnerExpectation || "—")}</dd></div>
+      </dl>
+      ${gallery ? `<div class="fake-moment-previews">${gallery}</div>` : ""}
+      <div class="modal-actions">
+        <button type="button" class="btn secondary" id="fake-bot-profile-goto">去机器人库</button>
+        ${
+          u.fakeRobotLibrary === "USER"
+            ? `<button type="button" class="btn secondary" id="fake-bot-profile-moment">发动态</button>`
+            : ""
+        }
+      </div>
+    `;
+    body.querySelector("#fake-bot-profile-goto")?.addEventListener("click", () => {
+      closeModal();
+      switchAdminTab("fakes");
+    });
+    body.querySelector("#fake-bot-profile-moment")?.addEventListener("click", () => {
+      closeModal();
+      switchAdminTab("fakes").then(() => {
+        openFakeMomentModal({
+          userId: u.id,
+          nickname: u.nickname || "",
+          gender: u.gender === "MALE" ? "MALE" : "FEMALE"
+        });
+      });
+    });
+  } catch (e) {
+    const body = wrap.querySelector("#fake-bot-profile-body");
+    if (body) body.innerHTML = `<p class="msg err">${escapeHtml(e.message || String(e))}</p>`;
+  }
+}
+
+/**
+ * 消息管理：以 Fake 机器人身份回复用户。
+ * @param {{ botUserId: string; botName: string; toUserId: string; toName: string; onSent?: () => void }} ctx
+ */
+function openMessageReplyModal(ctx) {
+  const botUserId = String(ctx.botUserId || "").trim();
+  const toUserId = String(ctx.toUserId || "").trim();
+  if (!botUserId || !toUserId) return;
+
+  document.getElementById("msg-reply-modal")?.remove();
+
+  const wrap = document.createElement("div");
+  wrap.id = "msg-reply-modal";
+  wrap.className = "modal-overlay";
+  wrap.setAttribute("aria-modal", "true");
+  wrap.innerHTML = `
+    <div class="modal-card" role="document">
+      <div class="modal-head">
+        <h3>回复消息</h3>
+        <button type="button" class="btn secondary" id="msg-reply-close">关闭</button>
+      </div>
+      <p class="muted" style="margin:0 0 10px;font-size:12px">
+        以 <strong>${escapeHtml(ctx.botName || "机器人")}</strong> 回复
+        <strong>${escapeHtml(ctx.toName || "用户")}</strong>
+      </p>
+      <label class="fake-moment-label" for="msg-reply-text">回复内容</label>
+      <textarea id="msg-reply-text" maxlength="2000" placeholder="输入要发送给对方的消息"></textarea>
+      <div class="modal-actions">
+        <button type="button" class="btn secondary" id="msg-reply-cancel">取消</button>
+        <button type="button" class="btn" id="msg-reply-send">发送</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+
+  const ta = wrap.querySelector("#msg-reply-text");
+  const sendBtn = wrap.querySelector("#msg-reply-send");
+
+  function closeModal() {
+    wrap.remove();
+  }
+
+  wrap.querySelector("#msg-reply-close")?.addEventListener("click", closeModal);
+  wrap.querySelector("#msg-reply-cancel")?.addEventListener("click", closeModal);
+  wrap.addEventListener("click", (e) => {
+    if (e.target === wrap) closeModal();
+  });
+
+  sendBtn?.addEventListener("click", async () => {
+    const text = String(ta?.value || "").trim();
+    if (!text) {
+      flash("请输入回复内容", "err");
+      return;
+    }
+    sendBtn.disabled = true;
+    const prev = sendBtn.textContent;
+    sendBtn.textContent = "发送中…";
+    try {
+      await api("/admin/api/messages/reply", {
+        method: "POST",
+        body: JSON.stringify({ botUserId, toUserId, text })
+      });
+      flash("回复已发送", "ok");
+      closeModal();
+      ctx.onSent?.();
+    } catch (e) {
+      flash(e.message || "发送失败", "err");
+    } finally {
+      sendBtn.disabled = false;
+      sendBtn.textContent = prev;
+    }
+  });
+
+  ta?.focus();
+}
+
+/**
  * 用户机器人库表格「发动态」：弹层内上传图 + 文案，走 `POST /admin/api/fake-bots/:id/square-moments`。
  * @param {{ userId: string; nickname: string; gender: string }} ctx
  */
@@ -448,6 +625,13 @@ let membershipOrderStatus = "";
 let msgFilterTo = "";
 /** 来自 /auth/me，无「用户管理」权限时为 false */
 let sessionCanManageUsers = true;
+
+function switchAdminTab(tab) {
+  const btn = document.querySelector(`.tabs button[data-tab="${tab}"]`);
+  if (!btn) return;
+  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b === btn));
+  return setTab(tab);
+}
 
 async function setTab(tab) {
   document.querySelectorAll('[id^="panel-"]').forEach((p) => p.classList.add("hidden"));
@@ -939,7 +1123,7 @@ async function renderMessages(panel) {
     .join("");
   panel.innerHTML = `
     <h2>发往 Fake 机器人的消息</h2>
-    <p class="muted">仅展示 <code>toUserId</code> 为 fakem/fakef 机器人的聊天消息。</p>
+    <p class="muted">仅展示 <code>toUserId</code> 为 fakem/fakef 机器人的聊天消息。点击机器人昵称可查看账号，支持代机器人回复。</p>
     <div class="toolbar">
       <label>筛选接收机器人
         <select id="msg-to">
@@ -948,13 +1132,14 @@ async function renderMessages(panel) {
         </select>
       </label>
       <button type="button" class="btn secondary" id="msg-apply">应用</button>
+      <button type="button" class="btn secondary" id="msg-refresh">刷新</button>
       <span class="muted">共 ${data.total} 条</span>
     </div>
     <div style="overflow-x:auto">
       <table class="data">
         <thead>
           <tr>
-            <th>时间</th><th>发送者</th><th>接收机器人</th><th>类型</th><th>内容</th>
+            <th>时间</th><th>发送者</th><th>接收机器人</th><th>类型</th><th>内容</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -968,13 +1153,31 @@ async function renderMessages(panel) {
                     : m.kind === "AUDIO"
                       ? `<a href="${escapeAttr(mediaUrl(m.mediaUrl))}" target="_blank" rel="noopener">语音</a>`
                       : escapeHtml(m.text || "");
+              const botId = m.toUser?.id || "";
+              const botName = m.toUser?.nickname || "";
+              const senderId = m.fromUser?.id || "";
+              const senderName = m.fromUser?.nickname || "";
               return `
             <tr>
               <td class="muted">${formatDate(m.createdAt)}</td>
-              <td>${escapeHtml(m.fromUser?.nickname || "")}<div class="muted">${escapeHtml(m.fromUser?.phone || "")}</div></td>
-              <td>${escapeHtml(m.toUser?.nickname || "")}</td>
+              <td>${escapeHtml(senderName)}<div class="muted">${escapeHtml(m.fromUser?.phone || "")}</div></td>
+              <td>
+                <button type="button" class="link-btn msg-bot-open" data-bot-id="${escapeAttr(botId)}" data-bot-name="${escapeAttr(botName)}">
+                  ${escapeHtml(botName)}
+                </button>
+              </td>
               <td>${escapeHtml(m.kind)}</td>
               <td style="max-width:280px;word-break:break-word">${content}</td>
+              <td>
+                <button
+                  type="button"
+                  class="btn secondary msg-reply-open"
+                  data-bot-id="${escapeAttr(botId)}"
+                  data-bot-name="${escapeAttr(botName)}"
+                  data-to-id="${escapeAttr(senderId)}"
+                  data-to-name="${escapeAttr(senderName)}"
+                >回复</button>
+              </td>
             </tr>`;
             })
             .join("")}
@@ -992,6 +1195,9 @@ async function renderMessages(panel) {
     msgPage = 1;
     renderMessages(panel);
   };
+  document.getElementById("msg-refresh").onclick = () => {
+    renderMessages(panel);
+  };
   document.getElementById("msg-prev").onclick = () => {
     msgPage = Math.max(1, msgPage - 1);
     renderMessages(panel);
@@ -1000,6 +1206,31 @@ async function renderMessages(panel) {
     msgPage += 1;
     renderMessages(panel);
   };
+
+  if (panel._msgClick) panel.removeEventListener("click", panel._msgClick);
+  panel._msgClick = (e) => {
+    const botBtn = e.target.closest(".msg-bot-open");
+    if (botBtn) {
+      e.preventDefault();
+      openFakeBotProfileModal({
+        userId: botBtn.getAttribute("data-bot-id") || "",
+        nickname: botBtn.getAttribute("data-bot-name") || ""
+      });
+      return;
+    }
+    const replyBtn = e.target.closest(".msg-reply-open");
+    if (replyBtn) {
+      e.preventDefault();
+      openMessageReplyModal({
+        botUserId: replyBtn.getAttribute("data-bot-id") || "",
+        botName: replyBtn.getAttribute("data-bot-name") || "",
+        toUserId: replyBtn.getAttribute("data-to-id") || "",
+        toName: replyBtn.getAttribute("data-to-name") || "",
+        onSent: () => renderMessages(panel)
+      });
+    }
+  };
+  panel.addEventListener("click", panel._msgClick);
 }
 
 function escapeHtml(s) {

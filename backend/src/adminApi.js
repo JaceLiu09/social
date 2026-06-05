@@ -15,6 +15,15 @@ function isFakeBotPhone(phone) {
   return phone.startsWith("fakem") || phone.startsWith("fakef");
 }
 
+function isFakeBotUser(user) {
+  if (!user) return false;
+  return (
+    isFakeBotPhone(user.phone) ||
+    user.fakeRobotLibrary === "SYSTEM" ||
+    user.fakeRobotLibrary === "USER"
+  );
+}
+
 function parsePhotoUrls(raw) {
   if (!raw) return [];
   try {
@@ -55,11 +64,22 @@ const adminSquareMomentPostSchema = z
     message: "至少填写文字或上传一张图片"
   });
 
+const adminMessageReplySchema = z.object({
+  botUserId: z.string().min(1),
+  toUserId: z.string().min(1),
+  text: z.string().min(1).max(2000)
+});
+
 /**
- * @param {{ prisma: import("@prisma/client").PrismaClient; uploadRoot: string; getOnlineUserIds: () => string[] }} deps
+ * @param {{
+ *   prisma: import("@prisma/client").PrismaClient;
+ *   uploadRoot: string;
+ *   getOnlineUserIds: () => string[];
+ *   emitChatMessage?: (toUserId: string, payload: object) => void;
+ * }} deps
  */
 export function createAdminRouter(deps) {
-  const { prisma, uploadRoot, getOnlineUserIds } = deps;
+  const { prisma, uploadRoot, getOnlineUserIds, emitChatMessage } = deps;
   const r = Router();
   /** @type {Map<string, { id: string; username: string; canManageUsers: boolean }>} */
   const adminSessions = new Map();
@@ -358,6 +378,52 @@ export function createAdminRouter(deps) {
   /**
    * 代「用户机器人库」账号发布广场动态（写入 SquareMoment，广场 / 该用户「我的动态」一致）
    */
+  r.get("/fake-bots/:userId", async (req, res) => {
+    try {
+      const userId = String(req.params.userId || "").trim();
+      if (!userId) return res.status(400).json({ message: "用户 ID 无效" });
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          phone: true,
+          nickname: true,
+          gender: true,
+          age: true,
+          height: true,
+          weight: true,
+          hometown: true,
+          currentCity: true,
+          income: true,
+          industry: true,
+          hobbies: true,
+          partnerExpectation: true,
+          avatarUrl: true,
+          photoUrls: true,
+          profileCompleted: true,
+          fakeRobotLibrary: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: { select: { squareMoments: true } }
+        }
+      });
+      if (!user) return res.status(404).json({ message: "用户不存在" });
+      if (!isFakeBotUser(user)) {
+        return res.status(400).json({ message: "仅支持查看 Fake 机器人账号" });
+      }
+      res.json({
+        user: {
+          ...user,
+          isFakeBot: true,
+          photoUrls: parsePhotoUrls(user.photoUrls)
+        }
+      });
+    } catch (e) {
+      res.status(500).json({ message: e.message || "查询失败" });
+    }
+  });
+
   r.post("/fake-bots/:userId/square-moments", async (req, res) => {
     try {
       const userId = String(req.params.userId || "").trim();
@@ -518,6 +584,60 @@ export function createAdminRouter(deps) {
       });
     } catch (e) {
       res.status(500).json({ message: e.message || "查询失败" });
+    }
+  });
+
+  r.post("/messages/reply", async (req, res) => {
+    try {
+      const parsed = adminMessageReplySchema.parse(req.body);
+      const bot = await prisma.user.findUnique({
+        where: { id: parsed.botUserId },
+        select: { id: true, phone: true, nickname: true, fakeRobotLibrary: true }
+      });
+      if (!bot || !isFakeBotUser(bot)) {
+        return res.status(400).json({ message: "无效的 Fake 机器人账号" });
+      }
+
+      const peer = await prisma.user.findUnique({
+        where: { id: parsed.toUserId },
+        select: { id: true, nickname: true }
+      });
+      if (!peer) return res.status(404).json({ message: "接收用户不存在" });
+      if (peer.id === bot.id) return res.status(400).json({ message: "不能回复给自己" });
+
+      const message = await prisma.chatMessage.create({
+        data: {
+          fromUserId: bot.id,
+          toUserId: peer.id,
+          kind: "TEXT",
+          text: parsed.text.trim()
+        }
+      });
+
+      const payload = {
+        id: message.id,
+        fromUserId: bot.id,
+        toUserId: peer.id,
+        kind: message.kind,
+        text: message.text,
+        mediaUrl: null,
+        thumbMediaUrl: null,
+        audioDurationSec: null,
+        createdAt: message.createdAt.toISOString()
+      };
+      emitChatMessage?.(peer.id, payload);
+
+      res.status(201).json({
+        ok: true,
+        message: payload,
+        bot,
+        peer
+      });
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: e.issues[0]?.message || "参数错误" });
+      }
+      res.status(500).json({ message: e.message || "回复失败" });
     }
   });
 
