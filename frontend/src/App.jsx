@@ -113,6 +113,12 @@ const MEMBERSHIP_PLAN_META = {
   QUARTER: { label: "季卡", price: 79, months: 3 },
   YEAR: { label: "年卡", price: 269, months: 12 }
 };
+const MEMBERSHIP_TYPE_LABEL = {
+  MONTH: "月卡会员",
+  QUARTER: "季卡会员",
+  HALF_YEAR: "半年卡会员",
+  YEAR: "年卡会员"
+};
 const MEMBERSHIP_PAY_CHANNELS = [
   { id: "WECHAT", label: "微信支付", desc: "推荐，实时到账" },
   { id: "ALIPAY", label: "支付宝", desc: "支持花呗分期" }
@@ -701,6 +707,9 @@ export default function App() {
   const [membershipPayChannel, setMembershipPayChannel] = useState("WECHAT");
   const [membershipPendingOrderId, setMembershipPendingOrderId] = useState("");
   const [membershipRenewPreview, setMembershipRenewPreview] = useState("");
+  const [showPeerProfileModal, setShowPeerProfileModal] = useState(false);
+  const [peerProfile, setPeerProfile] = useState(null);
+  const [peerProfileLoading, setPeerProfileLoading] = useState(false);
   const [planetMatchLoading, setPlanetMatchLoading] = useState(false);
   const [planetMatchProfile, setPlanetMatchProfile] = useState(null);
   const [planetMatchGalleryIndex, setPlanetMatchGalleryIndex] = useState(0);
@@ -1804,6 +1813,11 @@ export default function App() {
     return new Date(user.membershipExpireAt) > new Date();
   }, [user]);
 
+  const membershipStatusText = useMemo(() => {
+    if (!isMembershipValid) return "免费用户";
+    return MEMBERSHIP_TYPE_LABEL[user?.membershipType] || "有效会员";
+  }, [isMembershipValid, user?.membershipType]);
+
   const planetMatchGalleryUrls = useMemo(
     () => getPlanetMatchGalleryUrls(planetMatchProfile),
     [planetMatchProfile]
@@ -2138,15 +2152,68 @@ export default function App() {
     }
   };
 
-  const handlePlanetDetailGate = () => {
-    setMembershipGateContext("planet");
+  const openMembershipGateFor = (context) => {
+    setMembershipGateContext(context);
     setShowMembershipGate(true);
+  };
+
+  const openPeerProfile = async (targetUserId, gateContext = "planet") => {
+    if (!targetUserId || !user?.id) return;
+    if (!isMembershipValid) {
+      openMembershipGateFor(gateContext);
+      return;
+    }
+    setPeerProfile(null);
+    setPeerProfileLoading(true);
+    setShowPeerProfileModal(true);
+    try {
+      const res = await fetch(
+        `${API}/users/${encodeURIComponent(targetUserId)}/profile?viewerId=${encodeURIComponent(user.id)}`,
+        { headers: authHeaders }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "加载资料失败");
+      setPeerProfile(data.profile || null);
+    } catch (error) {
+      setShowPeerProfileModal(false);
+      setChatNotice(error.message || "加载资料失败");
+    } finally {
+      setPeerProfileLoading(false);
+    }
+  };
+
+  const contactPeer = async (targetUserId, name, gateContext = "planet") => {
+    if (!targetUserId) return;
+    if (!isMembershipValid) {
+      openMembershipGateFor(gateContext);
+      return;
+    }
+    try {
+      await sendFriendRequest(targetUserId, name || "TA");
+      navigate("/chat");
+    } catch (error) {
+      setChatNotice(error.message || "联系失败，请稍后重试");
+    }
+  };
+
+  const closePeerProfileModal = () => {
+    setShowPeerProfileModal(false);
+    setPeerProfile(null);
+    setPeerProfileLoading(false);
+  };
+
+  const handlePlanetDetailGate = () => {
+    if (!planetMatchProfile?.id) return;
+    openPeerProfile(planetMatchProfile.id, "planet");
   };
 
   const handlePlanetContact = () => {
     if (!planetMatchProfile?.id) return;
-    setMembershipGateContext("planet");
-    setShowMembershipGate(true);
+    contactPeer(
+      planetMatchProfile.id,
+      planetMatchProfile.nickname || blindBoxTarget?.nickname || "对方",
+      "planet"
+    );
   };
 
   const onSquareScroll = async () => {
@@ -3140,19 +3207,14 @@ export default function App() {
   };
 
   const handleTruthProfileGate = () => {
-    if (isMembershipValid) {
-      setChatNotice("会员已开通，可查看对方详细资料并继续联系。");
-      return;
-    }
-    setMembershipGateContext("truth");
-    setShowMembershipGate(true);
+    if (!truthOpponent?.id) return;
+    openPeerProfile(truthOpponent.id, "truth");
   };
 
   const handleTruthContact = async () => {
     if (!truthOpponent?.id) return;
     if (!isMembershipValid) {
-      setMembershipGateContext("truth");
-      setShowMembershipGate(true);
+      openMembershipGateFor("truth");
       return;
     }
     try {
@@ -5103,7 +5165,7 @@ export default function App() {
               <div className="status-card my-stats">
                 <p>用户ID：{toTenDigitId(user.id)}</p>
                 <p>个人签名：{user.partnerExpectation || "做一个有趣的人"}</p>
-                <p>会员状态：{isMembershipValid ? "有效会员" : "免费用户"}</p>
+                <p>会员状态：{membershipStatusText}</p>
               </div>
 
               <div className="my-dynamics-head">
@@ -5867,6 +5929,63 @@ export default function App() {
           </div>
         </div>
       )}
+      {showPeerProfileModal && (
+        <div className="profile-setup-overlay" onClick={closePeerProfileModal}>
+          <div className="profile-setup-card peer-profile-card" onClick={(e) => e.stopPropagation()}>
+            <h3>详细资料</h3>
+            {peerProfileLoading ? (
+              <p className="feed-tip">加载中...</p>
+            ) : peerProfile ? (
+              <>
+                {(() => {
+                  const gallery = Array.isArray(peerProfile.photoUrls)
+                    ? peerProfile.photoUrls.map((u) => String(u ?? "").trim()).filter(Boolean)
+                    : [];
+                  if (!gallery.length) return null;
+                  return (
+                    <div className="peer-profile-gallery">
+                      {gallery.map((url, i) => (
+                        <img
+                          key={`peer-photo-${i}`}
+                          src={resolveAssetUrl(url)}
+                          alt={peerProfile.nickname || "对方相册"}
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src =
+                              peerProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
+                          }}
+                        />
+                      ))}
+                    </div>
+                  );
+                })()}
+                <div className="status-card my-stats">
+                  <p>昵称：{peerProfile.nickname || "—"}</p>
+                  <p>
+                    性别：
+                    {peerProfile.gender === "MALE" ? "男" : peerProfile.gender === "FEMALE" ? "女" : "—"}
+                  </p>
+                  <p>年龄：{peerProfile.age ?? "—"}岁</p>
+                  {peerProfile.height ? <p>身高：{peerProfile.height} cm</p> : null}
+                  {peerProfile.weight ? <p>体重：{peerProfile.weight} kg</p> : null}
+                  {peerProfile.hometown ? <p>家乡：{peerProfile.hometown}</p> : null}
+                  {peerProfile.currentCity ? <p>现居地：{peerProfile.currentCity}</p> : null}
+                  {peerProfile.hobbies ? <p>爱好：{peerProfile.hobbies}</p> : null}
+                  {peerProfile.partnerExpectation ? (
+                    <p>交友宣言：{peerProfile.partnerExpectation}</p>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <p className="feed-tip">暂无资料</p>
+            )}
+            <button type="button" onClick={closePeerProfileModal}>
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
+
       {showMembershipGate && (
         <div className="profile-setup-overlay membership-gate-overlay" onClick={closeMembershipGate}>
           <div className="profile-setup-card membership-gate-card" onClick={(e) => e.stopPropagation()}>

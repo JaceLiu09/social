@@ -55,6 +55,12 @@ Page({
   },
 
   refreshMembershipText(user) {
+    const membershipTypeLabel = {
+      MONTH: "月卡会员",
+      QUARTER: "季卡会员",
+      HALF_YEAR: "半年卡会员",
+      YEAR: "年卡会员"
+    };
     const valid =
       user &&
       user.membershipType &&
@@ -62,7 +68,9 @@ Page({
       user.membershipExpireAt &&
       new Date(user.membershipExpireAt) > new Date();
     this.setData({
-      membershipText: valid ? "会员：有效" : "会员：未开通"
+      membershipText: valid
+        ? `会员：${membershipTypeLabel[user.membershipType] || "有效会员"}`
+        : "会员：未开通"
     });
   },
 

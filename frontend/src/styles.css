@@ -3034,6 +3034,32 @@ button:hover {
   }
 }
 
+.peer-profile-card {
+  max-height: min(86vh, 720px);
+  overflow-y: auto;
+}
+
+.peer-profile-card h3 {
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.peer-profile-gallery {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  margin-bottom: 12px;
+  padding-bottom: 4px;
+}
+
+.peer-profile-gallery img {
+  width: 120px;
+  height: 160px;
+  object-fit: cover;
+  border-radius: 12px;
+  flex: 0 0 auto;
+}
+
 .membership-gate-overlay {
   z-index: 90;
   align-items: flex-end;
