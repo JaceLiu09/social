@@ -77,7 +77,6 @@
       <view wx:for="{{posts}}" wx:key="id" class="post">
         <view class="bb-av">盲盒</view>
         <view class="post-t">{{item.text}}</view>
-        <view class="muted">点赞 {{item.likes}}</view>
       </view>
     </view>
 

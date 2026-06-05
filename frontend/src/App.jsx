@@ -4580,7 +4580,6 @@ export default function App() {
               </div>
               {post.text ? <p>{post.text}</p> : null}
               {renderSquarePhotoGrid(post.imageUrls, `feed-${post.id}`)}
-              <small>点赞 {post.likes}</small>
             </div>
           ))}
           {squareLoading && <p className="feed-tip">加载中...</p>}
@@ -5286,9 +5285,7 @@ export default function App() {
                   <div className="post dark-post" key={post.id}>
                     {post.text ? <p>{post.text}</p> : null}
                     {renderSquarePhotoGrid(post.imageUrls, `mine-${post.id}`)}
-                    <small>
-                      {post.createdAt} · 点赞 {post.likes}
-                    </small>
+                    <small>{post.createdAt}</small>
                   </div>
                 ))}
               </div>
@@ -6107,9 +6104,7 @@ export default function App() {
                     <div className="post dark-post" key={`peer-post-${post.id}`}>
                       {post.text ? <p>{post.text}</p> : null}
                       {renderSquarePhotoGrid(post.imageUrls, `peer-${post.id}`)}
-                      <small>
-                        {post.createdAt} · 点赞 {post.likes}
-                      </small>
+                      <small>{post.createdAt}</small>
                     </div>
                   ))}
                 </div>
