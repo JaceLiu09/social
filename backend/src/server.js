@@ -1745,69 +1745,83 @@ app.get("/planet/robot-library/user", (req, res) => planetRobotLibrary(req, res,
 app.get("/planet/hidden-profiles", (req, res) => planetRobotLibrary(req, res, "SYSTEM"));
 
 app.post("/match/start", async (req, res) => {
-  const { userId } = req.body;
-  const currentUser = await prisma.user.findUnique({ where: { id: userId } });
-  if (!currentUser) return res.status(404).json({ message: "用户不存在" });
+  try {
+    const userId = String(req.body?.userId || "").trim();
+    if (!userId) return res.status(400).json({ message: "请先登录后再匹配" });
 
-  const oppGender = currentUser.gender === "MALE" ? "FEMALE" : "MALE";
-  const baseUserBotWhere = {
-    id: { not: currentUser.id },
-    gender: oppGender,
-    OR: [
-      { fakeRobotLibrary: "USER" },
-      {
-        AND: [
-          { fakeRobotLibrary: "NONE" },
-          {
-            OR: [{ phone: { startsWith: "fakefadm" } }, { phone: { startsWith: "fakemadm" } }]
-          }
-        ]
-      }
-    ]
-  };
+    const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+    if (!currentUser) return res.status(404).json({ message: "用户不存在" });
 
-  const pastSessions = await prisma.matchSession.findMany({
-    where: {
-      OR: [{ maleUserId: currentUser.id }, { femaleUserId: currentUser.id }]
-    },
-    select: { maleUserId: true, femaleUserId: true },
-    orderBy: { startedAt: "desc" },
-    take: 400
-  });
-  const pastOpponentIds = new Set();
-  for (const s of pastSessions) {
-    const opp = s.maleUserId === currentUser.id ? s.femaleUserId : s.maleUserId;
-    if (opp && opp !== currentUser.id) pastOpponentIds.add(opp);
+    const oppGender = currentUser.gender === "MALE" ? "FEMALE" : "MALE";
+    const baseUserBotWhere = {
+      id: { not: currentUser.id },
+      gender: oppGender,
+      OR: [
+        { fakeRobotLibrary: "USER" },
+        {
+          AND: [
+            { fakeRobotLibrary: "NONE" },
+            {
+              OR: [{ phone: { startsWith: "fakefadm" } }, { phone: { startsWith: "fakemadm" } }]
+            }
+          ]
+        }
+      ]
+    };
+
+    const pastSessions = await prisma.matchSession.findMany({
+      where: {
+        OR: [{ maleUserId: currentUser.id }, { femaleUserId: currentUser.id }]
+      },
+      select: { maleUserId: true, femaleUserId: true },
+      orderBy: { startedAt: "desc" },
+      take: 400
+    });
+    const pastOpponentIds = new Set();
+    for (const s of pastSessions) {
+      const opp = s.maleUserId === currentUser.id ? s.femaleUserId : s.maleUserId;
+      if (opp && opp !== currentUser.id) pastOpponentIds.add(opp);
+    }
+    const excludeIds = Array.from(new Set([currentUser.id, ...pastOpponentIds]));
+    let userBotWhere =
+      excludeIds.length > 1 ? { ...baseUserBotWhere, id: { notIn: excludeIds } } : baseUserBotWhere;
+
+    let botCount = await prisma.user.count({ where: userBotWhere });
+    if (!botCount) {
+      userBotWhere = baseUserBotWhere;
+      botCount = await prisma.user.count({ where: userBotWhere });
+    }
+    if (!botCount) {
+      return res.status(404).json({
+        message: "暂时没有可用的用户机器人，请在后台「用户机器人库」中添加后再匹配"
+      });
+    }
+
+    // 稳定排序 + 随机 skip：在可选池（尽量排除所有历史对手）内均匀抽取
+    const skip = Math.floor(Math.random() * botCount);
+    const target = await prisma.user.findFirst({
+      where: userBotWhere,
+      skip,
+      orderBy: { id: "asc" }
+    });
+    if (!target) {
+      return res.status(404).json({
+        message: "暂时没有可用的用户机器人，请在后台「用户机器人库」中添加后再匹配"
+      });
+    }
+
+    const [maleUserId, femaleUserId] =
+      currentUser.gender === "MALE" ? [currentUser.id, target.id] : [target.id, currentUser.id];
+
+    const session = await prisma.matchSession.create({ data: { maleUserId, femaleUserId } });
+    return res.json({
+      session,
+      targetBlindBox: { id: target.id, nickname: target.nickname || "盲盒用户" },
+      targetPlanetProfile: mapPlanetRobotProfile(target)
+    });
+  } catch (_error) {
+    return res.status(500).json({ message: "匹配失败，请稍后重试" });
   }
-  const excludeIds = Array.from(new Set([currentUser.id, ...pastOpponentIds]));
-  let userBotWhere =
-    excludeIds.length > 1 ? { ...baseUserBotWhere, id: { notIn: excludeIds } } : baseUserBotWhere;
-
-  let botCount = await prisma.user.count({ where: userBotWhere });
-  if (!botCount) {
-    userBotWhere = baseUserBotWhere;
-    botCount = await prisma.user.count({ where: userBotWhere });
-  }
-  // 稳定排序 + 随机 skip：在可选池（尽量排除所有历史对手）内均匀抽取
-  const skip = Math.floor(Math.random() * botCount);
-  const target = await prisma.user.findFirst({
-    where: userBotWhere,
-    skip,
-    orderBy: { id: "asc" }
-  });
-  if (!target) {
-    return res.status(404).json({ message: "暂时没有可用的用户机器人，请在后台「用户机器人库」中添加后再匹配" });
-  }
-
-  const [maleUserId, femaleUserId] =
-    currentUser.gender === "MALE" ? [currentUser.id, target.id] : [target.id, currentUser.id];
-
-  const session = await prisma.matchSession.create({ data: { maleUserId, femaleUserId } });
-  return res.json({
-    session,
-    targetBlindBox: { id: target.id, nickname: target.nickname || "盲盒用户" },
-    targetPlanetProfile: mapPlanetRobotProfile(target)
-  });
 });
 
 app.post("/game/dice-round", async (req, res) => {

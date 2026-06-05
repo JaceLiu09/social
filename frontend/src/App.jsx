@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
 import avatarManifest from "./avatarManifest.json";
@@ -123,6 +122,22 @@ const MEMBERSHIP_PAY_CHANNELS = [
   { id: "WECHAT", label: "微信支付", desc: "推荐，实时到账" },
   { id: "ALIPAY", label: "支付宝", desc: "支持花呗分期" }
 ];
+const PLANET_MATCH_REQUEST_TIMEOUT_MS = 15000;
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = PLANET_MATCH_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("匹配请求超时，请检查网络后重试");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 
 function formatMembershipDateText(value) {
   if (!value) return "";
@@ -2066,23 +2081,12 @@ export default function App() {
 
     let waitHintIntervalId = null;
     try {
-      try {
-        flushSync(() => {
-          setMessage("");
-          navigate("/match");
-          setPlanetMatchLoading(true);
-          setPlanetMatchProfile(null);
-          setPlanetMatchGalleryIndex(0);
-          setPlanetMatchRandomKm(null);
-        });
-      } catch {
-        setMessage("");
-        navigate("/match");
-        setPlanetMatchLoading(true);
-        setPlanetMatchProfile(null);
-        setPlanetMatchGalleryIndex(0);
-        setPlanetMatchRandomKm(null);
-      }
+      setMessage("");
+      navigate("/match");
+      setPlanetMatchLoading(true);
+      setPlanetMatchProfile(null);
+      setPlanetMatchGalleryIndex(0);
+      setPlanetMatchRandomKm(null);
 
       const minWaitMs = Math.round(3000 + Math.random() * 4000);
       const matchWaitStartedAt = Date.now();
@@ -2101,7 +2105,7 @@ export default function App() {
       const minWaitP = new Promise((resolve) => {
         window.setTimeout(resolve, minWaitMs);
       });
-      const matchP = fetch(`${API}/match/start`, {
+      const matchP = fetchWithTimeout(`${API}/match/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: user.id })
@@ -2124,13 +2128,11 @@ export default function App() {
       const [, matchOut] = await Promise.all([minWaitP, matchP]);
       if (planetMatchDismissedRef.current) return;
       const { data, picked } = matchOut;
-      flushSync(() => {
-        setSession(data.session);
-        setBlindBoxTarget(data.targetBlindBox);
-        setPlanetMatchProfile(picked);
-        setPlanetMatchGalleryIndex(0);
-        setPlanetMatchRandomKm(picked ? 1 + Math.floor(Math.random() * 120) : null);
-      });
+      setSession(data.session);
+      setBlindBoxTarget(data.targetBlindBox);
+      setPlanetMatchProfile(picked);
+      setPlanetMatchGalleryIndex(0);
+      setPlanetMatchRandomKm(picked ? 1 + Math.floor(Math.random() * 120) : null);
       if (!picked && !planetMatchDismissedRef.current) {
         setChatNotice("已匹配成功，可继续点击“开始寻找”刷新匹配对象");
       }
