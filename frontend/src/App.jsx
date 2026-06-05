@@ -730,6 +730,7 @@ export default function App() {
   const [showPeerProfileModal, setShowPeerProfileModal] = useState(false);
   const [peerProfile, setPeerProfile] = useState(null);
   const [peerProfileLoading, setPeerProfileLoading] = useState(false);
+  const [peerProfileCover, setPeerProfileCover] = useState("");
   const [planetMatchLoading, setPlanetMatchLoading] = useState(false);
   const [planetMatchProfile, setPlanetMatchProfile] = useState(null);
   const [planetMatchGalleryIndex, setPlanetMatchGalleryIndex] = useState(0);
@@ -2215,6 +2216,7 @@ export default function App() {
       return;
     }
     setPeerProfile(null);
+    setPeerProfileCover("");
     setPeerProfileLoading(true);
     setShowPeerProfileModal(true);
     try {
@@ -2268,8 +2270,28 @@ export default function App() {
   const closePeerProfileModal = () => {
     setShowPeerProfileModal(false);
     setPeerProfile(null);
+    setPeerProfileCover("");
     setPeerProfileLoading(false);
   };
+
+  const peerGalleryRawPhotos = useMemo(() => {
+    if (!peerProfile) return [];
+    const fromAlbum = Array.isArray(peerProfile.photoUrls)
+      ? peerProfile.photoUrls.map((u) => String(u ?? "").trim()).filter(Boolean)
+      : [];
+    const avatar = String(peerProfile.avatarUrl || "").trim();
+    if (avatar) {
+      if (fromAlbum.length) fromAlbum[0] = avatar;
+      else fromAlbum.push(avatar);
+    }
+    return fromAlbum.slice(0, 6);
+  }, [peerProfile]);
+
+  const peerPrimaryRaw = peerGalleryRawPhotos[0] || "";
+  const peerHeroCover =
+    resolveAssetUrl(peerProfileCover || peerPrimaryRaw) ||
+    (peerProfile?.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR);
+  const peerPosts = Array.isArray(peerProfile?.posts) ? peerProfile.posts : [];
 
   const handlePlanetDetailGate = () => {
     if (!planetMatchProfile?.id) return;
@@ -6014,58 +6036,87 @@ export default function App() {
         </div>
       )}
       {showPeerProfileModal && (
-        <div className="profile-setup-overlay" onClick={closePeerProfileModal}>
-          <div className="profile-setup-card peer-profile-card" onClick={(e) => e.stopPropagation()}>
-            <h3>详细资料</h3>
+        <div className="peer-home-overlay">
+          <div className="peer-home-topbar">
+            <button type="button" className="peer-home-back" onClick={closePeerProfileModal}>
+              返回
+            </button>
+            <span className="peer-home-title">TA的主页</span>
+          </div>
+          <div className="peer-home-scroll">
             {peerProfileLoading ? (
               <p className="feed-tip">加载中...</p>
             ) : peerProfile ? (
               <>
-                {(() => {
-                  const gallery = Array.isArray(peerProfile.photoUrls)
-                    ? peerProfile.photoUrls.map((u) => String(u ?? "").trim()).filter(Boolean)
-                    : [];
-                  if (!gallery.length) return null;
-                  return (
-                    <div className="peer-profile-gallery">
-                      {gallery.map((url, i) => (
-                        <img
-                          key={`peer-photo-${i}`}
-                          src={resolveAssetUrl(url)}
-                          alt={peerProfile.nickname || "对方相册"}
-                          onError={(e) => {
-                            e.currentTarget.onerror = null;
-                            e.currentTarget.src =
-                              peerProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
-                          }}
-                        />
-                      ))}
-                    </div>
-                  );
-                })()}
-                <div className="status-card my-stats">
-                  <p>昵称：{peerProfile.nickname || "—"}</p>
+                <div className="profile-hero" style={{ backgroundImage: `url(${peerHeroCover})` }}>
+                  <div className="profile-hero-mask">
+                    <div className="profile-hero-top" />
+                    {peerGalleryRawPhotos.length > 0 ? (
+                      <div className="profile-gallery-row">
+                        {peerGalleryRawPhotos.map((rawUrl, idx) => (
+                          <button
+                            key={`peer-thumb-${rawUrl}-${idx}`}
+                            className={`profile-thumb-btn ${
+                              (!peerProfileCover && idx === 0) || peerProfileCover === rawUrl ? "active-thumb" : ""
+                            }`}
+                            type="button"
+                            onClick={() => setPeerProfileCover(rawUrl)}
+                          >
+                            <img
+                              src={resolveAssetUrl(rawUrl)}
+                              alt={`相册${idx + 1}`}
+                              className="profile-thumb"
+                              onError={(e) => {
+                                e.currentTarget.onerror = null;
+                                e.currentTarget.src =
+                                  peerProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
+                              }}
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="profile-info-card">
+                  <h3>{peerProfile.nickname || "对方"}</h3>
                   <p>
-                    性别：
-                    {peerProfile.gender === "MALE" ? "男" : peerProfile.gender === "FEMALE" ? "女" : "—"}
+                    {peerProfile.gender === "MALE" ? "男生" : peerProfile.gender === "FEMALE" ? "女生" : "—"} ·{" "}
+                    {peerProfile.age ?? "—"}岁
+                    {peerProfile.currentCity ? ` · ${peerProfile.currentCity}` : ""}
                   </p>
-                  <p>年龄：{peerProfile.age ?? "—"}岁</p>
+                  {peerProfile.industry ? <p>{peerProfile.industry}</p> : null}
+                </div>
+
+                <div className="status-card my-stats">
+                  <p>用户ID：{toTenDigitId(peerProfile.id)}</p>
                   {peerProfile.height ? <p>身高：{peerProfile.height} cm</p> : null}
                   {peerProfile.weight ? <p>体重：{peerProfile.weight} kg</p> : null}
                   {peerProfile.hometown ? <p>家乡：{peerProfile.hometown}</p> : null}
-                  {peerProfile.currentCity ? <p>现居地：{peerProfile.currentCity}</p> : null}
                   {peerProfile.hobbies ? <p>爱好：{peerProfile.hobbies}</p> : null}
                   {peerProfile.partnerExpectation ? (
                     <p>交友宣言：{peerProfile.partnerExpectation}</p>
                   ) : null}
                 </div>
+
+                <h3 className="section-title">TA的动态</h3>
+                <div className="my-post-list">
+                  {peerPosts.length === 0 && <p className="feed-tip">TA还没有发布动态</p>}
+                  {peerPosts.map((post) => (
+                    <div className="post dark-post" key={`peer-post-${post.id}`}>
+                      {post.text ? <p>{post.text}</p> : null}
+                      {renderSquarePhotoGrid(post.imageUrls, `peer-${post.id}`)}
+                      <small>
+                        {post.createdAt} · 点赞 {post.likes}
+                      </small>
+                    </div>
+                  ))}
+                </div>
               </>
             ) : (
               <p className="feed-tip">暂无资料</p>
             )}
-            <button type="button" onClick={closePeerProfileModal}>
-              关闭
-            </button>
           </div>
         </div>
       )}

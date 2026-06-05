@@ -3275,6 +3275,20 @@ app.get("/users/:id/profile", async (req, res) => {
     return res.status(403).json({ message: "开通会员后可查看资料并发起聊天" });
   }
 
+  let photoUrls = [];
+  try {
+    const parsed = JSON.parse(target.photoUrls || "[]");
+    photoUrls = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    photoUrls = [];
+  }
+
+  const momentRows = await prisma.squareMoment.findMany({
+    where: { userId: target.id },
+    orderBy: { createdAt: "desc" },
+    take: 100
+  });
+
   const safeProfile = {
     id: target.id,
     nickname: target.nickname,
@@ -3286,7 +3300,17 @@ app.get("/users/:id/profile", async (req, res) => {
     currentCity: target.currentCity,
     hobbies: target.hobbies,
     partnerExpectation: target.partnerExpectation,
-    photoUrls: JSON.parse(target.photoUrls)
+    industry: target.industry,
+    income: target.income,
+    avatarUrl: target.avatarUrl,
+    photoUrls,
+    posts: momentRows.map((row) => ({
+      id: row.id,
+      text: row.text,
+      likes: row.likes,
+      imageUrls: safeParseMomentImageUrls(row.imageUrls),
+      createdAt: formatSquareMomentTime(row.createdAt)
+    }))
   };
   return res.json({ profile: safeProfile });
 });
