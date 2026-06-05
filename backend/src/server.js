@@ -1863,20 +1863,165 @@ app.post("/match/unlock", async (req, res) => {
   return res.json({ ok: true, amount: MALE_UNLOCK_FEE });
 });
 
-app.post("/membership/subscribe", async (req, res) => {
-  const { userId, plan } = req.body;
-  const price = MEMBERSHIP_PRICE[plan];
-  if (!price) return res.status(400).json({ message: "无效会员套餐" });
+const membershipOrderCreateSchema = z.object({
+  userId: z.string().min(1),
+  plan: z.enum(["MONTH", "QUARTER", "HALF_YEAR", "YEAR"]),
+  paymentChannel: z.enum(["WECHAT", "ALIPAY"])
+});
 
-  const monthsMap = { MONTH: 1, QUARTER: 3, HALF_YEAR: 6, YEAR: 12 };
-  const expire = new Date();
-  expire.setMonth(expire.getMonth() + monthsMap[plan]);
+const membershipOrderPaySchema = z.object({
+  userId: z.string().min(1)
+});
 
-  const user = await prisma.user.update({
-    where: { id: userId },
-    data: { membershipType: plan, membershipExpireAt: expire }
+const membershipMonthsMap = { MONTH: 1, QUARTER: 3, HALF_YEAR: 6, YEAR: 12 };
+
+function buildMembershipExpire(plan, currentExpireAt = null) {
+  const months = membershipMonthsMap[plan] || 0;
+  const now = new Date();
+  const base =
+    currentExpireAt && new Date(currentExpireAt).getTime() > now.getTime()
+      ? new Date(currentExpireAt)
+      : now;
+  base.setMonth(base.getMonth() + months);
+  return base;
+}
+
+async function payMembershipOrder(orderId, userId) {
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.membershipOrder.findUnique({ where: { id: orderId } });
+    if (!order || order.userId !== userId) {
+      throw new Error("订单不存在或无权限");
+    }
+    if (order.status === "PAID") {
+      const paidUser = await tx.user.findUnique({ where: { id: userId } });
+      return { order, user: paidUser, paid: order.amount, membershipExpireAt: paidUser?.membershipExpireAt || null };
+    }
+    if (order.status !== "PENDING") {
+      throw new Error("订单状态不可支付");
+    }
+    const currentUser = await tx.user.findUnique({ where: { id: userId } });
+    if (!currentUser) throw new Error("用户不存在");
+    const expire = buildMembershipExpire(order.plan, currentUser.membershipExpireAt);
+    const [paidOrder, updatedUser] = await Promise.all([
+      tx.membershipOrder.update({
+        where: { id: order.id },
+        data: { status: "PAID", paidAt: new Date() }
+      }),
+      tx.user.update({
+        where: { id: userId },
+        data: { membershipType: order.plan, membershipExpireAt: expire }
+      })
+    ]);
+    return { order: paidOrder, user: updatedUser, paid: order.amount, membershipExpireAt: expire };
   });
-  return res.json({ user, paid: price });
+}
+
+async function cancelMembershipOrder(orderId, userId) {
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.membershipOrder.findUnique({ where: { id: orderId } });
+    if (!order || order.userId !== userId) {
+      throw new Error("订单不存在或无权限");
+    }
+    if (order.status === "PAID") {
+      throw new Error("订单已支付，无法取消");
+    }
+    if (order.status === "FAILED") {
+      return order;
+    }
+    return tx.membershipOrder.update({
+      where: { id: order.id },
+      data: { status: "FAILED" }
+    });
+  });
+}
+
+app.post("/membership/orders", async (req, res) => {
+  try {
+    const parsed = membershipOrderCreateSchema.parse(req.body || {});
+    const user = await prisma.user.findUnique({
+      where: { id: parsed.userId },
+      select: { id: true, membershipExpireAt: true, membershipType: true }
+    });
+    if (!user) return res.status(404).json({ message: "用户不存在" });
+    const amount = MEMBERSHIP_PRICE[parsed.plan];
+    const membershipExpireAt = buildMembershipExpire(parsed.plan, user.membershipExpireAt);
+    const order = await prisma.membershipOrder.create({
+      data: {
+        userId: parsed.userId,
+        plan: parsed.plan,
+        paymentChannel: parsed.paymentChannel,
+        amount
+      }
+    });
+    return res.json({
+      order,
+      paid: amount,
+      membershipExpireAt,
+      renewStacked:
+        Boolean(user.membershipExpireAt) && new Date(user.membershipExpireAt).getTime() > Date.now()
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.issues[0]?.message || "参数错误" });
+    }
+    return res.status(400).json({ message: error.message || "创建订单失败" });
+  }
+});
+
+app.post("/membership/orders/:orderId/pay", async (req, res) => {
+  try {
+    const orderId = String(req.params.orderId || "").trim();
+    if (!orderId) return res.status(400).json({ message: "订单号无效" });
+    const parsed = membershipOrderPaySchema.parse(req.body || {});
+    const result = await payMembershipOrder(orderId, parsed.userId);
+    return res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.issues[0]?.message || "参数错误" });
+    }
+    return res.status(400).json({ message: error.message || "支付失败" });
+  }
+});
+
+app.post("/membership/orders/:orderId/cancel", async (req, res) => {
+  try {
+    const orderId = String(req.params.orderId || "").trim();
+    if (!orderId) return res.status(400).json({ message: "订单号无效" });
+    const parsed = membershipOrderPaySchema.parse(req.body || {});
+    const order = await cancelMembershipOrder(orderId, parsed.userId);
+    return res.json({ order });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.issues[0]?.message || "参数错误" });
+    }
+    return res.status(400).json({ message: error.message || "取消订单失败" });
+  }
+});
+
+// 兼容旧版前端：一键开通（内部仍按订单流转）
+app.post("/membership/subscribe", async (req, res) => {
+  try {
+    const userId = String(req.body?.userId || "").trim();
+    const plan = String(req.body?.plan || "").trim();
+    const paymentChannel = String(req.body?.paymentChannel || "WECHAT").trim();
+    const parsed = membershipOrderCreateSchema.parse({ userId, plan, paymentChannel });
+    const amount = MEMBERSHIP_PRICE[parsed.plan];
+    const order = await prisma.membershipOrder.create({
+      data: {
+        userId: parsed.userId,
+        plan: parsed.plan,
+        paymentChannel: parsed.paymentChannel,
+        amount
+      }
+    });
+    const result = await payMembershipOrder(order.id, parsed.userId);
+    return res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.issues[0]?.message || "参数错误" });
+    }
+    return res.status(400).json({ message: error.message || "开通会员失败" });
+  }
 });
 
 app.get("/chat/contacts", async (req, res) => {

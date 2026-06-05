@@ -16,11 +16,21 @@ FRONTEND_PORT="${FRONTEND_PORT:-4175}"
 ADMIN_CONSOLE_PORT="${ADMIN_CONSOLE_PORT:-4176}"
 BACKEND_PORT="${BACKEND_PORT:-4000}"
 
-# 前端构建时注入后端地址
-export VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://${SERVER_IP}:${BACKEND_PORT}}"
-# 管理后台独立构建：直连远端 API（与主站 API 同机同端口时可与 VITE_API_BASE_URL 相同）
-export VITE_ADMIN_API_BASE_URL="${VITE_ADMIN_API_BASE_URL:-http://${SERVER_IP}:${BACKEND_PORT}}"
-# 本地开发管理后台并指向同一套远端 API：在仓库 admin-console 目录执行 npm run dev:remote（见 admin-console/dev-remote.sh）
+# 浏览器实际访问的 HTTPS 域名（与 Nginx server_name 一致，勿末尾斜杠）。
+# Nginx 机反代 /oss-media、/match 等到本机 BACKEND_PORT 时，前端应走同源域名，避免跨域与混合内容。
+PUBLIC_SITE_URL="${PUBLIC_SITE_URL:-https://test.manghe.click}"
+
+# 前端 / 管理后台构建时注入的 API 基址（默认 = PUBLIC_SITE_URL）。
+# 仅内网直连调试时手动指定，例如：VITE_API_BASE_URL=http://127.0.0.1:4000
+# 不推荐再用 IP（HTTPS 页面会跨域）：VITE_API_BASE_URL=http://${SERVER_IP}:${BACKEND_PORT}
+if [ "${USE_LEGACY_IP_API:-0}" = "1" ]; then
+  export VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://${SERVER_IP}:${BACKEND_PORT}}"
+  export VITE_ADMIN_API_BASE_URL="${VITE_ADMIN_API_BASE_URL:-http://${SERVER_IP}:${BACKEND_PORT}}"
+else
+  export VITE_API_BASE_URL="${VITE_API_BASE_URL:-${PUBLIC_SITE_URL}}"
+  export VITE_ADMIN_API_BASE_URL="${VITE_ADMIN_API_BASE_URL:-${PUBLIC_SITE_URL}}"
+fi
+# 本地开发管理后台并指向远端 API：admin-console 目录 npm run dev:remote（见 admin-console/dev-remote.sh）
 
 # Git/SSH 连接参数（不再强制 -p，URL 已含 443）
 export GIT_TERMINAL_PROMPT=0
@@ -123,8 +133,12 @@ cd "${APP_DIR}/frontend"
 npm ci
 
 echo "==> [9/12] Frontend build"
+echo "PUBLIC_SITE_URL=${PUBLIC_SITE_URL}"
 echo "VITE_API_BASE_URL=${VITE_API_BASE_URL}"
 npm run build
+if grep -rq "112.124.51.207" dist 2>/dev/null; then
+  echo "WARN: frontend dist 仍含 112.124.51.207，请确认 VITE_API_BASE_URL 是否为 HTTPS 域名"
+fi
 
 echo "==> [10/12] Admin console deps"
 cd "${APP_DIR}/admin-console"
@@ -159,10 +173,12 @@ pm2 save
 pm2 ls
 
 echo "Deploy done."
-echo "Frontend (用户端) URL:     http://${SERVER_IP}:${FRONTEND_PORT}/"
-echo "Admin 控制台 URL:         http://${SERVER_IP}:${ADMIN_CONSOLE_PORT}/"
-echo "Backend API URL:          http://${SERVER_IP}:${BACKEND_PORT}/"
-echo "Health Check URL:         http://${SERVER_IP}:${BACKEND_PORT}/health"
+echo "用户端（Nginx 反代后）:  ${PUBLIC_SITE_URL}/"
+echo "用户端（应用机直连）:    http://${SERVER_IP}:${FRONTEND_PORT}/"
+echo "Admin 控制台（直连）:    http://${SERVER_IP}:${ADMIN_CONSOLE_PORT}/"
+echo "Backend（本机）:         http://127.0.0.1:${BACKEND_PORT}/"
+echo "构建 API 基址:           ${VITE_API_BASE_URL}"
 echo ""
-echo "说明: 管理后台已注入 API（VITE_ADMIN_API_BASE_URL）；使用管理员账号登录（默认 admin / 123456，首次部署由 seed 创建）。"
-echo "若浏览器报 ERR_CONNECTION_REFUSED: 1) 云安全组/防火墙放行 TCP ${BACKEND_PORT}  2) 在服务器上 pm2 logs social-backend 看是否反复崩溃  3) 本机执行 curl -sS http://127.0.0.1:${BACKEND_PORT}/health"
+echo "说明: 管理后台已注入 API（VITE_ADMIN_API_BASE_URL）；默认 admin / 123456（seed）。"
+echo "若浏览器仍请求 http://${SERVER_IP}:${BACKEND_PORT}：请确认已用本脚本重建并强刷缓存。"
+echo "若 ERR_CONNECTION_REFUSED: 1) 安全组放行 ${BACKEND_PORT}  2) pm2 logs social-backend  3) curl -sS http://127.0.0.1:${BACKEND_PORT}/health"

@@ -108,6 +108,44 @@ function createSentenceChainRounds(count = 5) {
 }
 
 const TRUTH_ROUNDS_PER_GAME = 5;
+const MEMBERSHIP_PLAN_META = {
+  MONTH: { label: "月卡", price: 29, months: 1 },
+  QUARTER: { label: "季卡", price: 79, months: 3 },
+  YEAR: { label: "年卡", price: 269, months: 12 }
+};
+const MEMBERSHIP_PAY_CHANNELS = [
+  { id: "WECHAT", label: "微信支付", desc: "推荐，实时到账" },
+  { id: "ALIPAY", label: "支付宝", desc: "支持花呗分期" }
+];
+
+function formatMembershipDateText(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function buildMembershipRenewPreview(plan, user, projectedExpireAt = null) {
+  const meta = MEMBERSHIP_PLAN_META[plan];
+  if (!meta) return "";
+  const now = Date.now();
+  const currentExpire = user?.membershipExpireAt ? new Date(user.membershipExpireAt) : null;
+  const nextExpire = projectedExpireAt
+    ? new Date(projectedExpireAt)
+    : (() => {
+        const base = currentExpire && currentExpire.getTime() > now ? new Date(currentExpire) : new Date();
+        base.setMonth(base.getMonth() + meta.months);
+        return base;
+      })();
+  const nextText = formatMembershipDateText(nextExpire);
+  if (currentExpire && currentExpire.getTime() > now) {
+    return `当前会员至 ${formatMembershipDateText(currentExpire)}，续费后延长至 ${nextText}`;
+  }
+  return `开通后会员有效期至 ${nextText}`;
+}
 const TRUTH_DIFFICULTY_OPTIONS = [
   { id: "LIGHT", label: "轻松" },
   { id: "HEART", label: "走心" },
@@ -659,6 +697,10 @@ export default function App() {
   const [showMembershipGate, setShowMembershipGate] = useState(false);
   const [membershipSubmitting, setMembershipSubmitting] = useState(false);
   const [membershipGateContext, setMembershipGateContext] = useState("invite");
+  const [membershipCheckoutPlan, setMembershipCheckoutPlan] = useState("");
+  const [membershipPayChannel, setMembershipPayChannel] = useState("WECHAT");
+  const [membershipPendingOrderId, setMembershipPendingOrderId] = useState("");
+  const [membershipRenewPreview, setMembershipRenewPreview] = useState("");
   const [planetMatchLoading, setPlanetMatchLoading] = useState(false);
   const [planetMatchProfile, setPlanetMatchProfile] = useState(null);
   const [planetMatchGalleryIndex, setPlanetMatchGalleryIndex] = useState(0);
@@ -1807,6 +1849,7 @@ export default function App() {
           desc: "当前账号是免费用户，开通会员后可邀请对方继续下一局并添加好友。",
           cancel: "先不添加"
         };
+  const membershipCheckoutMeta = membershipCheckoutPlan ? MEMBERSHIP_PLAN_META[membershipCheckoutPlan] : null;
 
   const mustAgree = () => {
     if (agreed) return true;
@@ -1826,6 +1869,14 @@ export default function App() {
     if (registerForm.smsCode.trim().length === 6) return;
     setAgreed(false);
   }, [registerForm.smsCode]);
+
+  useEffect(() => {
+    if (showMembershipGate) return;
+    setMembershipCheckoutPlan("");
+    setMembershipPayChannel("WECHAT");
+    setMembershipPendingOrderId("");
+    setMembershipRenewPreview("");
+  }, [showMembershipGate]);
 
   useEffect(() => {
     if (authMode !== "register") return undefined;
@@ -3260,25 +3311,119 @@ export default function App() {
     }
   };
 
-  const subscribeMembership = async (plan) => {
-    if (!user?.id) return;
-    setMembershipSubmitting(true);
+  const cancelPendingMembershipOrder = async (orderId = membershipPendingOrderId) => {
+    const targetOrderId = String(orderId || "").trim();
+    if (!targetOrderId || !user?.id) return;
     try {
-      const res = await fetch(`${API}/membership/subscribe`, {
+      await fetch(`${API}/membership/orders/${targetOrderId}/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id, plan })
+        body: JSON.stringify({ userId: user.id })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "开通会员失败");
+    } catch (_error) {
+      /* 取消失败不阻塞 UI */
+    }
+    if (targetOrderId === membershipPendingOrderId) {
+      setMembershipPendingOrderId("");
+    }
+  };
+
+  const createMembershipOrder = async (plan, paymentChannel = membershipPayChannel) => {
+    if (!user?.id) throw new Error("请先登录");
+    if (membershipPendingOrderId) {
+      await cancelPendingMembershipOrder(membershipPendingOrderId);
+    }
+    const createOrderRes = await fetch(`${API}/membership/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: user.id, plan, paymentChannel })
+    });
+    const orderData = await createOrderRes.json();
+    if (!createOrderRes.ok) throw new Error(orderData.message || "创建支付订单失败");
+    const orderId = String(orderData.order?.id || "");
+    if (!orderId) throw new Error("支付订单创建失败");
+    setMembershipPendingOrderId(orderId);
+    setMembershipRenewPreview(
+      buildMembershipRenewPreview(plan, user, orderData.membershipExpireAt)
+    );
+    return orderId;
+  };
+
+  const subscribeMembership = async () => {
+    if (!user?.id || !membershipCheckoutPlan) return;
+    setMembershipSubmitting(true);
+    let orderId = membershipPendingOrderId;
+    try {
+      if (!orderId) {
+        orderId = await createMembershipOrder(membershipCheckoutPlan, membershipPayChannel);
+      }
+      const payRes = await fetch(`${API}/membership/orders/${orderId}/pay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id })
+      });
+      const data = await payRes.json();
+      if (!payRes.ok) {
+        await cancelPendingMembershipOrder(orderId);
+        throw new Error(data.message || "支付失败");
+      }
       setUser(data.user || user);
+      setMembershipPendingOrderId("");
+      setMembershipCheckoutPlan("");
+      setMembershipRenewPreview("");
       setShowMembershipGate(false);
-      setChatNotice(`会员开通成功，已支付 ${data.paid} 元`);
+      const expireText = formatMembershipDateText(data.membershipExpireAt || data.user?.membershipExpireAt);
+      setChatNotice(
+        expireText
+          ? `会员开通成功，已支付 ${data.paid} 元，有效期至 ${expireText}`
+          : `会员开通成功，已支付 ${data.paid} 元`
+      );
     } catch (error) {
       setChatNotice(error.message || "开通会员失败");
     } finally {
       setMembershipSubmitting(false);
     }
+  };
+
+  const openMembershipCheckout = async (plan) => {
+    if (!MEMBERSHIP_PLAN_META[plan]) return;
+    setMembershipSubmitting(true);
+    try {
+      setMembershipCheckoutPlan(plan);
+      setMembershipPayChannel("WECHAT");
+      await createMembershipOrder(plan, "WECHAT");
+    } catch (error) {
+      setMembershipCheckoutPlan("");
+      setChatNotice(error.message || "进入支付页失败");
+    } finally {
+      setMembershipSubmitting(false);
+    }
+  };
+
+  const onMembershipPayChannelChange = async (channelId) => {
+    if (!membershipCheckoutPlan || membershipSubmitting) return;
+    setMembershipPayChannel(channelId);
+    setMembershipSubmitting(true);
+    try {
+      await createMembershipOrder(membershipCheckoutPlan, channelId);
+    } catch (error) {
+      setChatNotice(error.message || "切换支付通道失败");
+    } finally {
+      setMembershipSubmitting(false);
+    }
+  };
+
+  const backToMembershipPlans = async () => {
+    if (membershipSubmitting) return;
+    await cancelPendingMembershipOrder();
+    setMembershipCheckoutPlan("");
+    setMembershipRenewPreview("");
+  };
+
+  const closeMembershipGate = async () => {
+    if (membershipSubmitting) return;
+    await cancelPendingMembershipOrder();
+    setShowMembershipGate(false);
   };
 
   const onTacitAddFriend = async () => {
@@ -5723,25 +5868,71 @@ export default function App() {
         </div>
       )}
       {showMembershipGate && (
-        <div className="profile-setup-overlay membership-gate-overlay" onClick={() => setShowMembershipGate(false)}>
+        <div className="profile-setup-overlay membership-gate-overlay" onClick={closeMembershipGate}>
           <div className="profile-setup-card membership-gate-card" onClick={(e) => e.stopPropagation()}>
             <div className="membership-sheet-handle" aria-hidden="true" />
             <h3>{membershipGateCopy.title}</h3>
             <p>{membershipGateCopy.desc}</p>
-            <div className="werewolf-menu">
-              <button type="button" disabled={membershipSubmitting} onClick={() => subscribeMembership("MONTH")}>
-                月卡 ¥29
-              </button>
-              <button type="button" disabled={membershipSubmitting} onClick={() => subscribeMembership("QUARTER")}>
-                季卡 ¥79
-              </button>
-              <button type="button" disabled={membershipSubmitting} onClick={() => subscribeMembership("YEAR")}>
-                年卡 ¥269
-              </button>
-            </div>
-            <button type="button" onClick={() => setShowMembershipGate(false)}>
-              {membershipGateCopy.cancel}
-            </button>
+            {!membershipCheckoutMeta ? (
+              <>
+                <div className="werewolf-menu">
+                  <button type="button" disabled={membershipSubmitting} onClick={() => openMembershipCheckout("MONTH")}>
+                    月卡 ¥29
+                  </button>
+                  <button type="button" disabled={membershipSubmitting} onClick={() => openMembershipCheckout("QUARTER")}>
+                    季卡 ¥79
+                  </button>
+                  <button type="button" disabled={membershipSubmitting} onClick={() => openMembershipCheckout("YEAR")}>
+                    年卡 ¥269
+                  </button>
+                </div>
+                <button type="button" onClick={closeMembershipGate}>
+                  {membershipGateCopy.cancel}
+                </button>
+              </>
+            ) : (
+              <div className="membership-checkout">
+                <div className="membership-checkout-plan">
+                  <strong>
+                    {membershipCheckoutMeta.label} ¥{membershipCheckoutMeta.price}
+                  </strong>
+                  <span>
+                    {membershipRenewPreview ||
+                      buildMembershipRenewPreview(membershipCheckoutPlan, user)}
+                  </span>
+                </div>
+                <div className="membership-channel-list">
+                  {MEMBERSHIP_PAY_CHANNELS.map((channel) => (
+                    <button
+                      key={channel.id}
+                      type="button"
+                      className={membershipPayChannel === channel.id ? "active" : ""}
+                      onClick={() => onMembershipPayChannelChange(channel.id)}
+                      disabled={membershipSubmitting}
+                    >
+                      <strong>{channel.label}</strong>
+                      <span>{channel.desc}</span>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="membership-pay-btn"
+                  disabled={membershipSubmitting || !membershipPendingOrderId}
+                  onClick={subscribeMembership}
+                >
+                  {membershipSubmitting
+                    ? "支付处理中..."
+                    : `确认支付 ¥${membershipCheckoutMeta.price} 并开通${membershipCheckoutMeta.label}`}
+                </button>
+                <button type="button" onClick={backToMembershipPlans} disabled={membershipSubmitting}>
+                  返回套餐选择
+                </button>
+                <button type="button" className="membership-cancel-pay-btn" onClick={closeMembershipGate} disabled={membershipSubmitting}>
+                  取消支付
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

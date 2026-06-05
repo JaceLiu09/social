@@ -402,6 +402,66 @@ export function createAdminRouter(deps) {
     }
   });
 
+  const membershipPlanLabel = {
+    MONTH: "月卡",
+    QUARTER: "季卡",
+    HALF_YEAR: "半年卡",
+    YEAR: "年卡"
+  };
+  const membershipStatusLabel = {
+    PENDING: "待支付",
+    PAID: "已支付",
+    FAILED: "已取消/失败"
+  };
+  const paymentChannelLabel = {
+    WECHAT: "微信支付",
+    ALIPAY: "支付宝"
+  };
+
+  r.get("/membership-orders", async (req, res) => {
+    try {
+      const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+      const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize || "30"), 10)));
+      const status = String(req.query.status || "").trim().toUpperCase();
+      const where = status && ["PENDING", "PAID", "FAILED"].includes(status) ? { status } : {};
+      const [total, rows] = await Promise.all([
+        prisma.membershipOrder.count({ where }),
+        prisma.membershipOrder.findMany({
+          where,
+          orderBy: { createdAt: "desc" },
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+          include: {
+            user: {
+              select: { id: true, nickname: true, phone: true, membershipType: true, membershipExpireAt: true }
+            }
+          }
+        })
+      ]);
+      res.json({
+        total,
+        page,
+        pageSize,
+        orders: rows.map((row) => ({
+          id: row.id,
+          userId: row.userId,
+          plan: row.plan,
+          planLabel: membershipPlanLabel[row.plan] || row.plan,
+          paymentChannel: row.paymentChannel,
+          paymentChannelLabel: paymentChannelLabel[row.paymentChannel] || row.paymentChannel,
+          amount: row.amount,
+          status: row.status,
+          statusLabel: membershipStatusLabel[row.status] || row.status,
+          paidAt: row.paidAt,
+          createdAt: row.createdAt,
+          user: row.user
+        }))
+      });
+    } catch (e) {
+      res.status(500).json({ message: e.message || "查询会员订单失败" });
+    }
+  });
+
   r.get("/messages", async (req, res) => {
     try {
       const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));

@@ -3096,6 +3096,83 @@ button:hover {
   background: #fff;
 }
 
+.membership-checkout {
+  display: grid;
+  gap: 10px;
+}
+
+.membership-checkout-plan {
+  border: 1px solid #e2e8fb;
+  border-radius: 14px;
+  padding: 12px;
+  background: #f6f8ff;
+  display: grid;
+  gap: 4px;
+}
+
+.membership-checkout-plan strong {
+  font-size: 18px;
+  color: #2f3e67;
+}
+
+.membership-checkout-plan span {
+  font-size: 13px;
+  color: #7380a2;
+}
+
+.membership-channel-list {
+  display: grid;
+  gap: 8px;
+}
+
+.membership-channel-list button {
+  width: 100%;
+  border: 1px solid #dce4fb;
+  border-radius: 12px;
+  min-height: 54px;
+  background: #fff;
+  color: #41507b;
+  display: grid;
+  justify-items: start;
+  align-content: center;
+  gap: 2px;
+  padding: 8px 12px;
+}
+
+.membership-channel-list button.active {
+  border-color: #5f72ff;
+  box-shadow: 0 0 0 2px rgba(95, 114, 255, 0.12);
+}
+
+.membership-channel-list button strong {
+  font-size: 15px;
+}
+
+.membership-channel-list button span {
+  font-size: 12px;
+  color: #7e8bac;
+}
+
+.membership-gate-card .membership-pay-btn {
+  border-radius: 14px;
+  font-size: 17px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #5865f2 0%, #6d4dff 100%);
+  color: #fff;
+  min-height: 46px;
+  border: 0;
+}
+
+.membership-gate-card .membership-cancel-pay-btn {
+  width: 100%;
+  margin-top: 2px;
+  border: 0;
+  background: transparent;
+  color: #8a94b0;
+  min-height: 38px;
+  font-size: 14px;
+}
+
 @keyframes membershipSheetSlideUp {
   from {
     transform: translateY(28px);

@@ -233,11 +233,13 @@ async function renderShell() {
       ${canManageUsers ? `<button type="button" data-tab="users" class="active">用户管理</button>` : ""}
       <button type="button" data-tab="online" class="${canManageUsers ? "" : "active"}">在线用户</button>
       <button type="button" data-tab="fakes">Fake 机器人</button>
+      <button type="button" data-tab="membership-orders">会员订单</button>
       <button type="button" data-tab="messages">消息管理</button>
     </nav>
     <div id="panel-users" class="panel"></div>
     <div id="panel-online" class="panel hidden"></div>
     <div id="panel-fakes" class="panel hidden"></div>
+    <div id="panel-membership-orders" class="panel hidden"></div>
     <div id="panel-messages" class="panel hidden"></div>
   `;
 
@@ -441,6 +443,8 @@ function openFakeMomentModal(ctx) {
 
 let userPage = 1;
 let msgPage = 1;
+let membershipOrderPage = 1;
+let membershipOrderStatus = "";
 let msgFilterTo = "";
 /** 来自 /auth/me，无「用户管理」权限时为 false */
 let sessionCanManageUsers = true;
@@ -465,6 +469,7 @@ async function setTab(tab) {
     if (tab === "users") await renderUsers(panel);
     if (tab === "online") await renderOnline(panel);
     if (tab === "fakes") await renderFakes(panel);
+    if (tab === "membership-orders") await renderMembershipOrders(panel);
     if (tab === "messages") await renderMessages(panel);
   } catch (e) {
     panel.innerHTML = `<div class="msg err">${e.message || String(e)}</div>`;
@@ -854,6 +859,74 @@ async function renderFakes(panel) {
       submitBtn.disabled = false;
       submitBtn.textContent = prevText;
     }
+  };
+}
+
+async function renderMembershipOrders(panel) {
+  const data = await api(
+    `/admin/api/membership-orders?page=${membershipOrderPage}&pageSize=30${
+      membershipOrderStatus ? `&status=${encodeURIComponent(membershipOrderStatus)}` : ""
+    }`
+  );
+  panel.innerHTML = `
+    <h2>会员订单</h2>
+    <p class="muted">展示用户开通会员的待支付 / 已支付 / 已取消订单。</p>
+    <div class="toolbar">
+      <label>状态
+        <select id="membership-order-status">
+          <option value="">全部</option>
+          <option value="PENDING" ${membershipOrderStatus === "PENDING" ? "selected" : ""}>待支付</option>
+          <option value="PAID" ${membershipOrderStatus === "PAID" ? "selected" : ""}>已支付</option>
+          <option value="FAILED" ${membershipOrderStatus === "FAILED" ? "selected" : ""}>已取消/失败</option>
+        </select>
+      </label>
+      <button type="button" class="btn secondary" id="membership-order-apply">筛选</button>
+      <span class="muted">共 ${data.total} 条</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="data">
+        <thead>
+          <tr>
+            <th>创建时间</th><th>用户</th><th>套餐</th><th>支付通道</th><th>金额</th><th>状态</th><th>支付时间</th><th>会员到期</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.orders
+            .map(
+              (row) => `
+            <tr>
+              <td class="muted">${formatDate(row.createdAt)}</td>
+              <td>${escapeHtml(row.user?.nickname || "")}<div class="muted">${escapeHtml(row.user?.phone || "")}</div></td>
+              <td>${escapeHtml(row.planLabel || row.plan)}</td>
+              <td>${escapeHtml(row.paymentChannelLabel || row.paymentChannel)}</td>
+              <td>¥${Number(row.amount || 0).toFixed(2)}</td>
+              <td>${escapeHtml(row.statusLabel || row.status)}</td>
+              <td class="muted">${row.paidAt ? formatDate(row.paidAt) : "—"}</td>
+              <td class="muted">${row.user?.membershipExpireAt ? formatDate(row.user.membershipExpireAt) : "—"}</td>
+            </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <button type="button" class="btn secondary" ${data.page <= 1 ? "disabled" : ""} id="membership-order-prev">上一页</button>
+      <span>第 ${data.page} 页</span>
+      <button type="button" class="btn secondary" ${data.page * data.pageSize >= data.total ? "disabled" : ""} id="membership-order-next">下一页</button>
+    </div>
+  `;
+  document.getElementById("membership-order-apply").onclick = () => {
+    membershipOrderStatus = document.getElementById("membership-order-status").value;
+    membershipOrderPage = 1;
+    renderMembershipOrders(panel);
+  };
+  document.getElementById("membership-order-prev").onclick = () => {
+    membershipOrderPage = Math.max(1, membershipOrderPage - 1);
+    renderMembershipOrders(panel);
+  };
+  document.getElementById("membership-order-next").onclick = () => {
+    membershipOrderPage += 1;
+    renderMembershipOrders(panel);
   };
 }
 

@@ -45,6 +45,7 @@ model User {
   tacitQueueEntries TacitMatchQueue[]
   tacitAnswers TacitAnswer[]
   squareMoments     SquareMoment[]
+  membershipOrders  MembershipOrder[]
 }
 
 model MatchSession {
@@ -256,6 +257,23 @@ model TacitMatchQueue {
   user User @relation(fields: [userId], references: [id])
 }
 
+model MembershipOrder {
+  id             String         @id @default(cuid())
+  userId         String
+  plan           MembershipType
+  paymentChannel PaymentChannel
+  amount         Float
+  status         MembershipOrderStatus @default(PENDING)
+  paidAt         DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
 enum FakeRobotLibrary {
   NONE
   SYSTEM
@@ -273,6 +291,17 @@ enum MembershipType {
   QUARTER
   HALF_YEAR
   YEAR
+}
+
+enum PaymentChannel {
+  WECHAT
+  ALIPAY
+}
+
+enum MembershipOrderStatus {
+  PENDING
+  PAID
+  FAILED
 }
 
 enum MessageKind {
