@@ -1676,6 +1676,37 @@ function mapPlanetRobotProfile(item) {
   };
 }
 
+const matchBotProfileSelect = {
+  id: true,
+  nickname: true,
+  age: true,
+  currentCity: true,
+  hometown: true,
+  height: true,
+  weight: true,
+  income: true,
+  industry: true,
+  hobbies: true,
+  avatarUrl: true,
+  gender: true,
+  partnerExpectation: true,
+  photoUrls: true,
+  _count: { select: { squareMoments: true } }
+};
+
+/** 动态越多权重越高，仍保留无动态机器人的被匹配机会 */
+function pickWeightedBotByMomentCount(candidates) {
+  if (!candidates.length) return null;
+  const weights = candidates.map((bot) => 1 + (bot._count?.squareMoments || 0));
+  const total = weights.reduce((sum, w) => sum + w, 0);
+  let roll = Math.random() * total;
+  for (let i = 0; i < candidates.length; i++) {
+    roll -= weights[i];
+    if (roll <= 0) return candidates[i];
+  }
+  return candidates[candidates.length - 1];
+}
+
 async function planetRobotLibrary(req, res, library) {
   try {
     const viewerId = getAuthUserId(req);
@@ -1786,24 +1817,23 @@ app.post("/match/start", async (req, res) => {
     let userBotWhere =
       excludeIds.length > 1 ? { ...baseUserBotWhere, id: { notIn: excludeIds } } : baseUserBotWhere;
 
-    let botCount = await prisma.user.count({ where: userBotWhere });
-    if (!botCount) {
-      userBotWhere = baseUserBotWhere;
-      botCount = await prisma.user.count({ where: userBotWhere });
+    let candidates = await prisma.user.findMany({
+      where: userBotWhere,
+      select: matchBotProfileSelect
+    });
+    if (!candidates.length) {
+      candidates = await prisma.user.findMany({
+        where: baseUserBotWhere,
+        select: matchBotProfileSelect
+      });
     }
-    if (!botCount) {
+    if (!candidates.length) {
       return res.status(404).json({
         message: "暂时没有可用的用户机器人，请在后台「用户机器人库」中添加后再匹配"
       });
     }
 
-    // 稳定排序 + 随机 skip：在可选池（尽量排除所有历史对手）内均匀抽取
-    const skip = Math.floor(Math.random() * botCount);
-    const target = await prisma.user.findFirst({
-      where: userBotWhere,
-      skip,
-      orderBy: { id: "asc" }
-    });
+    const target = pickWeightedBotByMomentCount(candidates);
     if (!target) {
       return res.status(404).json({
         message: "暂时没有可用的用户机器人，请在后台「用户机器人库」中添加后再匹配"
