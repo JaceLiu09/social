@@ -475,7 +475,7 @@ export function createAdminRouter(deps) {
 
       const code = createImpersonationCode(user.id);
       const site = getPublicSiteUrl?.() || "";
-      const url = site ? `${site}/?asUser=${encodeURIComponent(code)}` : null;
+      const url = site ? `${site}/planet?asUser=${encodeURIComponent(code)}` : null;
       res.json({
         code,
         url,

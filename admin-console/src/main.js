@@ -32,7 +32,7 @@ async function loginFakeBotToApp(userId) {
     method: "POST"
   });
   const loginUrl =
-    data.url || `${publicAppUrl()}/?asUser=${encodeURIComponent(String(data.code || ""))}`;
+    data.url || `${publicAppUrl()}/planet?asUser=${encodeURIComponent(String(data.code || ""))}`;
   window.open(loginUrl, "_blank", "noopener,noreferrer");
 }
 

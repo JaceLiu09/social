@@ -572,9 +572,10 @@ export default function App() {
 
   useLayoutEffect(() => {
     if (!Object.prototype.hasOwnProperty.call(ROUTE_TAB, location.pathname)) {
-      navigate("/planet", { replace: true });
+      const search = location.search || "";
+      navigate(`/planet${search}`, { replace: true });
     }
-  }, [location.pathname, navigate]);
+  }, [location.pathname, location.search, navigate]);
 
   const [chatMode, setChatMode] = useState("chat");
   const [mePage, setMePage] = useState("home");
@@ -626,6 +627,9 @@ export default function App() {
   const [profileSetupForm, setProfileSetupForm] = useState(profileSetupInitial);
   const [profileSetupPhotos, setProfileSetupPhotos] = useState([]);
   const [needsProfileSetup, setNeedsProfileSetup] = useState(false);
+  const [impersonatePending, setImpersonatePending] = useState(
+    () => Boolean(new URLSearchParams(window.location.search).get("asUser"))
+  );
   const impersonateHandledRef = useRef(false);
   const registerPhoneRef = useRef(null);
   const registerPasswordRef = useRef(null);
@@ -785,10 +789,14 @@ export default function App() {
   const hiddenConversationIdsRef = useRef([]);
 
   useEffect(() => {
+    const code = new URLSearchParams(location.search).get("asUser");
+    if (!code) {
+      setImpersonatePending(false);
+      return;
+    }
     if (impersonateHandledRef.current) return;
-    const code = new URLSearchParams(window.location.search).get("asUser");
-    if (!code) return;
     impersonateHandledRef.current = true;
+    setImpersonatePending(true);
     (async () => {
       try {
         const res = await fetch(`${API}/auth/impersonate?code=${encodeURIComponent(code)}`);
@@ -806,13 +814,15 @@ export default function App() {
         setProfileSetupPhotos(data.user?.avatarUrl ? [data.user.avatarUrl] : []);
         setMessage("");
         navigate("/planet", { replace: true });
-        window.history.replaceState({}, "", window.location.pathname);
       } catch (error) {
+        impersonateHandledRef.current = false;
         showToast(error.message || "自动登录失败");
-        window.history.replaceState({}, "", window.location.pathname);
+        navigate("/planet", { replace: true });
+      } finally {
+        setImpersonatePending(false);
       }
     })();
-  }, [navigate, showToast]);
+  }, [location.search, navigate, showToast]);
 
   const [brokenImageIds, setBrokenImageIds] = useState([]);
   const mediaRecorderRef = useRef(null);
@@ -3965,6 +3975,16 @@ export default function App() {
       </div>
     );
   };
+
+  if (impersonatePending) {
+    return (
+      <main className="login-page">
+        <p className="auth-msg" style={{ marginTop: "40vh", textAlign: "center" }}>
+          正在以机器人账号登录盲盒…
+        </p>
+      </main>
+    );
+  }
 
   if (!user) {
     return (

@@ -151,6 +151,7 @@ npm run build
 echo "==> [12/12] Restart services (PM2)"
 # 与 backend server.js 中 PORT 一致；勿在 Node 16 环境上升 sharp≥0.33（需 Node≥18.17）
 export PORT="${BACKEND_PORT}"
+export PUBLIC_SITE_URL="${PUBLIC_SITE_URL}"
 if pm2 describe social-backend >/dev/null 2>&1; then
   pm2 restart social-backend --update-env
 else
