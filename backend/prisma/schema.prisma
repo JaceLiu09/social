@@ -52,6 +52,8 @@ model User {
   coinRechargeOrders CoinRechargeOrder[]
   giftsSent         GiftTransaction[] @relation("GiftSender")
   giftsReceived     GiftTransaction[] @relation("GiftReceiver")
+  following         UserFollow[]      @relation("UserFollowing")
+  followers         UserFollow[]      @relation("UserFollowers")
 }
 
 model GiftCatalog {
@@ -194,6 +196,19 @@ model FriendRequest {
 
   @@unique([fromUserId, toUserId])
   @@index([toUserId, status])
+}
+
+model UserFollow {
+  id         String   @id @default(cuid())
+  followerId String
+  followeeId String
+  createdAt  DateTime @default(now())
+
+  follower User @relation("UserFollowing", fields: [followerId], references: [id])
+  followee User @relation("UserFollowers", fields: [followeeId], references: [id])
+
+  @@unique([followerId, followeeId])
+  @@index([followeeId])
 }
 
 model WerewolfRoom {

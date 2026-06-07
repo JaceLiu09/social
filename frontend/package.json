@@ -6,9 +6,27 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:ios": "vite build --mode ios",
+    "cap:remote": "node scripts/cap-server-url.mjs remote",
+    "cap:bundled": "node scripts/cap-server-url.mjs bundled",
+    "cap:sync": "npm run build:ios && npx cap sync ios",
+    "cap:sync:remote": "npx cap sync ios",
+    "cap:open:ios": "npx cap open ios",
+    "ios:prepare": "npm run cap:remote && npm run cap:sync:remote",
+    "ios:open": "npm run ios:prepare && npx cap open ios",
+    "ios:prepare:bundled": "npm run cap:bundled && npm run cap:sync",
+    "ios:device": "./scripts/ios-setup-and-run.sh"
   },
   "dependencies": {
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/camera": "^8.2.0",
+    "@capacitor/cli": "^8.4.0",
+    "@capacitor/core": "^8.4.0",
+    "@capacitor/geolocation": "^8.2.0",
+    "@capacitor/ios": "^8.4.0",
+    "@capacitor/splash-screen": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.30.3",

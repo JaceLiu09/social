@@ -1,11 +1,115 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { Capacitor } from "@capacitor/core";
+import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { io } from "socket.io-client";
 import avatarManifest from "./avatarManifest.json";
+import {
+  getLocalLoginHeroAvatars,
+  getLocalSystemRobotProfiles,
+  mapSeedAssetToLocal,
+  preloadLocalDisplayAssets,
+  shouldPreferLocalSeedAvatars
+} from "./localStaticAssets";
+import {
+  formatSquareDistanceLabel,
+  getViewerLocation,
+  normalizeSquarePostDistances
+} from "./viewerLocation.js";
 
 const ENV_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").trim();
 const DEFAULT_API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:4000`;
 const API = (ENV_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/$/, "");
+
+async function enrichSquarePostAuthors(posts, authHeaders, profileLists) {
+  let list = posts.map((p) => ({ ...p }));
+  const missing = list.filter((p) => !p.userId && p.id);
+  const missingNicknames = [
+    ...new Set(list.filter((p) => !p.userId && p.nickname).map((p) => String(p.nickname).trim()))
+  ].filter(Boolean);
+  if (missing.length || missingNicknames.length) {
+    try {
+      const res = await fetch(`${API}/square/posts/author-ids`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({
+          momentIds: missing.map((p) => p.id),
+          nicknames: missingNicknames
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const authors = data.authors || {};
+        const nickAuthors = data.nickAuthors || {};
+        list = list.map((p) => ({
+          ...p,
+          userId:
+            p.userId ||
+            authors[p.id] ||
+            authors[String(p.id)] ||
+            nickAuthors[p.nickname] ||
+            nickAuthors[String(p.nickname || "").trim()] ||
+            ""
+        }));
+      }
+    } catch {
+      // 旧版后端无此接口时忽略
+    }
+  }
+  const byNick = new Map();
+  for (const profile of profileLists) {
+    if (profile?.nickname && profile?.id) byNick.set(profile.nickname, profile.id);
+  }
+  return list.map((p) => ({
+    ...p,
+    userId: p.userId || byNick.get(p.nickname) || ""
+  }));
+}
+
+async function resolveSquarePostAuthorId(post, authHeaders) {
+  if (post?.userId) return String(post.userId);
+  const momentId = post?.id != null ? String(post.id) : "";
+  const nickname = String(post?.nickname || "").trim();
+  if (!momentId && !nickname) return "";
+
+  try {
+    const res = await fetch(`${API}/square/posts/author-ids`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({
+        momentIds: momentId ? [momentId] : [],
+        nicknames: nickname ? [nickname] : []
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const fromMoment = data.authors?.[momentId] || data.authors?.[post.id];
+      const fromNick = data.nickAuthors?.[nickname];
+      if (fromMoment) return String(fromMoment);
+      if (fromNick) return String(fromNick);
+    }
+  } catch {
+    // ignore
+  }
+
+  if (momentId || nickname) {
+    try {
+      const params = new URLSearchParams();
+      if (momentId) params.set("momentId", momentId);
+      if (nickname) params.set("nickname", nickname);
+      const res = await fetch(`${API}/square/posts/resolve-author?${params.toString()}`, {
+        headers: authHeaders
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.userId) return String(data.userId);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return "";
+}
 const MALE_SYMBOL_AVATAR = `data:image/svg+xml;utf8,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
     <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#46d5e6"/><stop offset="1" stop-color="#4f86ea"/></linearGradient></defs>
@@ -73,6 +177,12 @@ function wealthLevelLabel(profile) {
   const level = profile.wealthLevel ?? 0;
   if (level <= 0) return "";
   return profile.wealthLevelName || `Lv.${level}`;
+}
+
+async function photoWebPathToFile(webPath, fileName = `photo-${Date.now()}.jpg`) {
+  const res = await fetch(webPath);
+  const blob = await res.blob();
+  return new File([blob], fileName, { type: blob.type || "image/jpeg" });
 }
 
 function sampleItems(list, count) {
@@ -332,8 +442,10 @@ function formatBirthDateText(value) {
   return `${y}-${m}-${d}`;
 }
 
-/** manifest / 库里相对路径 /avatars/... → OSS 代理（需先在 backend 执行 npm run upload:seed-avatars-oss） */
+/** manifest / 库里相对路径 /avatars/... → 本地包或 OSS 代理 */
 function resolveSeedAvatarUrl(raw) {
+  const local = mapSeedAssetToLocal(raw);
+  if (local) return local;
   const s = String(raw ?? "").trim();
   if (!s.includes("/avatars/")) return null;
   try {
@@ -369,6 +481,8 @@ function resolveAssetUrl(url) {
   const raw = String(url ?? "").trim();
   if (!raw) return MALE_SYMBOL_AVATAR;
   if (raw.startsWith("data:")) return raw;
+  const localSeed = mapSeedAssetToLocal(raw);
+  if (localSeed) return localSeed;
   const seedHit = resolveSeedAvatarUrl(raw);
   if (seedHit) return seedHit;
   // 上传文件挂在 API 的 /uploads；OSS 私有桶走 API 的 /oss-media；历史绝对 URL 统一到当前 API
@@ -402,10 +516,68 @@ function thumbUrlForChatHistoryImageUrl(rawUrl) {
   return `${m[1]}thumb/thumb-${m[2]}.jpg${q}`;
 }
 
+const SQUARE_PAGE_SIZE = 10;
+
+function collectSquarePostImageUrls(post) {
+  const urls = [];
+  if (post?.avatarUrl) urls.push(resolveAssetUrl(post.avatarUrl));
+  if (Array.isArray(post?.imageUrls)) {
+    for (const raw of post.imageUrls) {
+      const url = String(raw ?? "").trim();
+      if (!url) continue;
+      const thumb = thumbUrlForChatHistoryImageUrl(url) || url;
+      urls.push(resolveAssetUrl(thumb));
+      if (thumb !== url) urls.push(resolveAssetUrl(url));
+    }
+  }
+  return urls;
+}
+
+function preloadImage(url) {
+  return new Promise((resolve) => {
+    const src = String(url ?? "").trim();
+    if (!src) {
+      resolve(false);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = src;
+  });
+}
+
+async function preloadSquarePostsAssets(postList) {
+  const urls = [...new Set(postList.flatMap(collectSquarePostImageUrls))];
+  if (!urls.length) return;
+  await Promise.all(urls.map(preloadImage));
+}
+
+async function preloadAssetUrls(urls) {
+  const list = [...new Set(urls.map((u) => String(u ?? "").trim()).filter(Boolean))];
+  if (!list.length) return;
+  await Promise.all(list.map(preloadImage));
+}
+
+function collectUserMediaRawUrls(profile) {
+  if (!profile) return [];
+  const urls = [];
+  if (profile.avatarUrl) urls.push(profile.avatarUrl);
+  try {
+    const parsed = typeof profile.photoUrls === "string" ? JSON.parse(profile.photoUrls || "[]") : profile.photoUrls;
+    if (Array.isArray(parsed)) urls.push(...parsed);
+  } catch (_error) {
+    /* ignore */
+  }
+  return urls.map((u) => String(u ?? "").trim()).filter(Boolean);
+}
+
 function resolveMediaUrl(url) {
   const raw = String(url ?? "").trim();
   if (!raw) return "";
   if (raw.startsWith("data:")) return raw;
+  const localSeed = mapSeedAssetToLocal(raw);
+  if (localSeed) return localSeed;
   const seedHit = resolveSeedAvatarUrl(raw);
   if (seedHit) return seedHit;
   // 与 resolveAssetUrl 一致：/uploads、OSS 路径都接到当前 API（含换机、换端口）
@@ -543,6 +715,30 @@ const ROUTE_TAB = {
   "/match": "planet-match"
 };
 
+function SquareTopbarCameraIcon() {
+  return (
+    <svg className="square-topbar-svg" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M4 8.5h2.8l1.8-2.5h6.8l1.8 2.5H20a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2v-8a2 2 0 012-2z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="13.5" r="3.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
+function SquareTopbarSearchIcon() {
+  return (
+    <svg className="square-topbar-svg" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="10.8" cy="10.8" r="6.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M15.6 15.6L20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** 「编辑资料」相册 6 宫格：每个格子固定语义，上传写入对应下标 */
 const PROFILE_EDIT_SLOT_LABELS = [
   "头像",
@@ -610,13 +806,16 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [blindBoxTarget, setBlindBoxTarget] = useState(null);
   const [onlineCount, setOnlineCount] = useState(200000);
-  const [systemRobotProfiles, setSystemRobotProfiles] = useState([]);
+  const [systemRobotProfiles, setSystemRobotProfiles] = useState(() =>
+    shouldPreferLocalSeedAvatars() ? getLocalSystemRobotProfiles("MALE", 12) : []
+  );
   const [userRobotProfiles, setUserRobotProfiles] = useState([]);
   const [heroRotationIndex, setHeroRotationIndex] = useState(0);
   const [posts, setPosts] = useState([]);
   const [squareLoading, setSquareLoading] = useState(false);
   const [hasMorePosts, setHasMorePosts] = useState(true);
   const [pullHint, setPullHint] = useState("下拉刷新");
+  const [squareFeedTab, setSquareFeedTab] = useState("recommend");
   const [squareOffset, setSquareOffset] = useState(0);
   const squareFeedRef = useRef(null);
   const socketRef = useRef(null);
@@ -644,6 +843,11 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!shouldPreferLocalSeedAvatars()) return;
+    preloadLocalDisplayAssets("MALE");
+  }, []);
+
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
   const [registerForm, setRegisterForm] = useState(registerBasicInitial);
   const [profileSetupForm, setProfileSetupForm] = useState(profileSetupInitial);
@@ -658,7 +862,10 @@ export default function App() {
   const [chatKeyword, setChatKeyword] = useState("");
   const fallbackLoginHero = useMemo(() => createHeroAvatars(), []);
   const [loginHeroOverride, setLoginHeroOverride] = useState(null);
-  const loginHeroDisplay = loginHeroOverride?.length ? loginHeroOverride : fallbackLoginHero;
+  const loginHeroDisplay = useMemo(() => {
+    if (shouldPreferLocalSeedAvatars()) return getLocalLoginHeroAvatars(8);
+    return loginHeroOverride?.length ? loginHeroOverride : fallbackLoginHero;
+  }, [loginHeroOverride, fallbackLoginHero]);
   const [activeConversation, setActiveConversation] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -676,6 +883,13 @@ export default function App() {
   const [coinSelectedPackage, setCoinSelectedPackage] = useState(null);
   const chatAttachPhotoInputRef = useRef(null);
   const [chatNotice, setChatNotice] = useState("");
+  const [chatPeerFollow, setChatPeerFollow] = useState({
+    iFollow: false,
+    followsMe: false,
+    isFriend: false,
+    mutualFollow: false
+  });
+  const [chatFollowBusy, setChatFollowBusy] = useState(false);
   const [squareImageLightbox, setSquareImageLightbox] = useState(null);
   const squareLightboxTouchStartRef = useRef(null);
   const squareLightboxSuppressClickRef = useRef(false);
@@ -783,6 +997,14 @@ export default function App() {
   const [peerProfile, setPeerProfile] = useState(null);
   const [peerProfileLoading, setPeerProfileLoading] = useState(false);
   const [peerProfileCover, setPeerProfileCover] = useState("");
+  const [peerProfileTab, setPeerProfileTab] = useState("about");
+  const [peerProfileFollow, setPeerProfileFollow] = useState({
+    iFollow: false,
+    followsMe: false,
+    isFriend: false,
+    mutualFollow: false
+  });
+  const [peerProfileFollowBusy, setPeerProfileFollowBusy] = useState(false);
   const [planetMatchLoading, setPlanetMatchLoading] = useState(false);
   const [planetMatchProfile, setPlanetMatchProfile] = useState(null);
   const [planetMatchGalleryIndex, setPlanetMatchGalleryIndex] = useState(0);
@@ -832,7 +1054,11 @@ export default function App() {
   /** 发动态发表中：{ kind:'upload', done, total } | { kind:'post' } */
   const [squarePublishUi, setSquarePublishUi] = useState(null);
   const momentReplaceInputRef = useRef(null);
+  const momentAddInputRef = useRef(null);
+  const momentCameraInputRef = useRef(null);
   const momentReplaceIndexRef = useRef(null);
+  const momentPhotoPickRef = useRef({ mode: "add", replaceIndex: null });
+  const [showMomentPhotoSheet, setShowMomentPhotoSheet] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [pinnedConversationIds, setPinnedConversationIds] = useState([]);
   const [hiddenConversationIds, setHiddenConversationIds] = useState([]);
@@ -1315,6 +1541,86 @@ export default function App() {
     setChatNotice(action === "ACCEPT" ? "已通过好友申请" : "已拒绝好友申请");
   };
 
+  const loadChatPeerFollowStatus = async (peerId, syncProfile = false) => {
+    if (!peerId || !authToken) return;
+    try {
+      const res = await fetch(`${API}/users/${peerId}/follow-status`, { headers: authHeaders });
+      const data = await res.json();
+      if (!res.ok) return;
+      const status = {
+        iFollow: Boolean(data.iFollow),
+        followsMe: Boolean(data.followsMe),
+        isFriend: Boolean(data.isFriend),
+        mutualFollow: Boolean(data.mutualFollow)
+      };
+      setChatPeerFollow(status);
+      if (syncProfile) setPeerProfileFollow(status);
+    } catch (_error) {
+      /* ignore */
+    }
+  };
+
+  const applyFollowStatusToPeer = (peerId, status) => {
+    if (activeConversation?.id === peerId) setChatPeerFollow(status);
+    if (peerProfile?.id === peerId) setPeerProfileFollow(status);
+  };
+
+  const toggleFollowForPeer = async (peerId, currentFollow, setBusyFlag) => {
+    if (!peerId || !user?.id) return null;
+    if (currentFollow.mutualFollow || currentFollow.isFriend) return null;
+    setBusyFlag(true);
+    try {
+      const unfollow = currentFollow.iFollow;
+      const res = await fetch(`${API}/users/${peerId}/follow`, {
+        method: unfollow ? "DELETE" : "POST",
+        headers: authHeaders
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || (unfollow ? "取消关注失败" : "关注失败"));
+      const status = {
+        iFollow: Boolean(data.iFollow),
+        followsMe: Boolean(data.followsMe),
+        isFriend: Boolean(data.isFriend),
+        mutualFollow: Boolean(data.mutualFollow)
+      };
+      applyFollowStatusToPeer(peerId, status);
+      if (data.isFriend) {
+        await refreshChatPanels(user.id);
+        showToast(data.message || "已互相关注，已加入通讯录");
+      } else {
+        showToast(data.message || (unfollow ? "已取消关注" : "关注成功"));
+      }
+      return status;
+    } catch (error) {
+      showToast(error.message || "操作失败");
+      return null;
+    } finally {
+      setBusyFlag(false);
+    }
+  };
+
+  const toggleChatPeerFollow = async () => {
+    if (!activeConversation?.id) return;
+    await toggleFollowForPeer(activeConversation.id, chatPeerFollow, setChatFollowBusy);
+  };
+
+  const togglePeerProfileFollow = async () => {
+    if (!peerProfile?.id) return;
+    await toggleFollowForPeer(peerProfile.id, peerProfileFollow, setPeerProfileFollowBusy);
+  };
+
+  const chatFollowButtonLabel = useMemo(() => {
+    if (chatPeerFollow.mutualFollow || chatPeerFollow.isFriend) return "互相关注";
+    if (chatPeerFollow.iFollow) return "已关注";
+    return "关注";
+  }, [chatPeerFollow]);
+
+  const peerProfileFollowButtonLabel = useMemo(() => {
+    if (peerProfileFollow.mutualFollow || peerProfileFollow.isFriend) return "互相关注";
+    if (peerProfileFollow.iFollow) return "已关注";
+    return "+ 关注";
+  }, [peerProfileFollow]);
+
   useEffect(() => {
     if (!authToken) return;
     loadIncomingRequests().catch(() => setIncomingRequestCount(0));
@@ -1351,31 +1657,49 @@ export default function App() {
   const loadSquarePosts = async (reset = false) => {
     if (squareLoading) return;
     setSquareLoading(true);
+    if (reset) {
+      setPosts([]);
+      setSquareOffset(0);
+    }
     try {
       const targetOffset = reset ? 0 : squareOffset;
+      const loc = await getViewerLocation({ requestPermission: tab === "square" });
+      const locParams =
+        loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng)
+          ? `&viewerLat=${encodeURIComponent(loc.lat)}&viewerLng=${encodeURIComponent(loc.lng)}`
+          : "";
       const res = await fetch(
-        `${API}/square/posts?limit=60&offset=${targetOffset}&refresh=${reset ? 1 : 0}`
+        `${API}/square/posts?limit=${SQUARE_PAGE_SIZE}&offset=${targetOffset}&refresh=${reset ? 1 : 0}${locParams}`
       );
       const data = await res.json();
-      const incoming = Array.isArray(data.posts) ? data.posts : [];
+      let incoming = Array.isArray(data.posts) ? data.posts : [];
+      incoming = await enrichSquarePostAuthors(incoming, authHeaders, [
+        ...systemRobotProfiles,
+        ...userRobotProfiles
+      ]);
+      incoming = normalizeSquarePostDistances(incoming);
+
+      if (incoming.length === 0) {
+        if (reset) setPosts([]);
+        setHasMorePosts(false);
+        return;
+      }
+
+      await preloadSquarePostsAssets(incoming);
 
       if (reset) {
         setPosts(incoming);
-        setSquareOffset(data.nextOffset || incoming.length);
-        const nextHasMore =
-          typeof data.hasMore === "boolean"
-            ? data.hasMore
-            : incoming.length > 0 && (data.total ? incoming.length < data.total : true);
-        setHasMorePosts(nextHasMore);
+        setSquareOffset(data.nextOffset ?? incoming.length);
       } else {
-        setPosts((prev) => [...prev, ...incoming]);
-        setSquareOffset(data.nextOffset || targetOffset + incoming.length);
-        const nextHasMore =
-          typeof data.hasMore === "boolean"
-            ? data.hasMore
-            : incoming.length > 0 && (data.total ? targetOffset + incoming.length < data.total : true);
-        setHasMorePosts(nextHasMore);
+        setPosts((prev) => normalizeSquarePostDistances([...prev, ...incoming]));
+        setSquareOffset(data.nextOffset ?? targetOffset + incoming.length);
       }
+      const nextHasMore =
+        typeof data.hasMore === "boolean"
+          ? data.hasMore
+          : incoming.length > 0 &&
+            (data.total ? (reset ? incoming.length : targetOffset + incoming.length) < data.total : true);
+      setHasMorePosts(nextHasMore);
     } catch (_error) {
       if (reset) setPosts([]);
     } finally {
@@ -1384,8 +1708,28 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!user?.id) {
+      setPosts([]);
+      setSquareOffset(0);
+      setHasMorePosts(true);
+      return;
+    }
     loadSquarePosts(true);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 登录后拉取首批广场动态
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (tab !== "square" || !user?.id) return;
+    let cancelled = false;
+    getViewerLocation({ requestPermission: true }).then((loc) => {
+      if (cancelled || !loc) return;
+      loadSquarePosts(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 进入广场页后带定位刷新
+  }, [tab, user?.id]);
 
   useEffect(() => {
     const pullCount = () => {
@@ -1401,6 +1745,7 @@ export default function App() {
 
   useEffect(() => {
     if (user) return;
+    if (shouldPreferLocalSeedAvatars()) return;
     fetch(`${API}/public/robot-library/system`)
       .then((res) => res.json())
       .then((data) => {
@@ -1419,8 +1764,16 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
+    if (!shouldPreferLocalSeedAvatars() || !user?.gender) return;
+    setSystemRobotProfiles(getLocalSystemRobotProfiles(user.gender, 12));
+    setHeroRotationIndex(0);
+  }, [user?.gender]);
+
+  useEffect(() => {
     if (!authToken) {
-      setSystemRobotProfiles([]);
+      if (!shouldPreferLocalSeedAvatars()) {
+        setSystemRobotProfiles([]);
+      }
       setUserRobotProfiles([]);
       return;
     }
@@ -1431,9 +1784,14 @@ export default function App() {
         const sysData = await sysRes.json();
         if (cancelled) return;
         if (sysRes.ok) {
-          setSystemRobotProfiles(Array.isArray(sysData.profiles) ? sysData.profiles : []);
+          const remote = Array.isArray(sysData.profiles) ? sysData.profiles : [];
+          if (remote.length) {
+            setSystemRobotProfiles(remote);
+          } else if (!shouldPreferLocalSeedAvatars()) {
+            setSystemRobotProfiles([]);
+          }
           setHeroRotationIndex(0);
-        } else {
+        } else if (!shouldPreferLocalSeedAvatars()) {
           setSystemRobotProfiles([]);
         }
       } catch {
@@ -1630,6 +1988,34 @@ export default function App() {
   }, [user?.avatarUrl, user?.photoUrls]);
 
   useEffect(() => {
+    if (!user?.id || !authToken) return;
+    let cancelled = false;
+    (async () => {
+      await preloadLocalDisplayAssets(user.gender || "MALE");
+      if (cancelled) return;
+      await preloadAssetUrls(collectUserMediaRawUrls(user).map((raw) => resolveAssetUrl(raw)));
+      if (cancelled) return;
+      const robots = getLocalSystemRobotProfiles(user.gender || "MALE", 12);
+      await preloadSquarePostsAssets(
+        robots.map((p) => ({ avatarUrl: p.avatar, imageUrls: p.galleryUrls || [p.avatar] }))
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.gender, user?.avatarUrl, user?.photoUrls, authToken]);
+
+  useEffect(() => {
+    if (!visibleSystemRobotProfiles.length) return;
+    preloadSquarePostsAssets(
+      visibleSystemRobotProfiles.slice(0, 6).map((p) => ({
+        avatarUrl: p.avatar,
+        imageUrls: p.galleryUrls || [p.avatar]
+      }))
+    );
+  }, [visibleSystemRobotProfiles]);
+
+  useEffect(() => {
     if (!user?.id || !authToken) {
       setMyPosts([]);
       return;
@@ -1645,15 +2031,16 @@ export default function App() {
           return;
         }
         const list = Array.isArray(data.posts) ? data.posts : [];
-        setMyPosts(
-          list.map((p) => ({
-            id: p.id,
-            text: p.text || "",
-            likes: p.likes ?? 0,
-            createdAt: p.createdAt || "",
-            imageUrls: Array.isArray(p.imageUrls) ? p.imageUrls : []
-          }))
-        );
+        const mapped = list.map((p) => ({
+          id: p.id,
+          text: p.text || "",
+          likes: p.likes ?? 0,
+          createdAt: p.createdAt || "",
+          imageUrls: Array.isArray(p.imageUrls) ? p.imageUrls : []
+        }));
+        await preloadSquarePostsAssets(mapped);
+        if (cancelled) return;
+        setMyPosts(mapped);
       } catch {
         if (!cancelled) setMyPosts([]);
       }
@@ -1850,7 +2237,16 @@ export default function App() {
 
   useEffect(() => {
     setBrokenImageIds([]);
-  }, [activeConversation?.id]);
+    setChatPeerFollow({
+      iFollow: false,
+      followsMe: false,
+      isFriend: false,
+      mutualFollow: false
+    });
+    if (activeConversation?.id && authToken) {
+      loadChatPeerFollowStatus(activeConversation.id);
+    }
+  }, [activeConversation?.id, authToken]);
 
   const chatDetailPeerAvatarSrc = useMemo(
     () => (activeConversation ? resolveAssetUrl(activeConversation.avatar) : ""),
@@ -1972,7 +2368,9 @@ export default function App() {
   }, [planetMatchProfile?.id, planetMatchLoading]);
 
   const membershipGateCopy =
-    membershipGateContext === "planet" || membershipGateContext === "truth"
+    membershipGateContext === "planet" ||
+    membershipGateContext === "truth" ||
+    membershipGateContext === "square"
       ? {
           title: "开通会员解锁资料与联系",
           desc: "查看详细资料、联系对方等功能需先开通会员。",
@@ -2274,6 +2672,7 @@ export default function App() {
     setPeerProfileCover("");
     setPeerProfileLoading(true);
     setShowPeerProfileModal(true);
+    setPeerProfileTab("about");
     try {
       const res = await fetch(
         `${API}/users/${encodeURIComponent(targetUserId)}/profile?viewerId=${encodeURIComponent(user.id)}`,
@@ -2282,6 +2681,7 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "加载资料失败");
       setPeerProfile(data.profile || null);
+      await loadChatPeerFollowStatus(targetUserId, true);
     } catch (error) {
       setShowPeerProfileModal(false);
       setChatNotice(error.message || "加载资料失败");
@@ -2327,6 +2727,80 @@ export default function App() {
     setPeerProfile(null);
     setPeerProfileCover("");
     setPeerProfileLoading(false);
+    setPeerProfileTab("about");
+    setPeerProfileFollow({
+      iFollow: false,
+      followsMe: false,
+      isFriend: false,
+      mutualFollow: false
+    });
+  };
+
+  const handlePeerSayHi = () => {
+    if (!peerProfile?.id) return;
+    const target = {
+      id: peerProfile.id,
+      nickname: peerProfile.nickname,
+      avatarUrl: peerProfile.avatarUrl
+    };
+    closePeerProfileModal();
+    openChatWithPeer({
+      targetUserId: target.id,
+      name: target.nickname || "对方",
+      avatar: target.avatarUrl || "",
+      gateContext: "square"
+    });
+  };
+
+  const openSquarePostProfile = async (post) => {
+    let targetUserId = post?.userId ? String(post.userId) : "";
+    if (!targetUserId) {
+      targetUserId = await resolveSquarePostAuthorId(post, authHeaders);
+      if (targetUserId) {
+        setPosts((prev) =>
+          prev.map((p) =>
+            p.id === post.id || (p.nickname && p.nickname === post.nickname) ? { ...p, userId: targetUserId } : p
+          )
+        );
+      }
+    }
+    if (!targetUserId) {
+      showToast("无法查看该用户资料");
+      return;
+    }
+    if (String(targetUserId) === String(user?.id)) {
+      navigate("/me");
+      return;
+    }
+    openPeerProfile(targetUserId, "square");
+  };
+
+  const openSquarePostChat = async (post) => {
+    let targetUserId = post?.userId ? String(post.userId) : "";
+    if (!targetUserId) {
+      targetUserId = await resolveSquarePostAuthorId(post, authHeaders);
+      if (targetUserId) {
+        setPosts((prev) =>
+          prev.map((p) =>
+            p.id === post.id || (p.nickname && p.nickname === post.nickname) ? { ...p, userId: targetUserId } : p
+          )
+        );
+      }
+    }
+    if (!targetUserId) {
+      showToast("无法发起聊天");
+      return;
+    }
+    if (String(targetUserId) === String(user?.id)) {
+      showToast("不能给自己发消息");
+      return;
+    }
+    openChatWithPeer({
+      targetUserId,
+      name: post.nickname || "对方",
+      avatar: post.avatarUrl || "",
+      gateContext: "square"
+    });
   };
 
   const peerGalleryRawPhotos = useMemo(() => {
@@ -4082,6 +4556,90 @@ export default function App() {
     setMePage("moment-compose");
   };
 
+  const appendMomentDraftFiles = (files) => {
+    if (!files.length) return;
+    setSquareDraftFiles((prev) => [...prev, ...files].slice(0, 9));
+  };
+
+  const replaceMomentDraftFile = (idx, file) => {
+    if (idx == null || idx < 0 || !file) return;
+    setSquareDraftFiles((prev) => {
+      if (idx >= prev.length) return prev;
+      const next = [...prev];
+      next[idx] = file;
+      return next;
+    });
+  };
+
+  const openMomentPhotoSheet = (mode = "add", replaceIndex = null) => {
+    momentPhotoPickRef.current = { mode, replaceIndex };
+    setShowMomentPhotoSheet(true);
+  };
+
+  const closeMomentPhotoSheet = () => {
+    setShowMomentPhotoSheet(false);
+  };
+
+  const pickMomentFromLibrary = async () => {
+    const { mode, replaceIndex } = momentPhotoPickRef.current;
+    closeMomentPhotoSheet();
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const limit =
+          mode === "replace" ? 1 : Math.max(1, Math.min(9, 9 - squareDraftFiles.length));
+        const result = await Camera.pickImages({ quality: 90, limit });
+        const photos = Array.isArray(result.photos) ? result.photos : [];
+        const files = await Promise.all(
+          photos.map((p, i) => photoWebPathToFile(p.webPath, `moment-${Date.now()}-${i}.jpg`))
+        );
+        if (mode === "replace") {
+          replaceMomentDraftFile(replaceIndex, files[0]);
+        } else {
+          appendMomentDraftFiles(files);
+        }
+        return;
+      }
+      if (mode === "replace") {
+        momentReplaceIndexRef.current = replaceIndex;
+        momentReplaceInputRef.current?.click();
+      } else {
+        momentAddInputRef.current?.click();
+      }
+    } catch (error) {
+      const msg = String(error?.message || "");
+      if (/cancel/i.test(msg) || /user cancelled/i.test(msg)) return;
+      setMessage("选择图片失败");
+    }
+  };
+
+  const takeMomentPhoto = async () => {
+    const { mode, replaceIndex } = momentPhotoPickRef.current;
+    closeMomentPhotoSheet();
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const photo = await Camera.getPhoto({
+          quality: 90,
+          allowEditing: false,
+          resultType: CameraResultType.Uri,
+          source: CameraSource.Camera
+        });
+        const file = await photoWebPathToFile(photo.webPath, `moment-${Date.now()}.jpg`);
+        if (mode === "replace") {
+          replaceMomentDraftFile(replaceIndex, file);
+        } else {
+          appendMomentDraftFiles([file]);
+        }
+        return;
+      }
+      momentReplaceIndexRef.current = mode === "replace" ? replaceIndex : null;
+      momentCameraInputRef.current?.click();
+    } catch (error) {
+      const msg = String(error?.message || "");
+      if (/cancel/i.test(msg) || /user cancelled/i.test(msg)) return;
+      setMessage("拍照失败");
+    }
+  };
+
   const publishMyPost = async () => {
     const text = newPostText.trim();
     if (!text && squareDraftFiles.length === 0) {
@@ -4190,7 +4748,7 @@ export default function App() {
                 <img
                   src={resolveAssetUrl(thumb)}
                   alt=""
-                  loading="lazy"
+                  decoding="sync"
                   onError={(e) => {
                     if (thumb !== url) {
                       e.currentTarget.onerror = null;
@@ -4491,7 +5049,7 @@ export default function App() {
 
   return (
     <div
-      className={`main-app ${tab === "chat" && activeConversation ? "chat-detail-mode" : ""} ${tab === "planet-match" ? "planet-match-route" : ""}`}
+      className={`main-app ${tab === "chat" && activeConversation ? "chat-detail-mode" : ""} ${tab === "planet-match" ? "planet-match-route" : ""} ${tab === "planet" ? "tab-planet" : ""} ${tab === "square" ? "tab-square" : ""} ${tab === "me" ? "tab-me" : ""}`}
     >
       {toastMessage && (
         <div className="app-toast" role="alert">
@@ -4669,7 +5227,14 @@ export default function App() {
               </>
             )}
           </>
-        ) : (
+        ) : tab === "chat" ? (
+          activeConversation ? null : (
+            <>
+              <h1>聊天</h1>
+              <div className="header-placeholder" />
+            </>
+          )
+        ) : tab === "square" ? null : (
           <>
             <div className="avatar-dot">{user.nickname.slice(0, 1).toUpperCase()}</div>
             <h1>盲盒星球</h1>
@@ -4679,7 +5244,7 @@ export default function App() {
       </header>
 
       {tab === "planet" && (
-        <section className="main-content">
+        <section className="main-content planet-home">
           <div className="hero-match-card">
             <div className="hero-level">附近推荐</div>
             <div className="hero-profile-list">
@@ -4693,6 +5258,8 @@ export default function App() {
                         className="hero-profile-cover"
                         src={resolveAssetUrl(item.avatar || "")}
                         alt={item.nickname || "隐藏款"}
+                        decoding="sync"
+                        fetchPriority="high"
                         onError={(e) => {
                           e.currentTarget.onerror = null;
                           e.currentTarget.src = item.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
@@ -4715,6 +5282,10 @@ export default function App() {
               开始寻找
             </button>
           </div>
+
+          <p className="planet-online-strip">
+            当前 <em>{onlineCount.toLocaleString()}</em> 人在线
+          </p>
 
           <h3 className="section-title">配对玩游戏</h3>
           <div className="game-grid">
@@ -4747,51 +5318,133 @@ export default function App() {
               </button>
             </div>
           </div>
-
-          <div className="status-card">
-            <p>盲盒星球在线：{onlineCount.toLocaleString()} 人</p>
-            {blindBoxTarget ? <p>已匹配到 1 位异性用户，点击“开始寻找”可再次匹配</p> : <p>点击上方开始寻找，立即进入异性匹配</p>}
-          </div>
         </section>
       )}
 
       {tab === "square" && (
-        <section
-          className="main-content square-feed"
-          ref={squareFeedRef}
-          onScroll={onSquareScroll}
-          onTouchStart={onSquareTouchStart}
-          onTouchMove={onSquareTouchMove}
-          onTouchEnd={onSquareTouchEnd}
-        >
-          <h2>广场展示</h2>
-          <button className="refresh-btn" onClick={() => loadSquarePosts(true)}>
-            换一批
-          </button>
-          <p className="pull-hint">{pullHint}</p>
-          {posts.map((post) => (
-            <div className="post dark-post" key={post.id}>
-              <div className="post-head">
-                {post.avatarUrl ? (
-                  <img src={resolveAssetUrl(post.avatarUrl)} alt="" className="square-post-avatar" />
-                ) : (
-                  <div className={`blindbox-avatar ${post.gender === "MALE" ? "male-avatar" : "female-avatar"}`}>
-                    {post.gender === "MALE" ? "♂" : "♀"}
-                  </div>
-                )}
-                <div className="post-meta">
-                  <strong>{post.nickname || "盲盒用户"}</strong>
-                  <small>
-                    {post.createdAt || "刚刚"} · {post.distanceKm ?? "-"}km
-                  </small>
-                </div>
-              </div>
-              {post.text ? <p>{post.text}</p> : null}
-              {renderSquarePhotoGrid(post.imageUrls, `feed-${post.id}`)}
+        <section className="main-content square-page">
+          <div className="square-topbar">
+            <button
+              type="button"
+              className="square-topbar-icon"
+              aria-label="发动态"
+              onClick={() => {
+                openMomentCompose();
+                navigate("/me");
+              }}
+            >
+              <SquareTopbarCameraIcon />
+            </button>
+            <div className="square-topbar-tabs">
+              <button
+                type="button"
+                className={squareFeedTab === "follow" ? "active" : ""}
+                onClick={() => setSquareFeedTab("follow")}
+              >
+                关注
+              </button>
+              <button
+                type="button"
+                className={squareFeedTab === "recommend" ? "active" : ""}
+                onClick={() => {
+                  setSquareFeedTab("recommend");
+                  if (posts.length === 0) loadSquarePosts(true);
+                }}
+              >
+                推荐
+              </button>
             </div>
-          ))}
-          {squareLoading && <p className="feed-tip">加载中...</p>}
-          {!hasMorePosts && <p className="feed-tip">没有更多动态了</p>}
+            <button type="button" className="square-topbar-icon" aria-label="搜索">
+              <SquareTopbarSearchIcon />
+            </button>
+          </div>
+          {pullHint !== "下拉刷新" ? <p className="square-pull-hint">{pullHint}</p> : null}
+          <div
+            className="square-feed scroll-pane"
+            ref={squareFeedRef}
+            onScroll={onSquareScroll}
+            onTouchStart={onSquareTouchStart}
+            onTouchMove={onSquareTouchMove}
+            onTouchEnd={onSquareTouchEnd}
+          >
+            {squareFeedTab === "follow" ? (
+              <p className="feed-tip">关注的人还没有发布动态</p>
+            ) : posts.length === 0 && squareLoading ? (
+              <p className="feed-tip feed-tip--loading">正在加载动态...</p>
+            ) : null}
+            {squareFeedTab !== "follow"
+              ? posts.map((post) => {
+                  const photoCount = Array.isArray(post.imageUrls) ? post.imageUrls.length : 0;
+                  return (
+                    <article className="soul-post" key={post.id}>
+                      <div className="soul-post-head">
+                        <button
+                          type="button"
+                          className="soul-post-avatar-btn"
+                          aria-label={`查看${post.nickname || "用户"}的主页`}
+                          onClick={() => openSquarePostProfile(post)}
+                        >
+                          {post.avatarUrl ? (
+                            <img
+                              src={resolveAssetUrl(post.avatarUrl)}
+                              alt=""
+                              className="square-post-avatar"
+                              decoding="sync"
+                            />
+                          ) : (
+                            <div
+                              className={`blindbox-avatar ${post.gender === "MALE" ? "male-avatar" : "female-avatar"}`}
+                            >
+                              {post.gender === "MALE" ? "♂" : "♀"}
+                            </div>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="soul-post-meta soul-post-meta-btn"
+                          onClick={() => openSquarePostProfile(post)}
+                        >
+                          <strong>{post.nickname || "盲盒用户"}</strong>
+                          <span className="soul-post-distance">
+                            {formatSquareDistanceLabel(post.distanceKm)} · {post.createdAt || "刚刚"}
+                          </span>
+                        </button>
+                        <button type="button" className="soul-post-follow">
+                          关注
+                        </button>
+                      </div>
+                      {post.text ? <p className="soul-post-text">{post.text}</p> : null}
+                      {photoCount > 0 ? (
+                        <div
+                          className={`soul-post-photos${photoCount === 1 ? " soul-post-photos--single" : ""}`}
+                        >
+                          {renderSquarePhotoGrid(post.imageUrls, `feed-${post.id}`)}
+                        </div>
+                      ) : null}
+                      <div className="soul-post-actions">
+                        <button
+                          type="button"
+                          className="soul-post-action-btn"
+                          onClick={() => openSquarePostChat(post)}
+                        >
+                          💬 私聊
+                        </button>
+                        <div className="soul-post-actions-right">
+                          <span className="soul-post-action-btn">♡ {post.likes ?? 0}</span>
+                          <span className="soul-post-action-btn">💬 评论</span>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })
+              : null}
+            {squareFeedTab !== "follow" && posts.length > 0 && squareLoading ? (
+              <p className="feed-tip feed-tip--loading">加载更多动态...</p>
+            ) : null}
+            {squareFeedTab !== "follow" && !squareLoading && !hasMorePosts && posts.length > 0 ? (
+              <p className="feed-tip">没有更多动态了</p>
+            ) : null}
+          </div>
         </section>
       )}
 
@@ -4806,16 +5459,24 @@ export default function App() {
                   </button>
                   <div className="chat-detail-head-main">
                     <strong>{activeConversation.name}</strong>
-                    <small>在线</small>
+                    <small>{chatPeerFollow.followsMe ? "关注了你 · 在线" : "在线"}</small>
                   </div>
-                  <img
-                    src={chatDetailPeerAvatarSrc}
-                    alt=""
-                    className="chat-detail-peer-avatar"
-                    onError={(e) => {
-                      e.currentTarget.src = MALE_SYMBOL_AVATAR;
-                    }}
-                  />
+                  <button
+                    type="button"
+                    className={`chat-detail-follow-btn ${
+                      chatPeerFollow.mutualFollow || chatPeerFollow.isFriend
+                        ? "chat-detail-follow-btn--mutual"
+                        : chatPeerFollow.iFollow
+                          ? "chat-detail-follow-btn--done"
+                          : "chat-detail-follow-btn--primary"
+                    }`}
+                    disabled={
+                      chatFollowBusy || chatPeerFollow.mutualFollow || chatPeerFollow.isFriend
+                    }
+                    onClick={toggleChatPeerFollow}
+                  >
+                    {chatFollowBusy ? "…" : chatFollowButtonLabel}
+                  </button>
                 </div>
                 <div className="chat-detail-list">
                   {chatMessages.length === 0 ? (
@@ -4829,14 +5490,21 @@ export default function App() {
                           className={`chat-msg-row ${isMe ? "chat-msg-row--me" : "chat-msg-row--peer"}`}
                         >
                           {!isMe && (
-                            <img
-                              src={chatDetailPeerAvatarSrc}
-                              alt=""
-                              className="chat-msg-avatar"
-                              onError={(e) => {
-                                e.currentTarget.src = MALE_SYMBOL_AVATAR;
-                              }}
-                            />
+                            <button
+                              type="button"
+                              className="chat-msg-avatar-btn"
+                              aria-label={`查看${activeConversation.name}的主页`}
+                              onClick={() => openPeerProfile(activeConversation.id, "chat")}
+                            >
+                              <img
+                                src={chatDetailPeerAvatarSrc}
+                                alt=""
+                                className="chat-msg-avatar"
+                                onError={(e) => {
+                                  e.currentTarget.src = MALE_SYMBOL_AVATAR;
+                                }}
+                              />
+                            </button>
                           )}
                           <div className={`chat-bubble ${isMe ? "me-bubble" : "other-bubble"}`}>
                             {msg.kind === "IMAGE" ? (
@@ -5131,7 +5799,25 @@ export default function App() {
                           openConversation(item);
                         }}
                       >
-                        <img src={resolveAssetUrl(item.avatar)} alt={item.name} className="chat-avatar" />
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          className="chat-avatar-btn"
+                          aria-label={`查看${item.name}的主页`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openPeerProfile(item.id, "chat");
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              openPeerProfile(item.id, "chat");
+                            }
+                          }}
+                        >
+                          <img src={resolveAssetUrl(item.avatar)} alt={item.name} className="chat-avatar" />
+                        </span>
                         <div className="chat-main">
                           <div className="chat-name-row">
                             <strong>{item.name}</strong>
@@ -5186,7 +5872,9 @@ export default function App() {
       )}
 
       {tab === "me" && (
-        <section className={`main-content${mePage === "moment-compose" ? " moment-compose-section" : ""}`}>
+        <section
+          className={`main-content scroll-pane${mePage === "moment-compose" ? " moment-compose-section" : ""}`}
+        >
           {mePage === "moment-compose" ? (
             <div className="moment-compose-inner">
               <textarea
@@ -5208,12 +5896,41 @@ export default function App() {
                   momentReplaceIndexRef.current = null;
                   e.target.value = "";
                   if (!file || idx == null || idx < 0) return;
-                  setSquareDraftFiles((prev) => {
-                    if (idx >= prev.length) return prev;
-                    const next = [...prev];
-                    next[idx] = file;
-                    return next;
-                  });
+                  replaceMomentDraftFile(idx, file);
+                }}
+              />
+              <input
+                ref={momentAddInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden-file-input"
+                aria-hidden
+                onChange={(e) => {
+                  const incoming = Array.from(e.target.files || []);
+                  e.target.value = "";
+                  momentReplaceIndexRef.current = null;
+                  appendMomentDraftFiles(incoming);
+                }}
+              />
+              <input
+                ref={momentCameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden-file-input"
+                aria-hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  const idx = momentReplaceIndexRef.current;
+                  momentReplaceIndexRef.current = null;
+                  e.target.value = "";
+                  if (!file) return;
+                  if (idx != null && idx >= 0) {
+                    replaceMomentDraftFile(idx, file);
+                  } else {
+                    appendMomentDraftFiles([file]);
+                  }
                 }}
               />
               <div className="moment-photo-grid">
@@ -5233,10 +5950,7 @@ export default function App() {
                       <button
                         type="button"
                         className="moment-photo-thumb"
-                        onClick={() => {
-                          momentReplaceIndexRef.current = idx;
-                          momentReplaceInputRef.current?.click();
-                        }}
+                        onClick={() => openMomentPhotoSheet("replace", idx)}
                       >
                         <img src={squareMomentPreviewUrls[idx]} alt="" />
                         <span className="moment-photo-replace-hint">换一张</span>
@@ -5245,23 +5959,30 @@ export default function App() {
                   </div>
                 ))}
                 {squareDraftFiles.length < 9 ? (
-                  <label className="moment-photo-add">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      className="hidden-file-input"
-                      onChange={(e) => {
-                        const incoming = Array.from(e.target.files || []);
-                        e.target.value = "";
-                        momentReplaceIndexRef.current = null;
-                        setSquareDraftFiles((prev) => [...prev, ...incoming].slice(0, 9));
-                      }}
-                    />
+                  <button
+                    type="button"
+                    className="moment-photo-add"
+                    onClick={() => openMomentPhotoSheet("add")}
+                  >
                     <span className="moment-photo-add-plus">+</span>
-                  </label>
+                  </button>
                 ) : null}
               </div>
+              {showMomentPhotoSheet ? (
+                <div className="moment-photo-sheet-overlay" onClick={closeMomentPhotoSheet}>
+                  <div className="moment-photo-sheet" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" onClick={pickMomentFromLibrary}>
+                      从相册选择
+                    </button>
+                    <button type="button" onClick={takeMomentPhoto}>
+                      拍照
+                    </button>
+                    <button type="button" className="moment-photo-sheet-cancel" onClick={closeMomentPhotoSheet}>
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <p className="moment-compose-footnote">最多 9 张图；点击图片可替换；发布后所有人可在「广场」看到。</p>
             </div>
           ) : mePage === "settings" ? (
@@ -6252,94 +6973,165 @@ export default function App() {
       )}
       {showPeerProfileModal && (
         <div className="peer-home-overlay">
-          <div className="peer-home-topbar">
-            <button type="button" className="peer-home-back" onClick={closePeerProfileModal}>
-              返回
-            </button>
-            <span className="peer-home-title">TA的主页</span>
-          </div>
-          <div className="peer-home-scroll">
-            {peerProfileLoading ? (
+          {peerProfileLoading ? (
+            <div className="peer-home-loading">
               <p className="feed-tip">加载中...</p>
-            ) : peerProfile ? (
-              <>
-                <div className="profile-hero" style={{ backgroundImage: `url(${peerHeroCover})` }}>
-                  <div className="profile-hero-mask">
-                    <div className="profile-hero-top" />
-                    {peerGalleryRawPhotos.length > 0 ? (
-                      <div className="profile-gallery-row">
-                        {peerGalleryRawPhotos.map((rawUrl, idx) => (
-                          <button
-                            key={`peer-thumb-${rawUrl}-${idx}`}
-                            className={`profile-thumb-btn ${
-                              (!peerProfileCover && idx === 0) || peerProfileCover === rawUrl ? "active-thumb" : ""
-                            }`}
-                            type="button"
-                            onClick={() => setPeerProfileCover(rawUrl)}
-                          >
-                            <img
-                              src={resolveAssetUrl(rawUrl)}
-                              alt={`相册${idx + 1}`}
-                              className="profile-thumb"
-                              onError={(e) => {
-                                e.currentTarget.onerror = null;
-                                e.currentTarget.src =
-                                  peerProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
-                              }}
-                            />
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="profile-info-card">
-                  <h3>{peerProfile.nickname || "对方"}</h3>
-                  <p>
-                    {peerProfile.gender === "MALE" ? "男生" : peerProfile.gender === "FEMALE" ? "女生" : "—"} ·{" "}
-                    {peerProfile.age ?? "—"}岁
-                    {peerProfile.currentCity ? ` · ${peerProfile.currentCity}` : ""}
-                  </p>
-                  {wealthLevelLabel(peerProfile) ? (
-                    <p>
-                      <span
-                        className={`wealth-level-badge wealth-level-badge--${peerProfile.wealthLevel || 0}`}
-                      >
-                        财富 {wealthLevelLabel(peerProfile)}
-                      </span>
-                    </p>
-                  ) : null}
-                  {peerProfile.industry ? <p>{peerProfile.industry}</p> : null}
-                </div>
-
-                <div className="status-card my-stats">
-                  <p>用户ID：{toTenDigitId(peerProfile.id)}</p>
-                  {peerProfile.height ? <p>身高：{peerProfile.height} cm</p> : null}
-                  {peerProfile.weight ? <p>体重：{peerProfile.weight} kg</p> : null}
-                  {peerProfile.hometown ? <p>家乡：{peerProfile.hometown}</p> : null}
-                  {peerProfile.hobbies ? <p>爱好：{peerProfile.hobbies}</p> : null}
-                  {peerProfile.partnerExpectation ? (
-                    <p>交友宣言：{peerProfile.partnerExpectation}</p>
-                  ) : null}
-                </div>
-
-                <h3 className="section-title">TA的动态</h3>
-                <div className="my-post-list">
-                  {peerPosts.length === 0 && <p className="feed-tip">TA还没有发布动态</p>}
-                  {peerPosts.map((post) => (
-                    <div className="post dark-post" key={`peer-post-${post.id}`}>
-                      {post.text ? <p>{post.text}</p> : null}
-                      {renderSquarePhotoGrid(post.imageUrls, `peer-${post.id}`)}
-                      <small>{post.createdAt}</small>
+            </div>
+          ) : peerProfile ? (
+            <>
+              <div className="peer-home-hero" style={{ backgroundImage: `url(${peerHeroCover})` }}>
+                <div className="peer-home-hero-shade" />
+                <button
+                  type="button"
+                  className="peer-home-back-fab"
+                  aria-label="返回"
+                  onClick={closePeerProfileModal}
+                >
+                  ‹
+                </button>
+                <div className="peer-home-hero-foot">
+                  <span className="peer-home-online-pill">
+                    {peerProfile.gender === "MALE" ? "他正在在线" : "她正在在线"}
+                  </span>
+                  {peerGalleryRawPhotos.length > 0 ? (
+                    <div className="peer-home-thumb-row">
+                      {peerGalleryRawPhotos.map((rawUrl, idx) => (
+                        <button
+                          key={`peer-thumb-${rawUrl}-${idx}`}
+                          className={`peer-home-thumb-btn ${
+                            (!peerProfileCover && idx === 0) || peerProfileCover === rawUrl ? "active" : ""
+                          }`}
+                          type="button"
+                          onClick={() => setPeerProfileCover(rawUrl)}
+                        >
+                          <img
+                            src={resolveAssetUrl(rawUrl)}
+                            alt={`相册${idx + 1}`}
+                            onError={(e) => {
+                              e.currentTarget.onerror = null;
+                              e.currentTarget.src =
+                                peerProfile.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
+                            }}
+                          />
+                        </button>
+                      ))}
                     </div>
-                  ))}
+                  ) : null}
                 </div>
-              </>
-            ) : (
+              </div>
+
+              <div className="peer-home-scroll">
+                <div className="peer-home-sheet">
+                  <div className="peer-home-name-row">
+                    <h2 className="peer-home-name">{peerProfile.nickname || "对方"}</h2>
+                    <span
+                      className={`peer-home-gender-badge peer-home-gender-badge--${
+                        peerProfile.gender === "MALE" ? "male" : "female"
+                      }`}
+                    >
+                      {peerProfile.gender === "MALE" ? "♂" : "♀"} {peerProfile.age ?? "—"}
+                    </span>
+                  </div>
+                  <p className="peer-home-subline">
+                    {peerProfile.currentCity || "同城"} · 在线
+                    {wealthLevelLabel(peerProfile) ? ` · 财富 ${wealthLevelLabel(peerProfile)}` : ""}
+                  </p>
+
+                  <div className="peer-home-tabs">
+                    <button
+                      type="button"
+                      className={peerProfileTab === "about" ? "active" : ""}
+                      onClick={() => setPeerProfileTab("about")}
+                    >
+                      {peerProfile.gender === "MALE" ? "关于他" : "关于她"}
+                    </button>
+                    <button
+                      type="button"
+                      className={peerProfileTab === "posts" ? "active" : ""}
+                      onClick={() => setPeerProfileTab("posts")}
+                    >
+                      {peerProfile.gender === "MALE" ? "他的动态" : "她的动态"} {peerPosts.length}
+                    </button>
+                  </div>
+
+                  {peerProfileTab === "about" ? (
+                    <>
+                      <h3 className="peer-home-section-title">个人信息</h3>
+                      <div className="peer-home-tag-grid">
+                        <div className="peer-home-tag">ID {toTenDigitId(peerProfile.id)}</div>
+                        {peerProfile.height ? (
+                          <div className="peer-home-tag">身高 {peerProfile.height}cm</div>
+                        ) : null}
+                        {peerProfile.weight ? (
+                          <div className="peer-home-tag">体重 {peerProfile.weight}kg</div>
+                        ) : null}
+                        {peerProfile.hometown ? (
+                          <div className="peer-home-tag">来自 {peerProfile.hometown}</div>
+                        ) : null}
+                        {peerProfile.industry ? (
+                          <div className="peer-home-tag">行业 {peerProfile.industry}</div>
+                        ) : null}
+                      </div>
+                      {peerProfile.hobbies ? (
+                        <div className="peer-home-quote">
+                          <strong>爱好</strong>
+                          <p>{peerProfile.hobbies}</p>
+                        </div>
+                      ) : null}
+                      {peerProfile.partnerExpectation ? (
+                        <div className="peer-home-quote">
+                          <strong>交友宣言</strong>
+                          <p>{peerProfile.partnerExpectation}</p>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="peer-home-posts">
+                      {peerPosts.length === 0 && <p className="feed-tip">TA还没有发布动态</p>}
+                      {peerPosts.map((post) => (
+                        <div className="post dark-post peer-home-post-card" key={`peer-post-${post.id}`}>
+                          {post.text ? <p>{post.text}</p> : null}
+                          {renderSquarePhotoGrid(post.imageUrls, `peer-${post.id}`)}
+                          <small>{post.createdAt}</small>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="peer-home-actionbar">
+                <button type="button" className="peer-home-sayhi-btn" onClick={handlePeerSayHi}>
+                  打招呼
+                </button>
+                <button
+                  type="button"
+                  className={`peer-home-follow-btn ${
+                    peerProfileFollow.mutualFollow || peerProfileFollow.isFriend
+                      ? "peer-home-follow-btn--mutual"
+                      : peerProfileFollow.iFollow
+                        ? "peer-home-follow-btn--done"
+                        : ""
+                  }`}
+                  disabled={
+                    peerProfileFollowBusy ||
+                    peerProfileFollow.mutualFollow ||
+                    peerProfileFollow.isFriend
+                  }
+                  onClick={togglePeerProfileFollow}
+                >
+                  {peerProfileFollowBusy ? "…" : peerProfileFollowButtonLabel}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="peer-home-loading">
+              <button type="button" className="peer-home-back-fab peer-home-back-fab--plain" onClick={closePeerProfileModal}>
+                ‹
+              </button>
               <p className="feed-tip">暂无资料</p>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
 

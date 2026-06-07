@@ -157,6 +157,45 @@ async function getFriendIds(userId) {
   return list.map((item) => (item.userAId === userId ? item.userBId : item.userAId));
 }
 
+async function getFollowStatus(userId, peerId) {
+  const [myFollow, theirFollow, friendIds] = await Promise.all([
+    prisma.userFollow.findUnique({
+      where: { followerId_followeeId: { followerId: userId, followeeId: peerId } }
+    }),
+    prisma.userFollow.findUnique({
+      where: { followerId_followeeId: { followerId: peerId, followeeId: userId } }
+    }),
+    getFriendIds(userId)
+  ]);
+  const iFollow = Boolean(myFollow);
+  const followsMe = Boolean(theirFollow);
+  const mutualFollow = iFollow && followsMe;
+  const isFriend = friendIds.includes(peerId);
+  return { iFollow, followsMe, mutualFollow, isFriend };
+}
+
+async function syncFriendshipFromFollows(userId, peerId) {
+  const status = await getFollowStatus(userId, peerId);
+  const [a, b] = normalizeFriendPair(userId, peerId);
+  if (status.mutualFollow) {
+    await prisma.friendship.upsert({
+      where: { userAId_userBId: { userAId: a, userBId: b } },
+      update: {},
+      create: { userAId: a, userBId: b }
+    });
+    return { ...status, isFriend: true };
+  }
+  await prisma.friendship.deleteMany({
+    where: {
+      OR: [
+        { userAId: a, userBId: b },
+        { userAId: b, userBId: a }
+      ]
+    }
+  });
+  return { ...status, isFriend: false };
+}
+
 function randomPick(list) {
   if (!list.length) return null;
   return list[Math.floor(Math.random() * list.length)];
@@ -1120,6 +1159,59 @@ function formatAgo(totalMinutes) {
   return `${Math.floor(totalMinutes / (60 * 24))}天前`;
 }
 
+function stableUserHash(input) {
+  let h = 2166136261;
+  const s = String(input || "");
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h);
+}
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function pseudoLatLngForUser(userId, centerLat, centerLng) {
+  const hash = stableUserHash(userId);
+  const angle = ((hash % 360000) / 1000) * (Math.PI / 180);
+  const radiusKm = 2 + (hash % 11800) / 100;
+  const latRad = (centerLat * Math.PI) / 180;
+  const dLat = (radiusKm / 111.32) * Math.cos(angle);
+  const dLng = (radiusKm / (111.32 * Math.cos(latRad || 0.01))) * Math.sin(angle);
+  return { lat: centerLat + dLat, lng: centerLng + dLng };
+}
+
+function squareDistanceKmForUser(userId, viewerLat, viewerLng, cache) {
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+  if (cache && cache.has(uid)) return cache.get(uid);
+  let km;
+  if (Number.isFinite(viewerLat) && Number.isFinite(viewerLng)) {
+    const pt = pseudoLatLngForUser(uid, viewerLat, viewerLng);
+    km = Number(haversineKm(viewerLat, viewerLng, pt.lat, pt.lng).toFixed(1));
+  } else {
+    km = Number((2 + (stableUserHash(uid) % 11800) / 100).toFixed(1));
+  }
+  if (cache) cache.set(uid, km);
+  return km;
+}
+
+function parseViewerCoords(req) {
+  const lat = Number(req.query.viewerLat);
+  const lng = Number(req.query.viewerLng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { lat: null, lng: null };
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return { lat: null, lng: null };
+  return { lat, lng };
+}
+
 function createSquarePostPool(size = 5000) {
   const templates = [
     "今天工作有点累，想找个能聊得来的人。",
@@ -1143,8 +1235,7 @@ function createSquarePostPool(size = 5000) {
       text: templates[randInt(0, templates.length - 1)],
       likes: randInt(0, 999),
       minutesAgo,
-      createdAt: formatAgo(minutesAgo),
-      distanceKm: Number((Math.random() * (300 - 10) + 10).toFixed(1))
+      createdAt: formatAgo(minutesAgo)
     });
   }
   return posts;
@@ -1497,6 +1588,8 @@ app.get("/square/posts", async (_req, res) => {
   const limit = Math.min(Number(_req.query.limit) || 60, 100);
   const offset = Math.max(Number(_req.query.offset) || 0, 0);
   const refresh = String(_req.query.refresh || "0") === "1";
+  const { lat: viewerLat, lng: viewerLng } = parseViewerCoords(_req);
+  const distanceCache = new Map();
 
   try {
     if (refresh) {
@@ -1506,12 +1599,29 @@ app.get("/square/posts", async (_req, res) => {
     const totalReal = await prisma.squareMoment.count();
 
     if (totalReal === 0) {
+      const robotRows = await prisma.user.findMany({
+        where: systemRobotLibraryWhereExtras(),
+        select: { id: true, nickname: true, gender: true, avatarUrl: true },
+        take: 240
+      });
+      const maleRobots = shuffleList(robotRows.filter((r) => r.gender === "MALE"));
+      const femaleRobots = shuffleList(robotRows.filter((r) => r.gender === "FEMALE"));
+      let maleIdx = 0;
+      let femaleIdx = 0;
       const sliced = squarePostPool.slice(offset, offset + limit);
-      const posts = sliced.map(({ minutesAgo, ...rest }) => ({
-        ...rest,
-        imageUrls: [],
-        avatarUrl: ""
-      }));
+      const posts = sliced.map(({ minutesAgo, ...rest }) => {
+        const pool = rest.gender === "MALE" ? maleRobots : femaleRobots;
+        const idx = rest.gender === "MALE" ? maleIdx++ : femaleIdx++;
+        const robot = pool.length ? pool[idx % pool.length] : robotRows[idx % Math.max(robotRows.length, 1)];
+        return {
+          ...rest,
+          userId: robot?.id || "",
+          nickname: robot?.nickname || rest.nickname,
+          avatarUrl: robot?.avatarUrl || "",
+          imageUrls: [],
+          distanceKm: squareDistanceKmForUser(robot?.id || rest.nickname, viewerLat, viewerLng, distanceCache)
+        };
+      });
       const nextOffset = offset + posts.length;
       return res.json({
         posts,
@@ -1534,6 +1644,7 @@ app.get("/square/posts", async (_req, res) => {
 
     const posts = rows.map((row) => ({
       id: row.id,
+      userId: row.userId,
       nickname: row.user.nickname,
       gender: row.user.gender,
       avatarUrl: row.user.avatarUrl || "",
@@ -1541,7 +1652,7 @@ app.get("/square/posts", async (_req, res) => {
       likes: row.likes,
       imageUrls: safeParseMomentImageUrls(row.imageUrls),
       createdAt: formatSquareMomentTime(row.createdAt),
-      distanceKm: Number((Math.random() * 120 + 2).toFixed(1)),
+      distanceKm: squareDistanceKmForUser(row.userId, viewerLat, viewerLng, distanceCache),
       feedSource: "user"
     }));
 
@@ -1557,6 +1668,70 @@ app.get("/square/posts", async (_req, res) => {
   } catch (e) {
     console.error("[square/posts]", e);
     res.status(500).json({ message: "加载动态失败" });
+  }
+});
+
+app.post("/square/posts/author-ids", async (req, res) => {
+  try {
+    const momentIds = Array.isArray(req.body?.momentIds)
+      ? req.body.momentIds.map((id) => String(id || "").trim()).filter(Boolean).slice(0, 80)
+      : [];
+    const nicknames = Array.isArray(req.body?.nicknames)
+      ? [...new Set(req.body.nicknames.map((n) => String(n || "").trim()).filter(Boolean))].slice(0, 40)
+      : [];
+    const authors = {};
+    const nickAuthors = {};
+
+    if (momentIds.length) {
+      const rows = await prisma.squareMoment.findMany({
+        where: { id: { in: momentIds } },
+        select: { id: true, userId: true }
+      });
+      for (const row of rows) authors[row.id] = row.userId;
+    }
+
+    for (const nickname of nicknames) {
+      const row = await prisma.user.findFirst({
+        where: { nickname },
+        select: { id: true },
+        orderBy: { createdAt: "desc" }
+      });
+      if (row) nickAuthors[nickname] = row.id;
+    }
+
+    res.json({ authors, nickAuthors });
+  } catch (e) {
+    console.error("[square/posts/author-ids]", e);
+    res.status(500).json({ message: "解析作者失败" });
+  }
+});
+
+app.get("/square/posts/resolve-author", async (req, res) => {
+  try {
+    const momentId = String(req.query.momentId || "").trim();
+    const nickname = String(req.query.nickname || "").trim();
+
+    if (momentId) {
+      const moment = await prisma.squareMoment.findUnique({
+        where: { id: momentId },
+        select: { userId: true }
+      });
+      if (moment?.userId) return res.json({ userId: moment.userId });
+    }
+
+    if (nickname) {
+      const userRow = await prisma.user.findFirst({
+        where: { nickname },
+        select: { id: true },
+        orderBy: { createdAt: "desc" }
+      });
+      if (userRow?.id) return res.json({ userId: userRow.id });
+    }
+
+    return res.status(404).json({ message: "未找到该用户" });
+  } catch (e) {
+    console.error("[square/posts/resolve-author]", e);
+    res.status(500).json({ message: "解析作者失败" });
   }
 });
 
@@ -1620,6 +1795,7 @@ app.post("/square/posts", async (req, res) => {
     res.json({
       post: {
         id: row.id,
+        userId: row.userId,
         nickname: row.user.nickname,
         gender: row.user.gender,
         avatarUrl: row.user.avatarUrl || "",
@@ -1627,7 +1803,7 @@ app.post("/square/posts", async (req, res) => {
         likes: row.likes,
         imageUrls: safeParseMomentImageUrls(row.imageUrls),
         createdAt: formatSquareMomentTime(row.createdAt),
-        distanceKm: Number((Math.random() * 120 + 2).toFixed(1)),
+        distanceKm: 0,
         feedSource: "user"
       }
     });
@@ -2526,6 +2702,57 @@ app.post("/friends/requests/:id/respond", async (req, res) => {
     return res.json({ ok: true });
   } catch (_error) {
     return res.status(500).json({ message: "处理好友请求失败" });
+  }
+});
+
+app.get("/users/:peerId/follow-status", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const peerId = String(req.params.peerId || "");
+    if (!peerId || peerId === userId) return res.status(400).json({ message: "参数无效" });
+    const peer = await prisma.user.findUnique({ where: { id: peerId }, select: { id: true } });
+    if (!peer) return res.status(404).json({ message: "用户不存在" });
+    const status = await getFollowStatus(userId, peerId);
+    return res.json(status);
+  } catch (_error) {
+    return res.status(500).json({ message: "加载关注状态失败" });
+  }
+});
+
+app.post("/users/:peerId/follow", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const peerId = String(req.params.peerId || "");
+    if (!peerId || peerId === userId) return res.status(400).json({ message: "参数无效" });
+    const peer = await prisma.user.findUnique({ where: { id: peerId }, select: { id: true } });
+    if (!peer) return res.status(404).json({ message: "用户不存在" });
+    await prisma.userFollow.upsert({
+      where: { followerId_followeeId: { followerId: userId, followeeId: peerId } },
+      update: {},
+      create: { followerId: userId, followeeId: peerId }
+    });
+    const status = await syncFriendshipFromFollows(userId, peerId);
+    return res.json({ ok: true, ...status, message: status.isFriend ? "已互相关注，已加入通讯录" : "关注成功" });
+  } catch (_error) {
+    return res.status(500).json({ message: "关注失败" });
+  }
+});
+
+app.delete("/users/:peerId/follow", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const peerId = String(req.params.peerId || "");
+    if (!peerId || peerId === userId) return res.status(400).json({ message: "参数无效" });
+    await prisma.userFollow.deleteMany({
+      where: { followerId: userId, followeeId: peerId }
+    });
+    const status = await syncFriendshipFromFollows(userId, peerId);
+    return res.json({ ok: true, ...status, message: "已取消关注" });
+  } catch (_error) {
+    return res.status(500).json({ message: "取消关注失败" });
   }
 });
 

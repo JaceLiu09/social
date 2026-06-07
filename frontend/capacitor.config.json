@@ -1,0 +1,25 @@
+{
+  "appId": "com.manghe.social",
+  "appName": "盲盒星球",
+  "webDir": "dist",
+  "ios": {
+    "contentInset": "never",
+    "allowsLinkPreview": false,
+    "scrollEnabled": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "launchAutoHide": true,
+      "backgroundColor": "#f4f6fb",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#ffffff"
+    }
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
