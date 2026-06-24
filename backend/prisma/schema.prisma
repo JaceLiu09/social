@@ -54,6 +54,17 @@ model User {
   giftsReceived     GiftTransaction[] @relation("GiftReceiver")
   following         UserFollow[]      @relation("UserFollowing")
   followers         UserFollow[]      @relation("UserFollowers")
+  authSessions      AuthSession[]
+}
+
+model AuthSession {
+  token    String   @id
+  userId   String
+  issuedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model GiftCatalog {

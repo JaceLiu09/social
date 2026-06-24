@@ -112,8 +112,49 @@ npm run dev
 2. **若浏览器只显示「Internal Server Error」**：多为后端抛错未落到前端文案，请在服务器查看 **`pm2 logs social-backend`**。常见原因：**数据库连不上**（`P1001`）、**缺列 / 未迁移**（`P2022`，需在同一目录执行 `npx prisma db push` 与 `npm run seed`）、或部署未完成导致进程旧代码。
 3. **自检**：本机 `curl -s http://127.0.0.1:4000/admin/api/health` 应返回 JSON；再 `curl -s -X POST http://127.0.0.1:4000/admin/api/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"123456"}'` 应返回含 `token` 的 JSON。
 
+## 隐私政策与用户协议
+
+已参考陌陌模板编写初稿，并在前端提供可访问页面（**正式上架前需补全运营主体信息并经法务审核**）。
+
+### 文件位置
+
+| 文件 | 说明 |
+|------|------|
+| `frontend/src/legal/documents.js` | 《盲盒隐私政策》《盲盒用户服务协议》正文；顶部 `LEGAL_OPERATOR` 为运营主体配置 |
+| `frontend/src/legal/LegalDocumentPage.jsx` | 协议展示页组件 |
+| `frontend/src/App.jsx` | 路由 `/legal/*`、登录页勾选链接、设置 →「隐私」入口 |
+| `frontend/src/styles.css` | `.legal-page` 等样式 |
+
+### 访问路径
+
+- 隐私政策：`/legal/privacy-policy`（例：`https://test.manghe.click/legal/privacy-policy`）
+- 用户协议：`/legal/user-agreement`
+
+### 上线前必改（`documents.js` → `LEGAL_OPERATOR`）
+
+| 字段 | 当前占位 | 说明 |
+|------|----------|------|
+| `companyName` | `【请填写公司全称】` | 营业执照上的公司全称 |
+| `address` | `【请填写公司注册地址或常用办公地址】` | 协议「联系我们」 |
+| `contactEmail` | `privacy@manghe.click` | 可按实际客服/隐私邮箱修改 |
+| `productName` | `盲盒星球` | 产品对外名称 |
+
+更新日期 / 生效日期在 `PRIVACY_POLICY_DOC`、`USER_AGREEMENT_DOC` 内（当前：2026-05-29 / 2026-06-05）。
+
+### 仍缺失 / 待办
+
+- [ ] 填写真实公司全称、地址、联系邮箱
+- [ ] 法务或律师审核隐私政策与用户协议后再对外公示
+- [ ] 设置页目前仅「隐私」跳转隐私政策；如需「用户协议」独立入口可在 `settingItems` 增加
+- [ ] `miniprogram/` 小程序端尚未同步协议页与登录勾选链接
+- [ ] 未单独拆分《盲盒币充值协议》《会员条款》子文档（内容已合并在用户协议第六、七章）
+- [ ] App Store / 应用市场上架时，需在商店后台填写与线上一致的隐私政策 URL
+
+协议内容已按本产品实际能力裁剪（会员、盲盒币、广场定位、虚拟机器人等），**未照搬**陌陌的直播、AI、通讯录、第三方 SDK 目录等条款；若后续新增功能（如实名认证、通讯录、推送 SDK），需同步修订 `documents.js`。
+
 ## 下一步建议
 
+- 补全 `frontend/src/legal/documents.js` 中运营主体信息并完成协议法务审核（见上文「隐私政策与用户协议」）
 - 接入真实短信登录、鉴权（JWT）
 - 接入真实支付（微信/支付宝）和订单系统
 - 增加聊天服务（WebSocket + 会话存储）

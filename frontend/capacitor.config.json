@@ -5,7 +5,7 @@
   "ios": {
     "contentInset": "never",
     "allowsLinkPreview": false,
-    "scrollEnabled": true
+    "scrollEnabled": false
   },
   "plugins": {
     "SplashScreen": {
@@ -17,6 +17,9 @@
     "StatusBar": {
       "style": "DARK",
       "backgroundColor": "#ffffff"
+    },
+    "Keyboard": {
+      "resize": "none"
     }
   },
   "server": {

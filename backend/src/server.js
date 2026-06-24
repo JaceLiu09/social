@@ -26,6 +26,18 @@ import { computeWealthLevel, walletSnapshot } from "./wealthLevel.js";
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
+app.use(async (req, _res, next) => {
+  try {
+    const auth = String(req.headers.authorization || "");
+    const match = auth.match(/^Bearer\s+(.+)$/i);
+    if (match) {
+      await hydrateAuthTokenFromDb(match[1].trim());
+    }
+  } catch (_error) {
+    // ignore token hydration errors
+  }
+  next();
+});
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
@@ -99,6 +111,35 @@ function issueAuthToken(userId) {
   const token = randomUUID();
   authTokens.set(token, { userId: String(userId), issuedAt: Date.now() });
   return token;
+}
+
+async function persistAuthToken(userId, token) {
+  const uid = String(userId);
+  await prisma.authSession
+    .create({
+      data: {
+        token,
+        userId: uid
+      }
+    })
+    .catch(() => null);
+}
+
+async function issueAuthTokenPersisted(userId) {
+  const token = issueAuthToken(userId);
+  await persistAuthToken(userId, token);
+  return token;
+}
+
+async function hydrateAuthTokenFromDb(token) {
+  if (!token || authTokens.has(token)) return;
+  const row = await prisma.authSession.findUnique({
+    where: { token },
+    select: { userId: true, issuedAt: true }
+  });
+  if (row) {
+    authTokens.set(token, { userId: row.userId, issuedAt: row.issuedAt.getTime() });
+  }
 }
 
 function createImpersonationCode(userId) {
@@ -1451,7 +1492,7 @@ app.post("/auth/register-basic", async (req, res) => {
         profileCompleted: false
       }
     });
-    const token = issueAuthToken(user.id);
+    const token = await issueAuthTokenPersisted(user.id);
     return res.json({ user, token, needsProfile: true });
   } catch (error) {
     if (error?.name?.includes("PrismaClient")) {
@@ -1559,7 +1600,7 @@ app.post("/auth/login", async (req, res) => {
     const { phone, password } = req.body;
     const user = await prisma.user.findFirst({ where: { phone, password } });
     if (!user) return res.status(401).json({ message: "手机号或密码错误" });
-    const token = issueAuthToken(user.id);
+    const token = await issueAuthTokenPersisted(user.id);
     return res.json({ user, token, needsProfile: !user.profileCompleted });
   } catch (error) {
     if (error?.name?.includes("PrismaClient")) {
@@ -1577,7 +1618,7 @@ app.get("/auth/impersonate", async (req, res) => {
     if (!userId) return res.status(401).json({ message: "登录链接已失效，请从后台重新打开" });
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return res.status(404).json({ message: "用户不存在" });
-    const token = issueAuthToken(user.id);
+    const token = await issueAuthTokenPersisted(user.id);
     return res.json({ user, token, needsProfile: !user.profileCompleted });
   } catch (error) {
     return res.status(500).json({ message: "自动登录失败" });

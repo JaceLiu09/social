@@ -22,7 +22,7 @@ const base = {
   ios: {
     contentInset: "never",
     allowsLinkPreview: false,
-    scrollEnabled: true
+    scrollEnabled: false
   },
   plugins: {
     SplashScreen: {
@@ -34,6 +34,9 @@ const base = {
     StatusBar: {
       style: "DARK",
       backgroundColor: "#ffffff"
+    },
+    Keyboard: {
+      resize: "none"
     }
   }
 };

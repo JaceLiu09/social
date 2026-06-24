@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Capacitor } from "@capacitor/core";
+import { Keyboard, KeyboardResize } from "@capacitor/keyboard";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { io } from "socket.io-client";
 import avatarManifest from "./avatarManifest.json";
@@ -16,10 +17,43 @@ import {
   getViewerLocation,
   normalizeSquarePostDistances
 } from "./viewerLocation.js";
+import LegalDocumentPage from "./legal/LegalDocumentPage.jsx";
+import { PRIVACY_POLICY_DOC, USER_AGREEMENT_DOC } from "./legal/documents.js";
+import { PLANET_MATCH_GAMES } from "./planetGameCards.jsx";
 
 const ENV_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").trim();
 const DEFAULT_API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:4000`;
 const API = (ENV_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/$/, "");
+const AUTH_STORAGE_KEY = "social_auth_v1";
+
+function loadStoredAuth() {
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.token || !parsed?.user?.id) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function persistAuth(user, token) {
+  if (!token || !user?.id) return;
+  try {
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token, user }));
+  } catch {
+    /* ignore quota errors */
+  }
+}
+
+function clearStoredAuth() {
+  try {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 async function enrichSquarePostAuthors(posts, authHeaders, profileLists) {
   let list = posts.map((p) => ({ ...p }));
@@ -715,6 +749,11 @@ const ROUTE_TAB = {
   "/match": "planet-match"
 };
 
+const LEGAL_ROUTES = {
+  "/legal/privacy-policy": PRIVACY_POLICY_DOC,
+  "/legal/user-agreement": USER_AGREEMENT_DOC
+};
+
 function SquareTopbarCameraIcon() {
   return (
     <svg className="square-topbar-svg" viewBox="0 0 24 24" aria-hidden="true">
@@ -735,6 +774,47 @@ function SquareTopbarSearchIcon() {
     <svg className="square-topbar-svg" viewBox="0 0 24 24" aria-hidden="true">
       <circle cx="10.8" cy="10.8" r="6.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
       <path d="M15.6 15.6L20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ChatComposerGiftIcon() {
+  return (
+    <svg className="square-topbar-svg" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4.5" y="10" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M12 10v10" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M4.5 13.5h15" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="M12 10c-2.4 0-4.2-1.3-4.2-3.1S9.6 4 12 5.2C14.4 4 16.2 5.1 16.2 6.9S14.4 10 12 10z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ChatComposerPlusIcon() {
+  return (
+    <svg className="square-topbar-svg" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 7v10M7 12h10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ChatComposerEmojiIcon() {
+  return (
+    <svg className="square-topbar-svg" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M8.6 10.2h.01M15.4 10.2h.01" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path
+        d="M8.8 14.4c.9 1.2 2.1 1.8 3.2 1.8s2.3-.6 3.2-1.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -789,6 +869,7 @@ export default function App() {
   const tab = ROUTE_TAB[location.pathname] ?? "planet";
 
   useLayoutEffect(() => {
+    if (Object.prototype.hasOwnProperty.call(LEGAL_ROUTES, location.pathname)) return;
     if (!Object.prototype.hasOwnProperty.call(ROUTE_TAB, location.pathname)) {
       const search = location.search || "";
       navigate(`/planet${search}`, { replace: true });
@@ -848,6 +929,18 @@ export default function App() {
     preloadLocalDisplayAssets("MALE");
   }, []);
 
+  useEffect(() => {
+    const saved = loadStoredAuth();
+    if (!saved) return;
+    setUser(saved.user);
+    setAuthToken(saved.token);
+    setNeedsProfileSetup(!saved.user.profileCompleted);
+  }, []);
+
+  useEffect(() => {
+    if (user?.id && authToken) persistAuth(user, authToken);
+  }, [user, authToken]);
+
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
   const [registerForm, setRegisterForm] = useState(registerBasicInitial);
   const [profileSetupForm, setProfileSetupForm] = useState(profileSetupInitial);
@@ -882,6 +975,23 @@ export default function App() {
   const [coinPendingOrderId, setCoinPendingOrderId] = useState("");
   const [coinSelectedPackage, setCoinSelectedPackage] = useState(null);
   const chatAttachPhotoInputRef = useRef(null);
+  const chatDetailListRef = useRef(null);
+  const chatInputRef = useRef(null);
+
+  const closeChatComposerPanels = () => {
+    setChatComposerPanel("none");
+    setShowGiftPanel(false);
+  };
+
+  const toggleChatComposerPanel = (panel) => {
+    setShowGiftPanel(false);
+    setChatComposerPanel((prev) => {
+      const next = prev === panel ? "none" : panel;
+      if (next !== "none") chatInputRef.current?.blur();
+      return next;
+    });
+  };
+
   const [chatNotice, setChatNotice] = useState("");
   const [chatPeerFollow, setChatPeerFollow] = useState({
     iFollow: false,
@@ -1450,16 +1560,18 @@ export default function App() {
         fetch(`${API}/chat/contacts?userId=${currentUserId}`, { headers: authHeaders }),
         fetch(`${API}/chat/conversations`, { headers: authHeaders })
       ]);
-      const contactsData = await contactsRes.json();
-      const convData = await convRes.json();
-      if (!contactsRes.ok || !convRes.ok) {
-        setContacts([]);
-        setConversations([]);
-        return;
-      }
-      const contactsList = Array.isArray(contactsData.contacts) ? contactsData.contacts : [];
-      setContacts(contactsList);
-      const incoming = Array.isArray(convData.conversations) ? convData.conversations : [];
+      const contactsData = contactsRes.ok ? await contactsRes.json() : null;
+      const convData = convRes.ok ? await convRes.json() : null;
+      if (!contactsRes.ok && !convRes.ok) return;
+
+      const contactsList =
+        contactsRes.ok && Array.isArray(contactsData?.contacts) ? contactsData.contacts : null;
+      if (contactsList) setContacts(contactsList);
+
+      const incoming =
+        convRes.ok && Array.isArray(convData?.conversations) ? convData.conversations : null;
+      if (!incoming) return;
+
       const hiddenIds = hiddenConversationIdsRef.current;
       const visible = incoming.filter((item) => !hiddenIds.includes(item.id));
       setConversations((prev) => {
@@ -1476,7 +1588,8 @@ export default function App() {
         if (fromConv) {
           return { ...prev, avatar: fromConv.avatar, name: fromConv.name };
         }
-        const fromContact = contactsList.find((c) => c.id === prev.id);
+        const contactSource = contactsList || [];
+        const fromContact = contactSource.find((c) => c.id === prev.id);
         if (fromContact) {
           return { ...prev, avatar: fromContact.avatar, name: fromContact.name };
         }
@@ -1647,8 +1760,17 @@ export default function App() {
     try {
       const res = await fetch(`${API}/chat/messages?peerId=${peerId}`, { headers: authHeaders });
       const data = await res.json();
-      setChatMessages(Array.isArray(data.messages) ? data.messages : []);
-      setBrokenImageIds([]);
+      if (!res.ok) return;
+      const incoming = Array.isArray(data.messages) ? data.messages : [];
+      setChatMessages((prev) => {
+        if (
+          prev.length === incoming.length &&
+          prev.every((item, index) => item.id === incoming[index]?.id)
+        ) {
+          return prev;
+        }
+        return incoming;
+      });
     } catch (_error) {
       // Keep last loaded messages if refresh fails.
     }
@@ -2099,6 +2221,74 @@ export default function App() {
     }
   }, [tab]);
 
+  const scrollChatListToBottom = useCallback((behavior = "auto") => {
+    const list = chatDetailListRef.current;
+    if (!list) return;
+    list.scrollTo({ top: list.scrollHeight, behavior });
+  }, []);
+
+  useEffect(() => {
+    if (!activeConversation || tab !== "chat") return undefined;
+
+    const setKeyboardInset = (height) => {
+      const px = Math.max(0, Math.round(Number(height) || 0));
+      document.documentElement.style.setProperty("--kb-height", `${px}px`);
+      document.documentElement.classList.toggle("kb-open", px > 0);
+    };
+
+    const onKeyboardShow = (info) => {
+      setKeyboardInset(info?.keyboardHeight);
+      requestAnimationFrame(() => scrollChatListToBottom("auto"));
+    };
+    const onKeyboardHide = () => {
+      setKeyboardInset(0);
+    };
+
+    let keyboardHandles = [];
+    let cancelled = false;
+
+    if (Capacitor.isNativePlatform()) {
+      void (async () => {
+        await Keyboard.setResizeMode({ mode: KeyboardResize.None }).catch(() => null);
+        await Keyboard.setScroll({ isDisabled: true }).catch(() => null);
+        if (cancelled) return;
+        keyboardHandles = await Promise.all([
+          Keyboard.addListener("keyboardWillShow", onKeyboardShow),
+          Keyboard.addListener("keyboardWillHide", onKeyboardHide)
+        ]);
+      })();
+    } else if (window.visualViewport) {
+      const vv = window.visualViewport;
+      const onViewportChange = () => {
+        const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        setKeyboardInset(inset);
+        if (vv.offsetTop > 0) window.scrollTo(0, 0);
+      };
+      onViewportChange();
+      vv.addEventListener("resize", onViewportChange);
+      vv.addEventListener("scroll", onViewportChange);
+      return () => {
+        vv.removeEventListener("resize", onViewportChange);
+        vv.removeEventListener("scroll", onViewportChange);
+        setKeyboardInset(0);
+      };
+    }
+
+    return () => {
+      cancelled = true;
+      keyboardHandles.forEach((handle) => handle.remove());
+      setKeyboardInset(0);
+      if (Capacitor.isNativePlatform()) {
+        void Keyboard.setScroll({ isDisabled: false }).catch(() => null);
+      }
+    };
+  }, [activeConversation, tab, scrollChatListToBottom]);
+
+  useEffect(() => {
+    if (!activeConversation) return;
+    scrollChatListToBottom("auto");
+  }, [activeConversation?.id, chatMessages.length, scrollChatListToBottom]);
+
   useEffect(() => {
     if (!user?.id) return undefined;
     const socket = io(API, {
@@ -2219,21 +2409,21 @@ export default function App() {
   }, [tab, user]);
 
   useEffect(() => {
-    if (!user || tab !== "chat") return undefined;
+    if (!user || tab !== "chat" || activeConversation) return undefined;
     const timer = setInterval(() => {
       refreshChatPanels(user.id);
-    }, 3000);
+    }, 5000);
     return () => clearInterval(timer);
-  }, [tab, user]);
+  }, [tab, user, activeConversation]);
 
   useEffect(() => {
     if (!user || tab !== "chat" || !activeConversation) return undefined;
     refreshActiveMessages(user.id, activeConversation.id);
     const timer = setInterval(() => {
       refreshActiveMessages(user.id, activeConversation.id);
-    }, 1500);
+    }, 12000);
     return () => clearInterval(timer);
-  }, [activeConversation, tab, user]);
+  }, [activeConversation?.id, tab, user?.id]);
 
   useEffect(() => {
     setBrokenImageIds([]);
@@ -2396,11 +2586,6 @@ export default function App() {
     (registerForm.phone.trim().length > 0 || (registerPhoneRef.current?.value || "").trim().length > 0) &&
     (registerForm.password.trim().length >= 6 || (registerPasswordRef.current?.value || "").trim().length >= 6) &&
     registerForm.smsCode.trim().length === 6;
-
-  useEffect(() => {
-    if (registerForm.smsCode.trim().length === 6) return;
-    setAgreed(false);
-  }, [registerForm.smsCode]);
 
   useEffect(() => {
     if (showMembershipGate) return;
@@ -2918,6 +3103,7 @@ export default function App() {
 
   const switchAccount = () => {
     lastProfileEditServerKeyRef.current = null;
+    clearStoredAuth();
     setUser(null);
     setAuthToken("");
     setNeedsProfileSetup(false);
@@ -2939,6 +3125,7 @@ export default function App() {
 
   const logout = () => {
     lastProfileEditServerKeyRef.current = null;
+    clearStoredAuth();
     setUser(null);
     setAuthToken("");
     setNeedsProfileSetup(false);
@@ -3121,7 +3308,8 @@ export default function App() {
     if (!text) return;
     try {
       await sendChatPayload({ kind: "TEXT", text });
-      setChatComposerPanel("none");
+      closeChatComposerPanels();
+      chatInputRef.current?.blur();
     } catch (error) {
       setMessage(error.message || "发送失败，请稍后重试");
     }
@@ -3225,7 +3413,8 @@ export default function App() {
 
   const openGiftPanel = async () => {
     if (!activeConversation) return;
-    setChatComposerPanel("none");
+    closeChatComposerPanels();
+    chatInputRef.current?.blur();
     setShowGiftPanel(true);
     try {
       const [giftRes, walletRes] = await Promise.all([
@@ -4764,6 +4953,11 @@ export default function App() {
     );
   };
 
+  const legalDoc = LEGAL_ROUTES[location.pathname];
+  if (legalDoc) {
+    return <LegalDocumentPage doc={legalDoc} />;
+  }
+
   if (impersonatePending) {
     return (
       <main className="login-page">
@@ -4795,18 +4989,55 @@ export default function App() {
         </div>
         <p className="hero-text">来盲盒开出属于你的隐藏款</p>
 
-        {authMode === "login" ? (
-          <form className="auth-form" onSubmit={onLogin}>
+        <div className={`agree-row${agreed ? " agreed" : ""}`}>
+          <label>
             <input
-              placeholder="盲盒号 / 手机号"
+              type="checkbox"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+            />
+            <span>
+              我已阅读并同意
+              <button
+                type="button"
+                className="text-btn legal-inline-link"
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate("/legal/user-agreement");
+                }}
+              >
+                《盲盒用户协议》
+              </button>
+              和
+              <button
+                type="button"
+                className="text-btn legal-inline-link"
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate("/legal/privacy-policy");
+                }}
+              >
+                《盲盒隐私政策》
+              </button>
+            </span>
+          </label>
+          {!agreed ? <p className="agree-hint">请先勾选以上协议后再登录或注册</p> : null}
+        </div>
+
+        {authMode === "login" ? (
+          <form className={`auth-form${agreed ? "" : " auth-form--locked"}`} onSubmit={onLogin}>
+            <input
+              placeholder={agreed ? "盲盒号 / 手机号" : "请先勾选用户协议与隐私政策"}
               value={loginForm.account}
+              disabled={!agreed}
               onChange={(e) => setLoginForm((prev) => ({ ...prev, account: e.target.value }))}
               required
             />
             <input
-              placeholder="请输入密码"
+              placeholder={agreed ? "请输入密码" : "请先勾选用户协议与隐私政策"}
               type="password"
               value={loginForm.password}
+              disabled={!agreed}
               onChange={(e) => setLoginForm((prev) => ({ ...prev, password: e.target.value }))}
               required
             />
@@ -4815,29 +5046,31 @@ export default function App() {
             </button>
           </form>
         ) : (
-          <form className="auth-form register-form" onSubmit={onRegister}>
+          <form className={`auth-form register-form${agreed ? "" : " auth-form--locked"}`} onSubmit={onRegister}>
             <input
               ref={registerPhoneRef}
-              placeholder="手机号"
+              placeholder={agreed ? "手机号" : "请先勾选用户协议与隐私政策"}
               autoComplete="tel"
               value={registerForm.phone}
+              disabled={!agreed}
               onInput={(e) => setRegisterForm((prev) => ({ ...prev, phone: e.target.value }))}
               onChange={(e) => setRegisterForm((prev) => ({ ...prev, phone: e.target.value }))}
               required
             />
             <input
               ref={registerPasswordRef}
-              placeholder="密码(至少6位)"
+              placeholder={agreed ? "密码(至少6位)" : "请先勾选用户协议与隐私政策"}
               type="password"
               autoComplete="new-password"
               value={registerForm.password}
+              disabled={!agreed}
               onInput={(e) => setRegisterForm((prev) => ({ ...prev, password: e.target.value }))}
               onChange={(e) => setRegisterForm((prev) => ({ ...prev, password: e.target.value }))}
               required
             />
             <div
-              className="sms-code-wrap"
-              onClick={() => document.getElementById("sms-code-input")?.focus()}
+              className={`sms-code-wrap${agreed ? "" : " sms-code-wrap--locked"}`}
+              onClick={() => agreed && document.getElementById("sms-code-input")?.focus()}
             >
               <input
                 id="sms-code-input"
@@ -4845,6 +5078,7 @@ export default function App() {
                 inputMode="numeric"
                 autoComplete="one-time-code"
                 maxLength={6}
+                disabled={!agreed}
                 value={registerForm.smsCode}
                 onChange={(e) =>
                   setRegisterForm((prev) => ({
@@ -4875,18 +5109,6 @@ export default function App() {
             </button>
           </form>
         )}
-
-        <div className="agree-row">
-          <label>
-            <input
-              type="checkbox"
-              checked={agreed}
-              disabled={authMode === "register" && registerForm.smsCode.trim().length !== 6}
-              onChange={(e) => setAgreed(e.target.checked)}
-            />
-            我已阅读并同意《盲盒用户协议》和《盲盒隐私政策》
-          </label>
-        </div>
 
         <div className="switch-row">
           {authMode === "login" ? (
@@ -5289,34 +5511,35 @@ export default function App() {
 
           <h3 className="section-title">配对玩游戏</h3>
           <div className="game-grid">
-            <div className="game-card">
-              <h4>猜句子接龙</h4>
-              <p>15.1万人正在玩</p>
-              <button type="button" onClick={openSentenceMenu}>
-                进入
-              </button>
-            </div>
-            <div className="game-card">
-              <h4>狼人杀</h4>
-              <p>5.5万人正在玩</p>
-              <button type="button" onClick={openWerewolfMenu}>
-                进入
-              </button>
-            </div>
-            <div className="game-card">
-              <h4>真心话挑战</h4>
-              <p>1.5万人正在玩</p>
-              <button type="button" onClick={openTruthMenu}>
-                进入
-              </button>
-            </div>
-            <div className="game-card">
-              <h4>二选一默契挑战</h4>
-              <p>6.5万人正在玩</p>
-              <button type="button" onClick={openTacitMenu}>
-                进入
-              </button>
-            </div>
+            {PLANET_MATCH_GAMES.map((game) => {
+              const Icon = game.Icon;
+              const onOpen =
+                game.id === "sentence"
+                  ? openSentenceMenu
+                  : game.id === "werewolf"
+                    ? openWerewolfMenu
+                    : game.id === "truth"
+                      ? openTruthMenu
+                      : openTacitMenu;
+              return (
+                <button
+                  key={game.id}
+                  type="button"
+                  className={`game-card game-card--${game.variant}`}
+                  onClick={onOpen}
+                >
+                  <div className="game-card-icon-wrap">
+                    {game.badge ? <span className="game-card-badge">{game.badge}</span> : null}
+                    <div className="game-card-icon" aria-hidden="true">
+                      <Icon />
+                    </div>
+                  </div>
+                  <h4>{game.title}</h4>
+                  <p>{game.players}</p>
+                  <span className="game-card-enter">进入</span>
+                </button>
+              );
+            })}
           </div>
         </section>
       )}
@@ -5478,7 +5701,7 @@ export default function App() {
                     {chatFollowBusy ? "…" : chatFollowButtonLabel}
                   </button>
                 </div>
-                <div className="chat-detail-list">
+                <div ref={chatDetailListRef} className="chat-detail-list">
                   {chatMessages.length === 0 ? (
                     <p className="feed-tip">还没有消息，打个招呼吧</p>
                   ) : (
@@ -5584,30 +5807,29 @@ export default function App() {
                     aria-hidden
                     onChange={onPickImage}
                   />
-                  <div className="chat-composer-bar chat-composer-bar--momo">
+                  <div className="chat-composer-bar chat-composer-bar--momo chat-composer-bar--soul">
                     <button
                       type="button"
-                      className="chat-composer-camera"
-                      onClick={() => chatAttachPhotoInputRef.current?.click()}
+                      className="chat-composer-tool chat-composer-camera"
+                      onClick={() => {
+                        closeChatComposerPanels();
+                        chatAttachPhotoInputRef.current?.click();
+                      }}
                       aria-label="发送照片"
                       title="照片"
                     >
-                      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden>
-                        <path
-                          fill="currentColor"
-                          d="M9.5 7A2.5 2.5 0 1114.5 9.5 2.5 2.5 0 019.5 7zm-4 2.5A5.5 5.5 0 1116.5 15 5.5 5.5 0 015.5 9.5zM4 6.5A2.5 2.5 0 016.5 4h2.1l1-2h4.8l1 2H17.5A2.5 2.5 0 0120 6.5v11A2.5 2.5 0 0117.5 20h-11A2.5 2.5 0 014 17.5z"
-                        />
-                      </svg>
+                      <SquareTopbarCameraIcon />
                     </button>
                     <div className="chat-composer-inputbox">
                       <input
-                        placeholder="请输入消息..."
+                        ref={chatInputRef}
+                        placeholder="文明聊天，友善交友～"
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
                         onFocus={() => {
-                          setChatComposerPanel("none");
-                          setShowGiftPanel(false);
+                          closeChatComposerPanels();
                         }}
+                        enterKeyHint="send"
                         onKeyDown={(e) => {
                           if (e.key === "Enter") sendChatMessage();
                         }}
@@ -5615,16 +5837,11 @@ export default function App() {
                       <button
                         type="button"
                         className={`chat-composer-emoji-toggle ${chatComposerPanel === "emoji" ? "active" : ""}`}
-                        onClick={() => {
-                          setShowGiftPanel(false);
-                          setChatComposerPanel((p) => (p === "emoji" ? "none" : "emoji"));
-                        }}
+                        onClick={() => toggleChatComposerPanel("emoji")}
                         aria-label="表情"
                         title="表情"
                       >
-                        <span className="chat-composer-emoji-face" aria-hidden>
-                          ☺
-                        </span>
+                        <ChatComposerEmojiIcon />
                       </button>
                     </div>
                     {chatInput.trim() ? (
@@ -5638,15 +5855,40 @@ export default function App() {
                     ) : (
                       <button
                         type="button"
-                        className="chat-composer-giftbtn"
-                        onClick={openGiftPanel}
-                        aria-label="送礼物"
-                        title="送礼物"
+                        className={`chat-composer-tool chat-composer-plus ${chatComposerPanel === "more" ? "active" : ""}`}
+                        onClick={() => toggleChatComposerPanel("more")}
+                        aria-label="更多"
+                        title="更多"
                       >
-                        🎁
+                        <ChatComposerPlusIcon />
                       </button>
                     )}
                   </div>
+                  {chatComposerPanel === "more" && (
+                    <div className="chat-composer-more-sheet" role="region" aria-label="更多功能">
+                      <button
+                        type="button"
+                        className="chat-composer-more-item"
+                        onClick={() => {
+                          closeChatComposerPanels();
+                          chatAttachPhotoInputRef.current?.click();
+                        }}
+                      >
+                        <SquareTopbarCameraIcon />
+                        <span>照片</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="chat-composer-more-item"
+                        onClick={() => {
+                          void openGiftPanel();
+                        }}
+                      >
+                        <ChatComposerGiftIcon />
+                        <span>礼物</span>
+                      </button>
+                    </div>
+                  )}
                   {chatComposerPanel === "emoji" && (
                     <div className="chat-composer-sheet chat-emoji-sheet" role="region" aria-label="表情">
                       <div className="chat-emoji-grid">
@@ -6010,6 +6252,10 @@ export default function App() {
                       }
                       if (item === "盲盒币充值") {
                         openCoinRecharge();
+                        return;
+                      }
+                      if (item === "隐私") {
+                        navigate("/legal/privacy-policy");
                         return;
                       }
                       setMessage(`${item} 功能开发中`);
