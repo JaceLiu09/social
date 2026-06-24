@@ -4989,88 +4989,82 @@ export default function App() {
         </div>
         <p className="hero-text">来盲盒开出属于你的隐藏款</p>
 
-        <div className={`agree-row${agreed ? " agreed" : ""}`}>
-          <label>
-            <input
-              type="checkbox"
-              checked={agreed}
-              onChange={(e) => setAgreed(e.target.checked)}
-            />
-            <span>
-              我已阅读并同意
-              <button
-                type="button"
-                className="text-btn legal-inline-link"
-                onClick={(e) => {
-                  e.preventDefault();
-                  navigate("/legal/user-agreement");
-                }}
-              >
-                《盲盒用户协议》
-              </button>
-              和
-              <button
-                type="button"
-                className="text-btn legal-inline-link"
-                onClick={(e) => {
-                  e.preventDefault();
-                  navigate("/legal/privacy-policy");
-                }}
-              >
-                《盲盒隐私政策》
-              </button>
-            </span>
-          </label>
-          {!agreed ? <p className="agree-hint">请先勾选以上协议后再登录或注册</p> : null}
-        </div>
-
         {authMode === "login" ? (
-          <form className={`auth-form${agreed ? "" : " auth-form--locked"}`} onSubmit={onLogin}>
+          <form className="auth-form" onSubmit={onLogin}>
             <input
-              placeholder={agreed ? "盲盒号 / 手机号" : "请先勾选用户协议与隐私政策"}
+              placeholder="盲盒号 / 手机号"
               value={loginForm.account}
-              disabled={!agreed}
               onChange={(e) => setLoginForm((prev) => ({ ...prev, account: e.target.value }))}
               required
             />
             <input
-              placeholder={agreed ? "请输入密码" : "请先勾选用户协议与隐私政策"}
+              placeholder="请输入密码"
               type="password"
               value={loginForm.password}
-              disabled={!agreed}
               onChange={(e) => setLoginForm((prev) => ({ ...prev, password: e.target.value }))}
               required
             />
+            <div className="agree-row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={agreed}
+                  onChange={(e) => setAgreed(e.target.checked)}
+                />
+                <span>
+                  我已阅读并同意
+                  <button
+                    type="button"
+                    className="text-btn legal-inline-link"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate("/legal/user-agreement");
+                    }}
+                  >
+                    《盲盒用户协议》
+                  </button>
+                  和
+                  <button
+                    type="button"
+                    className="text-btn legal-inline-link"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate("/legal/privacy-policy");
+                    }}
+                  >
+                    《盲盒隐私政策》
+                  </button>
+                </span>
+              </label>
+            </div>
             <button className={`login-main-btn ${canSubmitLogin ? "active" : ""}`} type="submit" disabled={!canSubmitLogin}>
               登录
             </button>
           </form>
         ) : (
-          <form className={`auth-form register-form${agreed ? "" : " auth-form--locked"}`} onSubmit={onRegister}>
+          <form className="auth-form register-form" onSubmit={onRegister}>
             <input
               ref={registerPhoneRef}
-              placeholder={agreed ? "手机号" : "请先勾选用户协议与隐私政策"}
+              placeholder="手机号"
               autoComplete="tel"
               value={registerForm.phone}
-              disabled={!agreed}
               onInput={(e) => setRegisterForm((prev) => ({ ...prev, phone: e.target.value }))}
               onChange={(e) => setRegisterForm((prev) => ({ ...prev, phone: e.target.value }))}
               required
             />
             <input
               ref={registerPasswordRef}
-              placeholder={agreed ? "密码(至少6位)" : "请先勾选用户协议与隐私政策"}
+              placeholder="密码(至少6位)"
               type="password"
               autoComplete="new-password"
               value={registerForm.password}
-              disabled={!agreed}
               onInput={(e) => setRegisterForm((prev) => ({ ...prev, password: e.target.value }))}
               onChange={(e) => setRegisterForm((prev) => ({ ...prev, password: e.target.value }))}
               required
             />
             <div
-              className={`sms-code-wrap${agreed ? "" : " sms-code-wrap--locked"}`}
-              onClick={() => agreed && document.getElementById("sms-code-input")?.focus()}
+              className="sms-code-wrap"
+              onClick={() => document.getElementById("sms-code-input")?.focus()}
             >
               <input
                 id="sms-code-input"
@@ -5078,7 +5072,6 @@ export default function App() {
                 inputMode="numeric"
                 autoComplete="one-time-code"
                 maxLength={6}
-                disabled={!agreed}
                 value={registerForm.smsCode}
                 onChange={(e) =>
                   setRegisterForm((prev) => ({
@@ -5099,6 +5092,39 @@ export default function App() {
                 ))}
               </div>
               <small>短信验证码（测试码：123456）</small>
+            </div>
+            <div className="agree-row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={agreed}
+                  onChange={(e) => setAgreed(e.target.checked)}
+                />
+                <span>
+                  我已阅读并同意
+                  <button
+                    type="button"
+                    className="text-btn legal-inline-link"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate("/legal/user-agreement");
+                    }}
+                  >
+                    《盲盒用户协议》
+                  </button>
+                  和
+                  <button
+                    type="button"
+                    className="text-btn legal-inline-link"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate("/legal/privacy-policy");
+                    }}
+                  >
+                    《盲盒隐私政策》
+                  </button>
+                </span>
+              </label>
             </div>
             <button
               className={`login-main-btn ${canSubmitRegisterBasic ? "active" : ""}`}
