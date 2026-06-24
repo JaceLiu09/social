@@ -242,43 +242,129 @@ function createHeroAvatars() {
   );
 }
 
+const SENTENCE_TOPIC_META = [
+  { id: "date", label: "约会日常", desc: "见面相处、心动瞬间", emoji: "💕" },
+  { id: "travel", label: "旅行出游", desc: "路线美食、同行默契", emoji: "✈️" },
+  { id: "emotion", label: "情感心声", desc: "信任陪伴、关系升温", emoji: "💬" },
+  { id: "ice", label: "轻松破冰", desc: "冷场救星、搞怪接龙", emoji: "😄" }
+];
+
 const SENTENCE_CHAIN_BANK = [
   {
+    category: "date",
     stem: "周末突然下雨，我会先",
     options: ["约你去咖啡馆躲雨", "在家看一部老电影", "去楼下便利店买热饮"]
   },
   {
+    category: "date",
     stem: "第一次见面最加分的是",
     options: ["说话真诚不端着", "穿着干净有细节", "会认真听我讲话"]
   },
   {
-    stem: "一起旅行时我更在意",
-    options: ["行程松弛不赶路", "拍照好看有仪式感", "吃到本地特色小店"]
-  },
-  {
-    stem: "晚上聊天冷场时，我会",
-    options: ["丢一个有趣的问题", "分享今天的小糗事", "发一张正在听的歌单"]
-  },
-  {
-    stem: "关系升温最快的方式是",
-    options: ["稳定且高质量联系", "一起完成一件小事", "情绪低落时彼此接住"]
-  },
-  {
+    category: "date",
     stem: "如果对方迟到十分钟，我会",
     options: ["先找个地方坐着等", "发消息确认是否堵车", "顺便买两杯饮料"]
   },
   {
+    category: "date",
     stem: "最理想的约会结尾是",
     options: ["散步到地铁口再告别", "互发今天最喜欢的瞬间", "约好下次见面的时间"]
+  },
+  {
+    category: "date",
+    stem: "选餐厅时我更看重",
+    options: ["环境安静能聊天", "菜品好吃不踩雷", "离你我都不太远"]
+  },
+  {
+    category: "travel",
+    stem: "一起旅行时我更在意",
+    options: ["行程松弛不赶路", "拍照好看有仪式感", "吃到本地特色小店"]
+  },
+  {
+    category: "travel",
+    stem: "出门旅行前我会先",
+    options: ["列一份轻松行程单", "查好天气和穿搭", "约好你想去的地方"]
+  },
+  {
+    category: "travel",
+    stem: "旅途中迷路了，我会",
+    options: ["一起开导航慢慢找", "先买杯饮料冷静下", "干脆随缘探索新路"]
+  },
+  {
+    category: "travel",
+    stem: "住酒店我更偏好",
+    options: ["交通方便出行省心", "窗景好适合发呆", "周边好吃的多"]
+  },
+  {
+    category: "travel",
+    stem: "旅行合照时我通常会",
+    options: ["自然抓拍更有感觉", "找地标认真合影", "让你来选角度"]
+  },
+  {
+    category: "emotion",
+    stem: "关系升温最快的方式是",
+    options: ["稳定且高质量联系", "一起完成一件小事", "情绪低落时彼此接住"]
+  },
+  {
+    category: "emotion",
+    stem: "当你心情不好时，我希望",
+    options: ["先安静陪在你身边", "听你说完再给建议", "带你吃点好吃的"]
+  },
+  {
+    category: "emotion",
+    stem: "让我觉得被在乎的瞬间是",
+    options: ["记得我说过的小事", "主动分享日常碎片", "难过时第一时间出现"]
+  },
+  {
+    category: "emotion",
+    stem: "吵架之后我更愿意",
+    options: ["冷静后把话说清楚", "先抱抱再聊原因", "写长消息表达想法"]
+  },
+  {
+    category: "emotion",
+    stem: "长久相处最重要的是",
+    options: ["彼此坦诚不隐瞒", "尊重对方的节奏", "愿意一起解决问题"]
+  },
+  {
+    category: "ice",
+    stem: "晚上聊天冷场时，我会",
+    options: ["丢一个有趣的问题", "分享今天的小糗事", "发一张正在听的歌单"]
+  },
+  {
+    category: "ice",
+    stem: "刚认识时我最常聊",
+    options: ["最近在看什么剧", "周末一般怎么过", "有什么奇怪的小爱好"]
+  },
+  {
+    category: "ice",
+    stem: "如果只能问一个问题，我会问",
+    options: ["你最开心的童年记忆", "最近让你笑的事", "你理想的周末早晨"]
+  },
+  {
+    category: "ice",
+    stem: "游戏开局我会先",
+    options: ["来个轻松热身题", "直接上难度试试", "让你先出题我接"]
+  },
+  {
+    category: "ice",
+    stem: "接龙答错时我通常会",
+    options: ["自嘲一下继续玩", "要求再来一题", "吐槽你出题太刁钻"]
   }
 ];
 
-function createSentenceChainRounds(count = 5) {
-  return sampleItems(SENTENCE_CHAIN_BANK, count).map((item, idx) => ({
-    id: `sentence-round-${idx + 1}`,
+function createSentenceChainRounds(count = 5, category = "date") {
+  const pool = SENTENCE_CHAIN_BANK.filter((item) => item.category === category);
+  const source = pool.length >= count ? pool : SENTENCE_CHAIN_BANK;
+  return sampleItems(source, count).map((item, idx) => ({
+    id: `sentence-round-${category}-${idx + 1}`,
     stem: item.stem,
-    options: item.options
+    options: item.options,
+    category: item.category
   }));
+}
+
+function getSentenceTopicLabel(categoryId) {
+  return SENTENCE_TOPIC_META.find((item) => item.id === categoryId)?.label || "综合题库";
 }
 
 const TRUTH_ROUNDS_PER_GAME = 5;
@@ -851,6 +937,22 @@ const WEREWOLF_ROLE_CONFIG = {
   12: { wolf: 4, seer: 1, witch: 1, hunter: 1, idiot: 1, villager: 4 }
 };
 
+const WEREWOLF_MENU_ROLE_LABELS = [
+  { key: "wolf", label: "狼人" },
+  { key: "seer", label: "预言家" },
+  { key: "witch", label: "女巫" },
+  { key: "hunter", label: "猎人" },
+  { key: "idiot", label: "白痴" },
+  { key: "villager", label: "平民" }
+];
+
+const WEREWOLF_MENU_FLOW = [
+  "黑夜：狼人击杀，预言家查验，女巫可选救/毒",
+  "天亮：公布死讯，依次发言讨论线索",
+  "投票放逐出局玩家，狼人可白天自爆跳阶段",
+  "好人找出所有狼人，或狼人屠城即获胜"
+];
+
 function buildWerewolfRulePack(playerCount, modeLabel) {
   const count = Math.max(6, Math.min(12, Number(playerCount) || 6));
   const role = WEREWOLF_ROLE_CONFIG[count] || WEREWOLF_ROLE_CONFIG[6];
@@ -1134,6 +1236,7 @@ export default function App() {
   const [planetMatchRandomKm, setPlanetMatchRandomKm] = useState(null);
   const [planetMatchWaitHint, setPlanetMatchWaitHint] = useState("");
   const [sentenceMode, setSentenceMode] = useState("menu");
+  const [sentenceTopic, setSentenceTopic] = useState("date");
   const [isSentenceMatching, setIsSentenceMatching] = useState(false);
   const [sentenceOpponent, setSentenceOpponent] = useState(null);
   const [sentenceRounds, setSentenceRounds] = useState([]);
@@ -1481,9 +1584,9 @@ export default function App() {
           setWerewolfRoomId("");
           setWerewolfRoomMembers([]);
           setWerewolfGame(null);
-          setWerewolfMode("match");
+          setWerewolfMode("menu");
           setIsWerewolfMatching(false);
-          setChatNotice("房间状态失效，请点击“开始匹配”重新进入");
+          setChatNotice("房间状态失效，请重新点击「多人匹配」");
           werewolfSyncRetryRef.current = 0;
         }
       } catch (_error) {}
@@ -3663,6 +3766,7 @@ export default function App() {
 
   const resetSentenceState = () => {
     setSentenceMode("menu");
+    setSentenceTopic("date");
     setIsSentenceMatching(false);
     setSentenceOpponent(null);
     setSentenceRounds([]);
@@ -3689,7 +3793,7 @@ export default function App() {
   };
 
   const startSentenceGame = (opponent) => {
-    const rounds = createSentenceChainRounds(5);
+    const rounds = createSentenceChainRounds(5, sentenceTopic);
     setSentenceOpponent(opponent);
     setSentenceRounds(rounds);
     setSentenceRoundIndex(0);
@@ -4534,8 +4638,7 @@ export default function App() {
   };
 
   const enterWerewolfMatch = () => {
-    setWerewolfMode("match");
-    setIsWerewolfMatching(false);
+    startWerewolfMatching();
   };
 
   const enterWerewolfRoom = () => {
@@ -4598,6 +4701,7 @@ export default function App() {
     setWerewolfRoomId("");
     setWerewolfRoomMembers([]);
     setWerewolfGame(null);
+    setWerewolfMode("playing");
     setIsWerewolfMatching(true);
     fetch(`${API}/werewolf/match/enqueue`, {
       method: "POST",
@@ -4609,7 +4713,7 @@ export default function App() {
         if (data.matched && data.room) {
           applyWerewolfRoom(data.room);
           setWerewolfRulePack(buildWerewolfRulePack(6, "多人匹配"));
-          setWerewolfMode(data.room?.game ? "playing" : "match");
+          setWerewolfMode("playing");
           setIsWerewolfMatching(false);
           return;
         }
@@ -4621,7 +4725,7 @@ export default function App() {
             if (statusData.matched && statusData.room) {
               applyWerewolfRoom(statusData.room);
               setWerewolfRulePack(buildWerewolfRulePack(6, "多人匹配"));
-              setWerewolfMode(statusData.room?.game ? "playing" : "match");
+              setWerewolfMode("playing");
               setIsWerewolfMatching(false);
               clearInterval(werewolfPollingRef.current);
               werewolfPollingRef.current = null;
@@ -4634,6 +4738,7 @@ export default function App() {
       .catch((error) => {
         setChatNotice(error.message || "匹配失败");
         setIsWerewolfMatching(false);
+        setWerewolfMode("menu");
       });
   };
 
@@ -6653,21 +6758,37 @@ export default function App() {
           onBack={closeWerewolfModal}
           sfxEnabled={gameSfxEnabled}
           onToggleSfx={toggleGameSfx}
-          showMenuHero={werewolfMode === "menu"}
+          showMenuHero={false}
+          headerLayout="stacked"
         >
-          <div className="game-page-panel werewolf-card">
+          <div className={`game-page-panel werewolf-card game-menu-panel${werewolfMode === "menu" ? " game-menu-panel--compact" : ""}`}>
             {werewolfMode === "menu" && (
-              <div className="werewolf-mode-wrap">
-                <div className="werewolf-menu">
-                  <button type="button" onClick={enterWerewolfMatch}>
-                    多人匹配
-                  </button>
-                  <button type="button" onClick={enterWerewolfRoom}>
-                    好友房邀请
-                  </button>
+              <div className="game-menu game-menu--compact">
+                <p className="game-menu-intro">
+                  固定 6 人开局，狼人藏身份、好人找线索，支持快速匹配或好友房组局。
+                </p>
+                <div className="game-menu-rules game-menu-rules--werewolf">
+                  <h3>6 人局身份配置</h3>
+                  <div className="game-rules-chips">
+                    {WEREWOLF_MENU_ROLE_LABELS.map(({ key, label }) => {
+                      const count = WEREWOLF_ROLE_CONFIG[6][key];
+                      if (!count) return null;
+                      return (
+                        <span key={key}>
+                          {label} ×{count}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <h3>基本流程</h3>
+                  <ul className="game-rules-list">
+                    {WEREWOLF_MENU_FLOW.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
                 </div>
                 {werewolfInvitations.length > 0 && (
-                  <div className="werewolf-invite-list">
+                  <div className="werewolf-invite-list game-menu-invites">
                     {werewolfInvitations.map((item) => (
                       <div key={`ww-invite-${item.roomId}`} className="contact-item">
                         <img src={resolveAssetUrl(item.ownerAvatar)} alt={item.ownerName} className="chat-avatar" />
@@ -6689,20 +6810,19 @@ export default function App() {
                     ))}
                   </div>
                 )}
-              </div>
-            )}
-            {werewolfMode === "match" && (
-              <div className="werewolf-mode-wrap">
-                <p>多人匹配模式（固定6人）</p>
-                <p className="feed-tip">
-                  {isWerewolfMatching ? "匹配中，请稍候..." : "点击下方按钮进入狼人等待匹配"}
-                </p>
-                <button type="button" onClick={startWerewolfMatching} disabled={isWerewolfMatching}>
-                  {isWerewolfMatching ? "匹配中..." : "开始匹配"}
-                </button>
-                <button type="button" onClick={() => setWerewolfMode("menu")}>
-                  菜单
-                </button>
+                <div className="game-menu-actions">
+                  <button
+                    type="button"
+                    className="game-primary-btn game-primary-btn--werewolf"
+                    onClick={enterWerewolfMatch}
+                    disabled={isWerewolfMatching}
+                  >
+                    {isWerewolfMatching ? "匹配中..." : "多人匹配"}
+                  </button>
+                  <button type="button" className="game-secondary-btn" onClick={enterWerewolfRoom}>
+                    好友房邀请
+                  </button>
+                </div>
               </div>
             )}
             {werewolfMode === "room" && (
@@ -6872,11 +6992,15 @@ export default function App() {
             )}
             {werewolfMode === "playing" && !werewolfGame && (
               <div className="werewolf-mode-wrap">
-                <p>正在进入游戏房间...</p>
-                <p className="feed-tip">正在同步对局状态，请稍候 1-2 秒。</p>
-                <button type="button" onClick={() => refreshWerewolfRoom().catch((e) => setChatNotice(e.message))}>
-                  立即重试
-                </button>
+                <p>{isWerewolfMatching ? "正在匹配对手..." : "正在进入游戏房间..."}</p>
+                <p className="feed-tip">
+                  {isWerewolfMatching ? "系统正在为你组建 6 人局，请稍候。" : "正在同步对局状态，请稍候 1-2 秒。"}
+                </p>
+                {!isWerewolfMatching && (
+                  <button type="button" onClick={() => refreshWerewolfRoom().catch((e) => setChatNotice(e.message))}>
+                    立即重试
+                  </button>
+                )}
               </div>
             )}
             {werewolfMode === "judge" && werewolfRulePack && (
@@ -6920,22 +7044,15 @@ export default function App() {
           onBack={closeTacitModal}
           sfxEnabled={gameSfxEnabled}
           onToggleSfx={toggleGameSfx}
-          showMenuHero={tacitMode === "menu"}
+          showMenuHero={false}
+          headerLayout="stacked"
         >
-          <div className="game-page-panel werewolf-card tacit-card">
+          <div className="game-page-panel werewolf-card tacit-card game-menu-panel">
             {tacitMode === "menu" && (
-              <div className="werewolf-mode-wrap">
-                <p>每局 10 题，同一个答案 +10 分，用来测你们的默契值。</p>
-                <div className="werewolf-menu">
-                  <button type="button" onClick={startTacitMatch}>
-                    匹配
-                  </button>
-                  <button type="button" onClick={() => setTacitMode("invite")}>
-                    邀请好友
-                  </button>
-                </div>
+              <div className="game-menu">
+                <p className="game-menu-intro">每局 10 题，选同一个答案 +10 分，看看你们的默契值有多高。</p>
                 {tacitInvitations.length > 0 && (
-                  <div className="werewolf-invite-list">
+                  <div className="werewolf-invite-list game-menu-invites">
                     {tacitInvitations.map((item) => (
                       <div key={`tacit-invite-${item.roomId}`} className="contact-item">
                         <img src={resolveAssetUrl(item.ownerAvatar)} alt={item.ownerName} className="chat-avatar" />
@@ -6957,6 +7074,14 @@ export default function App() {
                     ))}
                   </div>
                 )}
+                <div className="game-menu-actions">
+                  <button type="button" className="game-primary-btn game-primary-btn--tacit" onClick={startTacitMatch}>
+                    立即匹配
+                  </button>
+                  <button type="button" className="game-secondary-btn" onClick={() => setTacitMode("invite")}>
+                    邀请好友
+                  </button>
+                </div>
               </div>
             )}
             {tacitMode === "match" && (
@@ -7147,17 +7272,45 @@ export default function App() {
           onBack={closeSentenceModal}
           sfxEnabled={gameSfxEnabled}
           onToggleSfx={toggleGameSfx}
-          showMenuHero={sentenceMode === "menu"}
+          showMenuHero={false}
+          headerLayout="stacked"
         >
-          <div className="game-page-panel werewolf-card tacit-card">
+          <div className="game-page-panel game-page-panel--sentence sentence-menu-panel">
             {sentenceMode === "menu" && (
-              <div className="werewolf-mode-wrap">
-                <p>每局 5 题，双方从同一句开头里选下一句，选中同一个选项即加分。</p>
-                <div className="werewolf-menu">
-                  <button type="button" onClick={startSentenceMatch}>
-                    匹配模式
+              <div className="sentence-menu">
+                <p className="sentence-menu-intro">
+                  每局 5 题，双方从同一句开头里选下一句，选中同一个选项即默契 +20 分。
+                </p>
+                <div className="sentence-topic-section">
+                  <div className="sentence-topic-head">
+                    <h3>选择题型</h3>
+                  </div>
+                  <div className="sentence-topic-grid">
+                    {SENTENCE_TOPIC_META.map((topic) => {
+                      const count = SENTENCE_CHAIN_BANK.filter((item) => item.category === topic.id).length;
+                      return (
+                        <button
+                          key={topic.id}
+                          type="button"
+                          className={`sentence-topic-card${sentenceTopic === topic.id ? " active" : ""}`}
+                          onClick={() => setSentenceTopic(topic.id)}
+                        >
+                          <span className="sentence-topic-emoji" aria-hidden="true">
+                            {topic.emoji}
+                          </span>
+                          <strong>{topic.label}</strong>
+                          <small>{topic.desc}</small>
+                          <em>{count} 题</em>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="sentence-mode-actions">
+                  <button type="button" className="sentence-primary-btn" onClick={startSentenceMatch}>
+                    立即匹配
                   </button>
-                  <button type="button" onClick={() => setSentenceMode("invite")}>
+                  <button type="button" className="sentence-secondary-btn" onClick={() => setSentenceMode("invite")}>
                     邀请好友
                   </button>
                 </div>
@@ -7166,7 +7319,10 @@ export default function App() {
             {sentenceMode === "match" && (
               <div className="werewolf-mode-wrap">
                 <p>句子接龙匹配中（2人）</p>
-                <p className="feed-tip">{isSentenceMatching ? "正在为你匹配同频玩家..." : "点击按钮开始匹配"}</p>
+                <p className="feed-tip">
+                  当前题型：{getSentenceTopicLabel(sentenceTopic)} ·{" "}
+                  {isSentenceMatching ? "正在为你匹配同频玩家..." : "点击按钮开始匹配"}
+                </p>
                 <button type="button" onClick={startSentenceMatch} disabled={isSentenceMatching}>
                   {isSentenceMatching ? "匹配中..." : "开始匹配"}
                 </button>
@@ -7215,7 +7371,8 @@ export default function App() {
                   </div>
                 </div>
                 <p>
-                  第 {sentenceRoundIndex + 1} / {sentenceRounds.length} 题 · {sentenceOpponent?.name || "对方"}
+                  第 {sentenceRoundIndex + 1} / {sentenceRounds.length} 题 · {sentenceOpponent?.name || "对方"} ·{" "}
+                  {getSentenceTopicLabel(sentenceTopic)}
                 </p>
                 <p className="feed-tip">本题倒计时：{sentenceCountdown}s</p>
                 <div className="sentence-round-card">
@@ -7583,30 +7740,36 @@ export default function App() {
           onBack={closeTruthModal}
           sfxEnabled={gameSfxEnabled}
           onToggleSfx={toggleGameSfx}
-          showMenuHero={truthMode === "menu"}
+          showMenuHero={false}
+          headerLayout="stacked"
         >
-          <div className="game-page-panel truth-modal-card">
+          <div className="game-page-panel truth-modal-card game-menu-panel">
             {truthMode === "menu" && (
-              <div className="werewolf-mode-wrap">
-                <p>本局题目风格</p>
-                <div className="sentence-options">
-                  {TRUTH_DIFFICULTY_OPTIONS.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={truthDifficulty === item.id ? "active-choice" : ""}
-                      onClick={() => setTruthDifficulty(item.id)}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
+              <div className="game-menu">
+                <p className="game-menu-intro">
+                  双方掷骰决定谁来选题，点数低的一方作答，共 {TRUTH_ROUNDS_PER_GAME} 回合真心话挑战。
+                </p>
+                <div className="game-menu-section">
+                  <h3>选择题目风格</h3>
+                  <div className="game-option-grid">
+                    {TRUTH_DIFFICULTY_OPTIONS.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`game-option-card${truthDifficulty === item.id ? " active" : ""}`}
+                        onClick={() => setTruthDifficulty(item.id)}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="werewolf-menu">
-                  <button type="button" onClick={startTruthMatch}>
-                    匹配模式
+                <div className="game-menu-actions">
+                  <button type="button" className="game-primary-btn game-primary-btn--truth" onClick={startTruthMatch}>
+                    立即匹配
                   </button>
-                  <button type="button" onClick={openTruthInviteRoom}>
-                    邀请模式
+                  <button type="button" className="game-secondary-btn" onClick={openTruthInviteRoom}>
+                    邀请好友
                   </button>
                 </div>
               </div>

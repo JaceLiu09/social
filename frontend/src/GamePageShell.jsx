@@ -7,31 +7,64 @@ export default function GamePageShell({
   sfxEnabled,
   onToggleSfx,
   showMenuHero = false,
+  headerLayout = "inline",
   children
 }) {
+  const stacked = headerLayout === "stacked";
+
   return (
-    <main className={`game-page game-page--${variant}`}>
-      <header className="game-page-head">
-        <button type="button" className="game-page-back" onClick={onBack}>
-          ‹ 返回
-        </button>
-        <div className="game-page-title-block">
-          {Icon ? (
-            <div className="game-page-head-icon" aria-hidden="true">
-              <Icon />
+    <main className={`game-page game-page--${variant}${stacked ? " game-page--stacked-head" : ""}`}>
+      <header className={`game-page-head${stacked ? " game-page-head--stacked" : ""}`}>
+        {stacked ? (
+          <>
+            <div className="game-page-toolbar">
+              <button type="button" className="game-page-back" onClick={onBack}>
+                ‹ 返回
+              </button>
+              {onToggleSfx ? (
+                <button type="button" className="game-page-sfx" onClick={onToggleSfx}>
+                  音效{sfxEnabled ? "开" : "关"}
+                </button>
+              ) : (
+                <span className="game-page-sfx-spacer" />
+              )}
             </div>
-          ) : null}
-          <div>
-            <h1>{title}</h1>
-            {subtitle ? <p className="game-page-subtitle">{subtitle}</p> : null}
-          </div>
-        </div>
-        {onToggleSfx ? (
-          <button type="button" className="game-page-sfx" onClick={onToggleSfx}>
-            音效{sfxEnabled ? "开" : "关"}
-          </button>
+            <div className="game-page-title-block game-page-title-block--hero">
+              {Icon ? (
+                <div className="game-page-head-icon game-page-head-icon--large" aria-hidden="true">
+                  <Icon />
+                </div>
+              ) : null}
+              <div>
+                <h1>{title}</h1>
+                {subtitle ? <p className="game-page-subtitle">{subtitle}</p> : null}
+              </div>
+            </div>
+          </>
         ) : (
-          <span className="game-page-sfx-spacer" />
+          <>
+            <button type="button" className="game-page-back" onClick={onBack}>
+              ‹ 返回
+            </button>
+            <div className="game-page-title-block">
+              {Icon ? (
+                <div className="game-page-head-icon" aria-hidden="true">
+                  <Icon />
+                </div>
+              ) : null}
+              <div>
+                <h1>{title}</h1>
+                {subtitle ? <p className="game-page-subtitle">{subtitle}</p> : null}
+              </div>
+            </div>
+            {onToggleSfx ? (
+              <button type="button" className="game-page-sfx" onClick={onToggleSfx}>
+                音效{sfxEnabled ? "开" : "关"}
+              </button>
+            ) : (
+              <span className="game-page-sfx-spacer" />
+            )}
+          </>
         )}
       </header>
       {showMenuHero && Icon ? (
