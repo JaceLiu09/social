@@ -19,7 +19,16 @@ import {
 } from "./viewerLocation.js";
 import LegalDocumentPage from "./legal/LegalDocumentPage.jsx";
 import { PRIVACY_POLICY_DOC, USER_AGREEMENT_DOC } from "./legal/documents.js";
-import { PLANET_MATCH_GAMES } from "./planetGameCards.jsx";
+import GamePageShell from "./GamePageShell.jsx";
+import {
+  GAME_PATH_BY_ID,
+  GAME_ROUTES,
+  PLANET_MATCH_GAMES,
+  PlanetGameSentenceIcon,
+  PlanetGameTacitIcon,
+  PlanetGameTruthIcon,
+  PlanetGameWerewolfIcon
+} from "./planetGameCards.jsx";
 
 const ENV_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").trim();
 const DEFAULT_API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:4000`;
@@ -476,26 +485,28 @@ function formatBirthDateText(value) {
   return `${y}-${m}-${d}`;
 }
 
-/** manifest / 库里相对路径 /avatars/... → 本地包或 OSS 代理 */
+/** manifest / 库里相对路径 /avatars/... → 前端 public 静态资源（本地 Vite / 线上 nginx） */
 function resolveSeedAvatarUrl(raw) {
   const local = mapSeedAssetToLocal(raw);
   if (local) return local;
   const s = String(raw ?? "").trim();
-  if (!s.includes("/avatars/")) return null;
+  if (!s) return null;
+  if (s.startsWith("/avatars/")) return s.split("#")[0];
   try {
     if (/^https?:\/\//i.test(s) || s.startsWith("//")) {
       const u = new URL(s.startsWith("//") ? `https:${s}` : s);
-      const i = u.pathname.indexOf("/avatars/");
-      if (i === -1) return null;
-      const tail = u.pathname.slice(i + "/avatars/".length);
-      return `${API}/oss-media/fake-pictures/seed-avatars/${tail}${u.search || ""}`;
+      if (u.pathname.startsWith("/avatars/")) {
+        return `${u.pathname}${u.search || ""}`.split("#")[0];
+      }
+      const ossInPath = u.pathname.match(/seed-avatars\/(male|female)\/([^/?#]+)/i);
+      if (ossInPath) return `/avatars/${ossInPath[1]}/${ossInPath[2]}`;
     }
   } catch (_e) {
     return null;
   }
-  if (s.startsWith("/avatars/")) {
-    const tail = s.replace(/^\/avatars\//, "").split("#")[0];
-    return `${API}/oss-media/fake-pictures/seed-avatars/${tail}`;
+  if (s.startsWith("/oss-media/fake-pictures/seed-avatars/")) {
+    const tail = s.replace(/^\/oss-media\/fake-pictures\/seed-avatars\//, "").split("#")[0];
+    return tail ? `/avatars/${tail}` : null;
   }
   return null;
 }
@@ -534,6 +545,7 @@ function resolveAssetUrl(url) {
     /* 非绝对 URL */
   }
   if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+  if (raw.startsWith("/avatars/")) return raw.split("#")[0];
   if (raw.startsWith("/")) return `${API}${raw}`;
   return raw;
 }
@@ -866,10 +878,12 @@ function buildWerewolfRulePack(playerCount, modeLabel) {
 export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
+  const activeGameId = GAME_ROUTES[location.pathname] ?? null;
   const tab = ROUTE_TAB[location.pathname] ?? "planet";
 
   useLayoutEffect(() => {
     if (Object.prototype.hasOwnProperty.call(LEGAL_ROUTES, location.pathname)) return;
+    if (Object.prototype.hasOwnProperty.call(GAME_ROUTES, location.pathname)) return;
     if (!Object.prototype.hasOwnProperty.call(ROUTE_TAB, location.pathname)) {
       const search = location.search || "";
       navigate(`/planet${search}`, { replace: true });
@@ -957,7 +971,8 @@ export default function App() {
   const [loginHeroOverride, setLoginHeroOverride] = useState(null);
   const loginHeroDisplay = useMemo(() => {
     if (shouldPreferLocalSeedAvatars()) return getLocalLoginHeroAvatars(8);
-    return loginHeroOverride?.length ? loginHeroOverride : fallbackLoginHero;
+    const list = loginHeroOverride?.length ? loginHeroOverride : fallbackLoginHero;
+    return list.filter((item) => String(item.src || "").trim());
   }, [loginHeroOverride, fallbackLoginHero]);
   const [activeConversation, setActiveConversation] = useState(null);
   const [conversations, setConversations] = useState([]);
@@ -1070,7 +1085,6 @@ export default function App() {
   const [incomingRequests, setIncomingRequests] = useState([]);
   const [incomingRequestCount, setIncomingRequestCount] = useState(0);
   const [gameSfxEnabled, setGameSfxEnabled] = useState(true);
-  const [showWerewolfModal, setShowWerewolfModal] = useState(false);
   const [werewolfMode, setWerewolfMode] = useState("menu");
   const [werewolfRoomMembers, setWerewolfRoomMembers] = useState([]);
   const [werewolfRoomId, setWerewolfRoomId] = useState("");
@@ -1085,7 +1099,6 @@ export default function App() {
   const [werewolfSpeechCountdown, setWerewolfSpeechCountdown] = useState(0);
   const [werewolfIntroCountdown, setWerewolfIntroCountdown] = useState(0);
   const [werewolfFxText, setWerewolfFxText] = useState("");
-  const [showTacitModal, setShowTacitModal] = useState(false);
   const [tacitMode, setTacitMode] = useState("menu");
   const [tacitRoomId, setTacitRoomId] = useState("");
   const [tacitRoom, setTacitRoom] = useState(null);
@@ -1120,7 +1133,6 @@ export default function App() {
   const [planetMatchGalleryIndex, setPlanetMatchGalleryIndex] = useState(0);
   const [planetMatchRandomKm, setPlanetMatchRandomKm] = useState(null);
   const [planetMatchWaitHint, setPlanetMatchWaitHint] = useState("");
-  const [showSentenceModal, setShowSentenceModal] = useState(false);
   const [sentenceMode, setSentenceMode] = useState("menu");
   const [isSentenceMatching, setIsSentenceMatching] = useState(false);
   const [sentenceOpponent, setSentenceOpponent] = useState(null);
@@ -1134,7 +1146,6 @@ export default function App() {
   const [sentenceResolving, setSentenceResolving] = useState(false);
   const [sentenceIntroCountdown, setSentenceIntroCountdown] = useState(0);
   const [sentenceFxText, setSentenceFxText] = useState("");
-  const [showTruthModal, setShowTruthModal] = useState(false);
   const [truthMode, setTruthMode] = useState("menu");
   const [isTruthMatching, setIsTruthMatching] = useState(false);
   const [truthDifficulty, setTruthDifficulty] = useState("LIGHT");
@@ -1428,7 +1439,7 @@ export default function App() {
   }, [tacitCurrentQuestion?.id]);
 
   useEffect(() => {
-    if (!showTacitModal || tacitMode !== "playing" || !tacitRoomId) return undefined;
+    if (activeGameId !== "tacit" || tacitMode !== "playing" || !tacitRoomId) return undefined;
     const pullRoom = async () => {
       try {
         const res = await fetch(`${API}/tacit/rooms/${tacitRoomId}`, { headers: authHeaders });
@@ -1439,11 +1450,11 @@ export default function App() {
     pullRoom();
     const timer = window.setInterval(pullRoom, 1000);
     return () => clearInterval(timer);
-  }, [showTacitModal, tacitMode, tacitRoomId, authHeaders]);
+  }, [activeGameId, tacitMode, tacitRoomId, authHeaders]);
 
   useEffect(() => {
     // In normal gameplay we rely on socket push; polling is fallback only when game payload is missing.
-    if (!showWerewolfModal || werewolfMode !== "playing" || werewolfGame) return undefined;
+    if (activeGameId !== "werewolf" || werewolfMode !== "playing" || werewolfGame) return undefined;
     werewolfSyncRetryRef.current = 0;
     const pullRoom = async () => {
       try {
@@ -1480,10 +1491,10 @@ export default function App() {
     pullRoom();
     const timer = window.setInterval(pullRoom, 1500);
     return () => clearInterval(timer);
-  }, [showWerewolfModal, werewolfMode, werewolfRoomId, werewolfGame, authHeaders]);
+  }, [activeGameId, werewolfMode, werewolfRoomId, werewolfGame, authHeaders]);
 
   useEffect(() => {
-    if (!showWerewolfModal || werewolfMode !== "playing" || !werewolfGame || werewolfGame.phase !== "DAY_SPEECH" || werewolfGame.winner) {
+    if (activeGameId !== "werewolf" || werewolfMode !== "playing" || !werewolfGame || werewolfGame.phase !== "DAY_SPEECH" || werewolfGame.winner) {
       setWerewolfSpeechCountdown(0);
       return undefined;
     }
@@ -1498,7 +1509,7 @@ export default function App() {
     updateCountdown();
     const timer = window.setInterval(updateCountdown, 1000);
     return () => clearInterval(timer);
-  }, [showWerewolfModal, werewolfMode, werewolfGame]);
+  }, [activeGameId, werewolfMode, werewolfGame]);
 
   useEffect(() => {
     if (!tacitCurrentQuestion || tacitMode !== "playing" || tacitIntroCountdown > 0) return undefined;
@@ -1874,12 +1885,15 @@ export default function App() {
         const items = Array.isArray(data.items) ? data.items : [];
         if (!items.length) return;
         setLoginHeroOverride(
-          items.slice(0, 8).map((x, i) => ({
-            src: String(x.avatar || "").trim(),
-            gender: x.gender,
-            alt: "",
-            key: `login-sys-${i}-${String(x.nickname || "").slice(0, 12)}`
-          }))
+          items.slice(0, 8).map((x, i) => {
+            const src = resolveSeedAvatarUrl(x.avatar) || String(x.avatar || "").trim();
+            return {
+              src,
+              gender: x.gender,
+              alt: "",
+              key: `login-sys-${i}-${String(x.nickname || "").slice(0, 12)}`
+            };
+          })
         );
       })
       .catch(() => {});
@@ -1961,8 +1975,18 @@ export default function App() {
   }, [gameSfxEnabled]);
 
   useEffect(() => {
+    if (!user || !activeGameId) return;
+    if (activeGameId === "werewolf") {
+      loadWerewolfInvitations().catch(() => setWerewolfInvitations([]));
+    }
+    if (activeGameId === "tacit") {
+      loadTacitInvitations().catch(() => setTacitInvitations([]));
+    }
+  }, [user, activeGameId]);
+
+  useEffect(() => {
     if (
-      !showSentenceModal ||
+      activeGameId !== "sentence" ||
       sentenceMode !== "playing" ||
       sentenceIntroCountdown > 0 ||
       sentenceMyChoice ||
@@ -1982,7 +2006,7 @@ export default function App() {
     }, 1000);
     return () => clearTimeout(timer);
   }, [
-    showSentenceModal,
+    activeGameId,
     sentenceMode,
     sentenceCountdown,
     sentenceMyChoice,
@@ -1994,7 +2018,7 @@ export default function App() {
 
   useEffect(() => {
     if (
-      !showSentenceModal ||
+      activeGameId !== "sentence" ||
       sentenceMode !== "playing" ||
       sentenceIntroCountdown > 0 ||
       !sentenceMyChoice ||
@@ -2004,12 +2028,12 @@ export default function App() {
       return;
     }
     resolveSentenceRound(sentenceMyChoice);
-  }, [showSentenceModal, sentenceMode, sentenceMyChoice, sentencePeerChoice, sentenceResolving, sentenceIntroCountdown]);
+  }, [activeGameId, sentenceMode, sentenceMyChoice, sentencePeerChoice, sentenceResolving, sentenceIntroCountdown]);
 
   useEffect(() => {
-    if (!showWerewolfModal || werewolfMode !== "playing") return;
+    if (activeGameId !== "werewolf" || werewolfMode !== "playing") return;
     setWerewolfIntroCountdown(3);
-  }, [showWerewolfModal, werewolfMode, werewolfRoomId]);
+  }, [activeGameId, werewolfMode, werewolfRoomId]);
 
   useEffect(() => {
     if (werewolfIntroCountdown <= 0) return undefined;
@@ -2019,9 +2043,9 @@ export default function App() {
   }, [werewolfIntroCountdown]);
 
   useEffect(() => {
-    if (!showTacitModal || tacitMode !== "playing") return;
+    if (activeGameId !== "tacit" || tacitMode !== "playing") return;
     setTacitIntroCountdown(3);
-  }, [showTacitModal, tacitMode, tacitRoomId]);
+  }, [activeGameId, tacitMode, tacitRoomId]);
 
   useEffect(() => {
     if (tacitIntroCountdown <= 0) return undefined;
@@ -2031,9 +2055,9 @@ export default function App() {
   }, [tacitIntroCountdown]);
 
   useEffect(() => {
-    if (!showSentenceModal || sentenceMode !== "playing") return;
+    if (activeGameId !== "sentence" || sentenceMode !== "playing") return;
     setSentenceIntroCountdown(3);
-  }, [showSentenceModal, sentenceMode, sentenceOpponent?.id]);
+  }, [activeGameId, sentenceMode, sentenceOpponent?.id]);
 
   useEffect(() => {
     if (sentenceIntroCountdown <= 0) return undefined;
@@ -3625,7 +3649,7 @@ export default function App() {
     setWerewolfRoomId("");
     setWerewolfRulePack(null);
     setWerewolfMode("menu");
-    setShowWerewolfModal(true);
+    navigate(GAME_PATH_BY_ID.werewolf);
     loadWerewolfInvitations().catch(() => setWerewolfInvitations([]));
   };
 
@@ -3633,7 +3657,7 @@ export default function App() {
     setTacitMode("menu");
     setTacitRoom(null);
     setTacitRoomId("");
-    setShowTacitModal(true);
+    navigate(GAME_PATH_BY_ID.tacit);
     loadTacitInvitations().catch(() => setTacitInvitations([]));
   };
 
@@ -3661,7 +3685,7 @@ export default function App() {
 
   const openSentenceMenu = () => {
     resetSentenceState();
-    setShowSentenceModal(true);
+    navigate(GAME_PATH_BY_ID.sentence);
   };
 
   const startSentenceGame = (opponent) => {
@@ -3753,8 +3777,8 @@ export default function App() {
   };
 
   const closeSentenceModal = () => {
-    setShowSentenceModal(false);
     resetSentenceState();
+    navigate("/planet");
   };
 
   const playGameSfx = (type) => {
@@ -3909,7 +3933,7 @@ export default function App() {
 
   const openTruthMenu = () => {
     resetTruthState();
-    setShowTruthModal(true);
+    navigate(GAME_PATH_BY_ID.truth);
   };
 
   const openTruthInviteRoom = () => {
@@ -4188,15 +4212,15 @@ export default function App() {
       avatar: truthOpponent.avatar || "",
       gateContext: "truth",
       onBeforeNavigate: () => {
-        setShowTruthModal(false);
         resetTruthState();
+        navigate("/planet");
       }
     });
   };
 
   const closeTruthModal = () => {
-    setShowTruthModal(false);
     resetTruthState();
+    navigate("/planet");
   };
 
   const applyTacitRoom = (room) => {
@@ -4489,7 +4513,6 @@ export default function App() {
   };
 
   const resetTacitSessionState = () => {
-    setShowTacitModal(false);
     setTacitMode("menu");
     setTacitRoom(null);
     setTacitRoomId("");
@@ -4507,6 +4530,7 @@ export default function App() {
     }
     await resetTacitSessionRemote();
     resetTacitSessionState();
+    navigate("/planet");
   };
 
   const enterWerewolfMatch = () => {
@@ -4697,7 +4721,6 @@ export default function App() {
 
   const closeWerewolfModal = async () => {
     await resetWerewolfSessionRemote();
-    setShowWerewolfModal(false);
     setShowWerewolfInvitePanel(false);
     setWerewolfInviteCooldowns({});
     setIsWerewolfMatching(false);
@@ -4711,6 +4734,7 @@ export default function App() {
       clearInterval(werewolfPollingRef.current);
       werewolfPollingRef.current = null;
     }
+    navigate("/planet");
   };
 
   const enterWerewolfInvitationRoom = async (roomId) => {
@@ -5297,7 +5321,7 @@ export default function App() {
 
   return (
     <div
-      className={`main-app ${tab === "chat" && activeConversation ? "chat-detail-mode" : ""} ${tab === "planet-match" ? "planet-match-route" : ""} ${tab === "planet" ? "tab-planet" : ""} ${tab === "square" ? "tab-square" : ""} ${tab === "me" ? "tab-me" : ""}`}
+      className={`main-app ${tab === "chat" && activeConversation ? "chat-detail-mode" : ""} ${tab === "planet-match" ? "planet-match-route" : ""} ${activeGameId ? "game-route-mode" : ""} ${tab === "planet" ? "tab-planet" : ""} ${tab === "square" ? "tab-square" : ""} ${tab === "me" ? "tab-me" : ""}`}
     >
       {toastMessage && (
         <div className="app-toast" role="alert">
@@ -5553,6 +5577,7 @@ export default function App() {
                   type="button"
                   className={`game-card game-card--${game.variant}`}
                   onClick={onOpen}
+                  aria-label={`进入${game.title}`}
                 >
                   <div className="game-card-icon-wrap">
                     {game.badge ? <span className="game-card-badge">{game.badge}</span> : null}
@@ -5562,7 +5587,6 @@ export default function App() {
                   </div>
                   <h4>{game.title}</h4>
                   <p>{game.players}</p>
-                  <span className="game-card-enter">进入</span>
                 </button>
               );
             })}
@@ -6620,15 +6644,18 @@ export default function App() {
         </div>
       )}
 
-      {showWerewolfModal && (
-        <div className="profile-setup-overlay" onClick={closeWerewolfModal}>
-          <div className="profile-setup-card werewolf-card" onClick={(e) => e.stopPropagation()}>
-            <div className="game-modal-head">
-              <h3>狼人杀</h3>
-              <button type="button" className="sound-toggle-btn" onClick={toggleGameSfx}>
-                音效{gameSfxEnabled ? "开" : "关"}
-              </button>
-            </div>
+      {activeGameId === "werewolf" && (
+        <GamePageShell
+          variant="werewolf"
+          title="狼人杀"
+          subtitle="经典6人局，斗智斗勇找出狼人"
+          Icon={PlanetGameWerewolfIcon}
+          onBack={closeWerewolfModal}
+          sfxEnabled={gameSfxEnabled}
+          onToggleSfx={toggleGameSfx}
+          showMenuHero={werewolfMode === "menu"}
+        >
+          <div className="game-page-panel werewolf-card">
             {werewolfMode === "menu" && (
               <div className="werewolf-mode-wrap">
                 <div className="werewolf-menu">
@@ -6880,22 +6907,22 @@ export default function App() {
                 </button>
               </div>
             )}
-            <button type="button" onClick={closeWerewolfModal}>
-              关闭
-            </button>
           </div>
-        </div>
+        </GamePageShell>
       )}
 
-      {showTacitModal && (
-        <div className="profile-setup-overlay" onClick={closeTacitModal}>
-          <div className="profile-setup-card werewolf-card tacit-card" onClick={(e) => e.stopPropagation()}>
-            <div className="game-modal-head">
-              <h3>二选一默契挑战</h3>
-              <button type="button" className="sound-toggle-btn" onClick={toggleGameSfx}>
-                音效{gameSfxEnabled ? "开" : "关"}
-              </button>
-            </div>
+      {activeGameId === "tacit" && (
+        <GamePageShell
+          variant="tacit"
+          title="二选一默契挑战"
+          subtitle="10道二选一，看看默契值有多高"
+          Icon={PlanetGameTacitIcon}
+          onBack={closeTacitModal}
+          sfxEnabled={gameSfxEnabled}
+          onToggleSfx={toggleGameSfx}
+          showMenuHero={tacitMode === "menu"}
+        >
+          <div className="game-page-panel werewolf-card tacit-card">
             {tacitMode === "menu" && (
               <div className="werewolf-mode-wrap">
                 <p>每局 10 题，同一个答案 +10 分，用来测你们的默契值。</p>
@@ -7107,22 +7134,22 @@ export default function App() {
                 </button>
               </div>
             )}
-            <button type="button" onClick={closeTacitModal}>
-              关闭
-            </button>
           </div>
-        </div>
+        </GamePageShell>
       )}
 
-      {showSentenceModal && (
-        <div className="profile-setup-overlay" onClick={closeSentenceModal}>
-          <div className="profile-setup-card werewolf-card tacit-card" onClick={(e) => e.stopPropagation()}>
-            <div className="game-modal-head">
-              <h3>猜句子接龙</h3>
-              <button type="button" className="sound-toggle-btn" onClick={toggleGameSfx}>
-                音效{gameSfxEnabled ? "开" : "关"}
-              </button>
-            </div>
+      {activeGameId === "sentence" && (
+        <GamePageShell
+          variant="sentence"
+          title="猜句子接龙"
+          subtitle="同频选句，测试默契接龙"
+          Icon={PlanetGameSentenceIcon}
+          onBack={closeSentenceModal}
+          sfxEnabled={gameSfxEnabled}
+          onToggleSfx={toggleGameSfx}
+          showMenuHero={sentenceMode === "menu"}
+        >
+          <div className="game-page-panel werewolf-card tacit-card">
             {sentenceMode === "menu" && (
               <div className="werewolf-mode-wrap">
                 <p>每局 5 题，双方从同一句开头里选下一句，选中同一个选项即加分。</p>
@@ -7237,11 +7264,8 @@ export default function App() {
                 </div>
               </div>
             )}
-            <button type="button" onClick={closeSentenceModal}>
-              关闭
-            </button>
           </div>
-        </div>
+        </GamePageShell>
       )}
       {showPeerProfileModal && (
         <div className="peer-home-overlay">
@@ -7550,15 +7574,18 @@ export default function App() {
         </div>
       )}
 
-      {showTruthModal && (
-        <div className="profile-setup-overlay" onClick={closeTruthModal}>
-          <div className="profile-setup-card truth-modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="game-modal-head">
-              <h3>真心话挑战</h3>
-              <button type="button" className="sound-toggle-btn" onClick={toggleGameSfx}>
-                音效{gameSfxEnabled ? "开" : "关"}
-              </button>
-            </div>
+      {activeGameId === "truth" && (
+        <GamePageShell
+          variant="truth"
+          title="真心话挑战"
+          subtitle="掷骰选题，勇敢说出真心话"
+          Icon={PlanetGameTruthIcon}
+          onBack={closeTruthModal}
+          sfxEnabled={gameSfxEnabled}
+          onToggleSfx={toggleGameSfx}
+          showMenuHero={truthMode === "menu"}
+        >
+          <div className="game-page-panel truth-modal-card">
             {truthMode === "menu" && (
               <div className="werewolf-mode-wrap">
                 <p>本局题目风格</p>
@@ -7753,11 +7780,8 @@ export default function App() {
                 </button>
               </div>
             )}
-            <button type="button" onClick={closeTruthModal}>
-              关闭
-            </button>
           </div>
-        </div>
+        </GamePageShell>
       )}
 
       {tab === "planet-match" && (

@@ -68,6 +68,20 @@ export function PlanetGameTacitIcon() {
   );
 }
 
+export const GAME_ROUTES = {
+  "/planet/games/sentence": "sentence",
+  "/planet/games/werewolf": "werewolf",
+  "/planet/games/truth": "truth",
+  "/planet/games/tacit": "tacit"
+};
+
+export const GAME_PATH_BY_ID = {
+  sentence: "/planet/games/sentence",
+  werewolf: "/planet/games/werewolf",
+  truth: "/planet/games/truth",
+  tacit: "/planet/games/tacit"
+};
+
 export const PLANET_MATCH_GAMES = [
   {
     id: "sentence",
