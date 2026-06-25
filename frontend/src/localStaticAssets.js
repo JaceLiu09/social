@@ -70,6 +70,11 @@ export function getLocalSystemRobotProfiles(viewerGender = "MALE", count = 12) {
   return pool.slice(0, count).map((src, index) => buildProfileFromAvatar(src, index, preferredGender));
 }
 
+/** Web 开发或接口无数据时，用内置头像做星球推荐兜底 */
+export function getSystemRobotProfilesFallback(viewerGender = "MALE", count = 12) {
+  return getLocalSystemRobotProfiles(viewerGender, count);
+}
+
 function collectLocalDisplayUrls(viewerGender = "MALE") {
   const urls = new Set();
   for (const item of getLocalLoginHeroAvatars(8)) urls.add(item.src);

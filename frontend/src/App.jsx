@@ -8,6 +8,7 @@ import avatarManifest from "./avatarManifest.json";
 import {
   getLocalLoginHeroAvatars,
   getLocalSystemRobotProfiles,
+  getSystemRobotProfilesFallback,
   mapSeedAssetToLocal,
   preloadLocalDisplayAssets,
   shouldPreferLocalSeedAvatars
@@ -20,20 +21,45 @@ import {
 import LegalDocumentPage from "./legal/LegalDocumentPage.jsx";
 import { PRIVACY_POLICY_DOC, USER_AGREEMENT_DOC } from "./legal/documents.js";
 import GamePageShell from "./GamePageShell.jsx";
+import GameMatchOverlay from "./GameMatchOverlay.jsx";
+import {
+  COMMON_GROUND_MAX_PICK,
+  COMMON_GROUND_POINTS_PER_MATCH,
+  COMMON_GROUND_REVEAL_MS,
+  COMMON_GROUND_ROUNDS,
+  COMMON_GROUND_TOPIC_META,
+  countOverlap,
+  createCommonGroundRounds,
+  formatCommonGroundRoundLog,
+  getCommonGroundTopicLabel,
+  getCommonGroundTopicMeta,
+  scoreCommonGroundRound,
+  simulateCommonGroundBotPicks
+} from "./commonGroundGame.js";
+import {
+  TRUTH_CHALLENGE_BANK,
+  TRUTH_STYLE_OPTIONS,
+  TRUTH_STYLE_POOL,
+  getTruthStyleLabel
+} from "./truthQuestionBank.js";
+import { TACIT_ROUNDS_PER_GAME, TACIT_TOPIC_META, getTacitTopicLabel } from "./tacitGame.js";
+import { SENTENCE_CHAIN_BANK, SENTENCE_TOPIC_META } from "./sentenceQuestionBank.js";
 import {
   GAME_PATH_BY_ID,
   GAME_ROUTES,
   PLANET_MATCH_GAMES,
+  PlanetGameCommonGroundIcon,
   PlanetGameSentenceIcon,
   PlanetGameTacitIcon,
-  PlanetGameTruthIcon,
-  PlanetGameWerewolfIcon
+  PlanetGameTruthIcon
 } from "./planetGameCards.jsx";
 
 const ENV_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").trim();
 const DEFAULT_API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:4000`;
 const API = (ENV_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/$/, "");
 const AUTH_STORAGE_KEY = "social_auth_v1";
+const GAME_MATCH_COUNTDOWN_START = 3;
+const GAME_MATCH_BOT_DELAY_MS = 3200;
 
 function loadStoredAuth() {
   try {
@@ -160,6 +186,13 @@ const MALE_SYMBOL_AVATAR = `data:image/svg+xml;utf8,${encodeURIComponent(
     <text x="128" y="150" text-anchor="middle" font-size="120" font-family="Arial, Helvetica, sans-serif" fill="#fff">♂</text>
   </svg>`
 )}`;
+const FEMALE_SYMBOL_AVATAR = `data:image/svg+xml;utf8,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ff8eb8"/><stop offset="1" stop-color="#ff4f86"/></linearGradient></defs>
+    <rect width="256" height="256" rx="128" fill="url(#g)"/>
+    <text x="128" y="150" text-anchor="middle" font-size="120" font-family="Arial, Helvetica, sans-serif" fill="#fff">♀</text>
+  </svg>`
+)}`;
 const settingItems = [
   "账户与安全",
   "消息通知",
@@ -242,116 +275,6 @@ function createHeroAvatars() {
   );
 }
 
-const SENTENCE_TOPIC_META = [
-  { id: "date", label: "约会日常", desc: "见面相处、心动瞬间", emoji: "💕" },
-  { id: "travel", label: "旅行出游", desc: "路线美食、同行默契", emoji: "✈️" },
-  { id: "emotion", label: "情感心声", desc: "信任陪伴、关系升温", emoji: "💬" },
-  { id: "ice", label: "轻松破冰", desc: "冷场救星、搞怪接龙", emoji: "😄" }
-];
-
-const SENTENCE_CHAIN_BANK = [
-  {
-    category: "date",
-    stem: "周末突然下雨，我会先",
-    options: ["约你去咖啡馆躲雨", "在家看一部老电影", "去楼下便利店买热饮"]
-  },
-  {
-    category: "date",
-    stem: "第一次见面最加分的是",
-    options: ["说话真诚不端着", "穿着干净有细节", "会认真听我讲话"]
-  },
-  {
-    category: "date",
-    stem: "如果对方迟到十分钟，我会",
-    options: ["先找个地方坐着等", "发消息确认是否堵车", "顺便买两杯饮料"]
-  },
-  {
-    category: "date",
-    stem: "最理想的约会结尾是",
-    options: ["散步到地铁口再告别", "互发今天最喜欢的瞬间", "约好下次见面的时间"]
-  },
-  {
-    category: "date",
-    stem: "选餐厅时我更看重",
-    options: ["环境安静能聊天", "菜品好吃不踩雷", "离你我都不太远"]
-  },
-  {
-    category: "travel",
-    stem: "一起旅行时我更在意",
-    options: ["行程松弛不赶路", "拍照好看有仪式感", "吃到本地特色小店"]
-  },
-  {
-    category: "travel",
-    stem: "出门旅行前我会先",
-    options: ["列一份轻松行程单", "查好天气和穿搭", "约好你想去的地方"]
-  },
-  {
-    category: "travel",
-    stem: "旅途中迷路了，我会",
-    options: ["一起开导航慢慢找", "先买杯饮料冷静下", "干脆随缘探索新路"]
-  },
-  {
-    category: "travel",
-    stem: "住酒店我更偏好",
-    options: ["交通方便出行省心", "窗景好适合发呆", "周边好吃的多"]
-  },
-  {
-    category: "travel",
-    stem: "旅行合照时我通常会",
-    options: ["自然抓拍更有感觉", "找地标认真合影", "让你来选角度"]
-  },
-  {
-    category: "emotion",
-    stem: "关系升温最快的方式是",
-    options: ["稳定且高质量联系", "一起完成一件小事", "情绪低落时彼此接住"]
-  },
-  {
-    category: "emotion",
-    stem: "当你心情不好时，我希望",
-    options: ["先安静陪在你身边", "听你说完再给建议", "带你吃点好吃的"]
-  },
-  {
-    category: "emotion",
-    stem: "让我觉得被在乎的瞬间是",
-    options: ["记得我说过的小事", "主动分享日常碎片", "难过时第一时间出现"]
-  },
-  {
-    category: "emotion",
-    stem: "吵架之后我更愿意",
-    options: ["冷静后把话说清楚", "先抱抱再聊原因", "写长消息表达想法"]
-  },
-  {
-    category: "emotion",
-    stem: "长久相处最重要的是",
-    options: ["彼此坦诚不隐瞒", "尊重对方的节奏", "愿意一起解决问题"]
-  },
-  {
-    category: "ice",
-    stem: "晚上聊天冷场时，我会",
-    options: ["丢一个有趣的问题", "分享今天的小糗事", "发一张正在听的歌单"]
-  },
-  {
-    category: "ice",
-    stem: "刚认识时我最常聊",
-    options: ["最近在看什么剧", "周末一般怎么过", "有什么奇怪的小爱好"]
-  },
-  {
-    category: "ice",
-    stem: "如果只能问一个问题，我会问",
-    options: ["你最开心的童年记忆", "最近让你笑的事", "你理想的周末早晨"]
-  },
-  {
-    category: "ice",
-    stem: "游戏开局我会先",
-    options: ["来个轻松热身题", "直接上难度试试", "让你先出题我接"]
-  },
-  {
-    category: "ice",
-    stem: "接龙答错时我通常会",
-    options: ["自嘲一下继续玩", "要求再来一题", "吐槽你出题太刁钻"]
-  }
-];
-
 function createSentenceChainRounds(count = 5, category = "date") {
   const pool = SENTENCE_CHAIN_BANK.filter((item) => item.category === category);
   const source = pool.length >= count ? pool : SENTENCE_CHAIN_BANK;
@@ -365,6 +288,14 @@ function createSentenceChainRounds(count = 5, category = "date") {
 
 function getSentenceTopicLabel(categoryId) {
   return SENTENCE_TOPIC_META.find((item) => item.id === categoryId)?.label || "综合题库";
+}
+
+function getSentenceTopicMeta(categoryId) {
+  return SENTENCE_TOPIC_META.find((item) => item.id === categoryId) || SENTENCE_TOPIC_META[0];
+}
+
+function getGenderFallbackAvatar(gender) {
+  return gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
 }
 
 const TRUTH_ROUNDS_PER_GAME = 5;
@@ -428,12 +359,6 @@ function buildMembershipRenewPreview(plan, user, projectedExpireAt = null) {
   }
   return `开通后会员有效期至 ${nextText}`;
 }
-const TRUTH_DIFFICULTY_OPTIONS = [
-  { id: "LIGHT", label: "轻松" },
-  { id: "HEART", label: "走心" },
-  { id: "DEEP", label: "深度" },
-  { id: "MIXED", label: "混合" }
-];
 
 function pickRandomItem(list, fallback = null) {
   if (!Array.isArray(list) || !list.length) return fallback;
@@ -461,94 +386,6 @@ function playDiceTone(audioContext, frequency, durationSec = 0.08, gainValue = 0
   osc.start(now);
   osc.stop(now + durationSec);
 }
-
-function createTruthChallengeBank() {
-  const scenes = [
-    "第一次见面",
-    "深夜聊天",
-    "异地相处",
-    "争吵后和好",
-    "周末约会",
-    "节日仪式感",
-    "朋友圈互动",
-    "见家长前",
-    "暧昧升温期",
-    "认真交往后",
-    "长期关系里",
-    "压力很大时",
-    "低落情绪里",
-    "被误会之后",
-    "被夸赞之后",
-    "冷战阶段",
-    "想确认关系时",
-    "准备告白前",
-    "想复合的时候",
-    "想放弃的时候"
-  ];
-  const focuses = [
-    "最在意对方哪一点",
-    "最想被理解的部分",
-    "最怕被踩中的底线",
-    "最容易吃醋的瞬间",
-    "最想一起完成的事",
-    "最想立刻表达的话",
-    "最不愿妥协的原则",
-    "最期待得到的回应",
-    "最想改变的习惯",
-    "最想守住的承诺"
-  ];
-  const tonesByDifficulty = {
-    LIGHT: ["幽默", "轻松", "自在"],
-    HEART: ["温柔", "走心", "真诚"],
-    DEEP: ["深聊", "理性", "直面"]
-  };
-  const answerOpenings = [
-    "我会坦白说，",
-    "如果认真回答，",
-    "我内心最真实的是，",
-    "站在现在的我看，",
-    "我想先诚实一点，"
-  ];
-  const answerCores = [
-    "希望彼此有稳定的安全感",
-    "希望被看见情绪而不被否定",
-    "希望在冲突里也能被尊重",
-    "希望关系里有持续的行动",
-    "希望两个人都愿意成长",
-    "希望交流是坦诚且温和的",
-    "希望日常陪伴比口号更真实",
-    "希望在关键时刻互相托底",
-    "希望被坚定选择而不是备选",
-    "希望彼此能把话说开"
-  ];
-  const answerEndings = [
-    "这会让我更有安全感。",
-    "这样我才敢继续投入。",
-    "这比任何甜言蜜语都重要。",
-    "我会因此更确定这段关系。",
-    "这就是我最看重的答案。"
-  ];
-  const bank = [];
-  TRUTH_DIFFICULTY_OPTIONS.forEach((difficulty) => {
-    scenes.forEach((scene) => {
-      focuses.forEach((focus) => {
-        (tonesByDifficulty[difficulty.id] || ["真诚"]).forEach((tone) => {
-          const opening = pickRandomItem(answerOpenings, "我会坦白说，");
-          const core = pickRandomItem(answerCores, "希望彼此真诚沟通");
-          const ending = pickRandomItem(answerEndings, "这对我很重要。");
-          bank.push({
-            difficulty: difficulty.id,
-            question: `【${difficulty.label}/${tone}】在${scene}里，你${focus}？`,
-            answer: `${opening}${core}，${ending}`
-          });
-        });
-      });
-    });
-  });
-  return bank.slice(0, 1000);
-}
-
-const TRUTH_CHALLENGE_BANK = createTruthChallengeBank();
 
 function formatChatTime(value) {
   if (!value) return "";
@@ -927,56 +764,6 @@ const PROFILE_EDIT_SLOT_LABELS = [
   "最美好的纪念"
 ];
 
-const WEREWOLF_ROLE_CONFIG = {
-  6: { wolf: 2, seer: 1, witch: 0, hunter: 1, idiot: 0, villager: 2 },
-  7: { wolf: 2, seer: 1, witch: 1, hunter: 1, idiot: 0, villager: 2 },
-  8: { wolf: 3, seer: 1, witch: 1, hunter: 1, idiot: 0, villager: 2 },
-  9: { wolf: 3, seer: 1, witch: 1, hunter: 1, idiot: 0, villager: 3 },
-  10: { wolf: 3, seer: 1, witch: 1, hunter: 1, idiot: 0, villager: 4 },
-  11: { wolf: 4, seer: 1, witch: 1, hunter: 1, idiot: 0, villager: 4 },
-  12: { wolf: 4, seer: 1, witch: 1, hunter: 1, idiot: 1, villager: 4 }
-};
-
-const WEREWOLF_MENU_ROLE_LABELS = [
-  { key: "wolf", label: "狼人" },
-  { key: "seer", label: "预言家" },
-  { key: "witch", label: "女巫" },
-  { key: "hunter", label: "猎人" },
-  { key: "idiot", label: "白痴" },
-  { key: "villager", label: "平民" }
-];
-
-const WEREWOLF_MENU_FLOW = [
-  "黑夜：狼人击杀，预言家查验，女巫可选救/毒",
-  "天亮：公布死讯，依次发言讨论线索",
-  "投票放逐出局玩家，狼人可白天自爆跳阶段",
-  "好人找出所有狼人，或狼人屠城即获胜"
-];
-
-function buildWerewolfRulePack(playerCount, modeLabel) {
-  const count = Math.max(6, Math.min(12, Number(playerCount) || 6));
-  const role = WEREWOLF_ROLE_CONFIG[count] || WEREWOLF_ROLE_CONFIG[6];
-  const baseRule = count <= 7
-    ? "屠城（杀光好人 / 狼人），无警长"
-    : "屠边（杀光神 / 民），有警长（1.5票）";
-  return {
-    count,
-    modeLabel,
-    role,
-    baseRule,
-    script: [
-      "开局：游戏开始，请确认身份，全部闭眼。",
-      "黑夜：狼人睁眼选击杀；预言家查验；女巫看死讯后可救/毒。",
-      "天亮：公布死讯（首夜死有遗言、白天被推有遗言，其余无）。",
-      count >= 8 ? "警长竞选：上警发言，未上警投票，警长1.5票可移交警徽。" : "本局无警长环节。",
-      "白天发言：从指定号开始顺时针发言，不许插话。",
-      "投票放逐：统计票型，出局玩家遗言。",
-      "狼人可自爆：白天立刻结束，直接进入天黑。",
-      "结束判定：好人胜利 / 狼人胜利。"
-    ]
-  };
-}
-
 export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -1006,6 +793,7 @@ export default function App() {
   const [systemRobotProfiles, setSystemRobotProfiles] = useState(() =>
     shouldPreferLocalSeedAvatars() ? getLocalSystemRobotProfiles("MALE", 12) : []
   );
+  const [systemRobotsReady, setSystemRobotsReady] = useState(() => shouldPreferLocalSeedAvatars());
   const [userRobotProfiles, setUserRobotProfiles] = useState([]);
   const [heroRotationIndex, setHeroRotationIndex] = useState(0);
   const [posts, setPosts] = useState([]);
@@ -1187,21 +975,24 @@ export default function App() {
   const [incomingRequests, setIncomingRequests] = useState([]);
   const [incomingRequestCount, setIncomingRequestCount] = useState(0);
   const [gameSfxEnabled, setGameSfxEnabled] = useState(true);
-  const [werewolfMode, setWerewolfMode] = useState("menu");
-  const [werewolfRoomMembers, setWerewolfRoomMembers] = useState([]);
-  const [werewolfRoomId, setWerewolfRoomId] = useState("");
-  const [werewolfRulePack, setWerewolfRulePack] = useState(null);
-  const [werewolfInvitations, setWerewolfInvitations] = useState([]);
-  const [showWerewolfInvitePanel, setShowWerewolfInvitePanel] = useState(false);
-  const [werewolfInviteCooldowns, setWerewolfInviteCooldowns] = useState({});
-  const [isWerewolfMatching, setIsWerewolfMatching] = useState(false);
-  const [werewolfGame, setWerewolfGame] = useState(null);
-  const [werewolfSpeechDraft, setWerewolfSpeechDraft] = useState("");
-  const [werewolfActionLoading, setWerewolfActionLoading] = useState(false);
-  const [werewolfSpeechCountdown, setWerewolfSpeechCountdown] = useState(0);
-  const [werewolfIntroCountdown, setWerewolfIntroCountdown] = useState(0);
-  const [werewolfFxText, setWerewolfFxText] = useState("");
+  const [commonGroundMode, setCommonGroundMode] = useState("menu");
+  const [commonGroundTopic, setCommonGroundTopic] = useState("love");
+  const [isCommonGroundMatching, setIsCommonGroundMatching] = useState(false);
+  const [commonGroundOpponent, setCommonGroundOpponent] = useState(null);
+  const [commonGroundRounds, setCommonGroundRounds] = useState([]);
+  const [commonGroundRoundIndex, setCommonGroundRoundIndex] = useState(0);
+  const [commonGroundDraftPicks, setCommonGroundDraftPicks] = useState([]);
+  const [commonGroundMyPicks, setCommonGroundMyPicks] = useState([]);
+  const [commonGroundPeerPicks, setCommonGroundPeerPicks] = useState([]);
+  const [commonGroundCountdown, setCommonGroundCountdown] = useState(25);
+  const [commonGroundScore, setCommonGroundScore] = useState(0);
+  const [commonGroundLogs, setCommonGroundLogs] = useState([]);
+  const [commonGroundResolving, setCommonGroundResolving] = useState(false);
+  const [commonGroundIntroCountdown, setCommonGroundIntroCountdown] = useState(0);
+  const [commonGroundFxText, setCommonGroundFxText] = useState("");
+  const [gameMatchCountdown, setGameMatchCountdown] = useState(0);
   const [tacitMode, setTacitMode] = useState("menu");
+  const [tacitTopic, setTacitTopic] = useState("social");
   const [tacitRoomId, setTacitRoomId] = useState("");
   const [tacitRoom, setTacitRoom] = useState(null);
   const [tacitInvitations, setTacitInvitations] = useState([]);
@@ -1229,7 +1020,8 @@ export default function App() {
     isFriend: false,
     mutualFollow: false
   });
-  const [peerProfileFollowBusy, setPeerProfileFollowBusy] = useState(false);
+  const [peerProfileAddContactBusy, setPeerProfileAddContactBusy] = useState(false);
+  const [peerProfileGateContext, setPeerProfileGateContext] = useState("planet");
   const [planetMatchLoading, setPlanetMatchLoading] = useState(false);
   const [planetMatchProfile, setPlanetMatchProfile] = useState(null);
   const [planetMatchGalleryIndex, setPlanetMatchGalleryIndex] = useState(0);
@@ -1251,18 +1043,20 @@ export default function App() {
   const [sentenceFxText, setSentenceFxText] = useState("");
   const [truthMode, setTruthMode] = useState("menu");
   const [isTruthMatching, setIsTruthMatching] = useState(false);
-  const [truthDifficulty, setTruthDifficulty] = useState("LIGHT");
+  const [truthDifficulty, setTruthDifficulty] = useState("FLIRT");
   const [truthOpponent, setTruthOpponent] = useState(null);
   const [truthDiceResult, setTruthDiceResult] = useState(null);
   const [truthRoundIndex, setTruthRoundIndex] = useState(0);
-  const [truthAnswerDraft, setTruthAnswerDraft] = useState("");
+  const [truthAnswerChoice, setTruthAnswerChoice] = useState("");
+  const [truthPeerAnswerChoice, setTruthPeerAnswerChoice] = useState("");
+  const [truthCurrentAnswerOptions, setTruthCurrentAnswerOptions] = useState([]);
   const [truthAwaitingMyAnswer, setTruthAwaitingMyAnswer] = useState(false);
   const [truthPhase, setTruthPhase] = useState("idle");
   const [truthPhaseCountdown, setTruthPhaseCountdown] = useState(0);
   const [truthQuestionOptions, setTruthQuestionOptions] = useState([]);
   const [truthPickedQuestionIndex, setTruthPickedQuestionIndex] = useState(-1);
   const [truthCurrentQuestion, setTruthCurrentQuestion] = useState("");
-  const [truthCurrentDifficultyLabel, setTruthCurrentDifficultyLabel] = useState("轻松");
+  const [truthCurrentDifficultyLabel, setTruthCurrentDifficultyLabel] = useState("暧昧试探");
   const [truthRollingDice, setTruthRollingDice] = useState({ me: 1, peer: 1 });
   const [truthIsRolling, setTruthIsRolling] = useState(false);
   const [truthDiceSettling, setTruthDiceSettling] = useState(false);
@@ -1347,16 +1141,18 @@ export default function App() {
   const UPLOAD_TIMEOUT_MS = 20000;
   /** 发动态多图：单张上传含压缩+OSS 弱网易超过默认 20s */
   const UPLOAD_TIMEOUT_MOMENT_IMAGE_MS = 90000;
-  const werewolfPollingRef = useRef(null);
-  const werewolfSyncRetryRef = useRef(0);
   const tacitPollingRef = useRef(null);
   const tacitAutoSubmitRef = useRef("");
   const sentenceMatchTimerRef = useRef(null);
   const sentenceResolveTimerRef = useRef(null);
+  const sentenceResolveLockRef = useRef(false);
+  const commonGroundMatchTimerRef = useRef(null);
+  const commonGroundResolveTimerRef = useRef(null);
   const truthMatchTimerRef = useRef(null);
   const truthRoundTimerRef = useRef(null);
   const truthDiceAnimRef = useRef(null);
   const truthRunRoundRef = useRef(null);
+  const truthScheduleNextRef = useRef(null);
   const truthDiceSettleTimerRef = useRef(null);
   const truthPhaseTimerRef = useRef(null);
   const truthCountdownTimerRef = useRef(null);
@@ -1369,6 +1165,7 @@ export default function App() {
   const planetMatchDismissedRef = useRef(false);
   const planetMatchGalleryRef = useRef(null);
   const truthInviteTimersRef = useRef([]);
+  const chatReturnPathRef = useRef("");
 
   const profilePhotos = useMemo(() => {
     if (!user?.photoUrls) return [];
@@ -1411,21 +1208,9 @@ export default function App() {
     [chatKeyword, contacts]
   );
   const addFriendCandidates = useMemo(() => addFriendResults, [addFriendResults]);
-  const invitedMemberCount = useMemo(
-    () => Math.max(0, werewolfRoomMembers.filter((item) => item.id !== user?.id).length),
-    [werewolfRoomMembers, user]
-  );
-  const acceptedMemberCount = useMemo(
-    () => werewolfRoomMembers.filter((item) => item.accepted).length,
-    [werewolfRoomMembers]
-  );
   const totalUnreadCount = useMemo(
     () => conversations.reduce((sum, item) => sum + Number(item.unread || 0), 0),
     [conversations]
-  );
-  const currentWerewolfMember = useMemo(
-    () => werewolfRoomMembers.find((item) => item.id === user?.id) || null,
-    [werewolfRoomMembers, user]
   );
   const tacitAcceptedMembers = useMemo(
     () => (tacitRoom?.members || []).filter((m) => m.status === "HOST" || m.status === "ACCEPTED"),
@@ -1479,13 +1264,13 @@ export default function App() {
     if (truthDifficulty === "MIXED") return TRUTH_CHALLENGE_BANK;
     const filtered = TRUTH_CHALLENGE_BANK.filter((item) => item.difficulty === truthDifficulty);
     return filtered.length ? filtered : TRUTH_CHALLENGE_BANK;
-  }, [truthDifficulty]);
+  }, [truthDifficulty]  );
   const sentenceCurrentRound = sentenceRounds[sentenceRoundIndex] || null;
-  const werewolfAliveCount = useMemo(
-    () => (Array.isArray(werewolfGame?.players) ? werewolfGame.players.filter((p) => p.alive).length : 0),
-    [werewolfGame]
+  const commonGroundCurrentRound = commonGroundRounds[commonGroundRoundIndex] || null;
+  const commonGroundOverlap = useMemo(
+    () => countOverlap(commonGroundMyPicks, commonGroundPeerPicks),
+    [commonGroundMyPicks, commonGroundPeerPicks]
   );
-  const werewolfTotalCount = Array.isArray(werewolfGame?.players) ? werewolfGame.players.length : 0;
   const tacitProgressPercent = useMemo(() => {
     const idx = Number(tacitCurrentQuestion?.sortOrder || 0);
     const count = Number(tacitRoom?.questionCount || 10);
@@ -1498,6 +1283,53 @@ export default function App() {
     const done = sentencePeerChoice ? sentenceRoundIndex + 1 : sentenceRoundIndex;
     return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
   }, [sentencePeerChoice, sentenceRoundIndex, sentenceRounds.length]);
+  const commonGroundProgressPercent = useMemo(() => {
+    const total = Math.max(1, commonGroundRounds.length || COMMON_GROUND_ROUNDS);
+    const done = commonGroundPeerPicks.length ? commonGroundRoundIndex + 1 : commonGroundRoundIndex;
+    return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+  }, [commonGroundPeerPicks.length, commonGroundRoundIndex, commonGroundRounds.length]);
+  const sentenceTopicMeta = useMemo(() => getSentenceTopicMeta(sentenceTopic), [sentenceTopic]);
+  const sentenceMyAvatarUrl = useMemo(
+    () => resolveAssetUrl(getUserPrimaryRawImageUrl(user) || user?.avatarUrl || ""),
+    [user]
+  );
+  const sentencePeerAvatarUrl = useMemo(
+    () => resolveAssetUrl(sentenceOpponent?.avatar || ""),
+    [sentenceOpponent]
+  );
+  const commonGroundMyAvatarUrl = useMemo(
+    () => resolveAssetUrl(getUserPrimaryRawImageUrl(user) || user?.avatarUrl || ""),
+    [user]
+  );
+  const commonGroundPeerAvatarUrl = useMemo(
+    () => resolveAssetUrl(commonGroundOpponent?.avatar || ""),
+    [commonGroundOpponent]
+  );
+  const commonGroundTopicMeta = useMemo(() => getCommonGroundTopicMeta(commonGroundTopic), [commonGroundTopic]);
+  const isGameMatching = useMemo(() => {
+    if (!activeGameId) return false;
+    if (activeGameId === "commonground") return isCommonGroundMatching;
+    if (activeGameId === "sentence") return isSentenceMatching;
+    if (activeGameId === "truth") return isTruthMatching;
+    if (activeGameId === "tacit") return isTacitMatching;
+    return false;
+  }, [activeGameId, isCommonGroundMatching, isSentenceMatching, isTruthMatching, isTacitMatching]);
+  const truthMyAvatarUrl = useMemo(
+    () => resolveAssetUrl(getUserPrimaryRawImageUrl(user) || user?.avatarUrl || ""),
+    [user]
+  );
+  const truthPeerAvatarUrl = useMemo(
+    () => resolveAssetUrl(truthOpponent?.avatar || ""),
+    [truthOpponent]
+  );
+  const tacitMyAvatarUrl = useMemo(
+    () => resolveAssetUrl(getUserPrimaryRawImageUrl(user) || user?.avatarUrl || ""),
+    [user]
+  );
+  const tacitPeerAvatarUrl = useMemo(
+    () => resolveAssetUrl(tacitPeerDisplay?.avatar || tacitPeerMember?.avatar || ""),
+    [tacitPeerDisplay, tacitPeerMember]
+  );
   const truthPhaseSteps = [
     { id: "rolling", label: "摇骰子" },
     { id: "pick", label: "选题" },
@@ -1505,7 +1337,6 @@ export default function App() {
     { id: "review", label: "查看" }
   ];
   const truthPhaseIndex = Math.max(0, truthPhaseSteps.findIndex((item) => item.id === truthPhase));
-  const truthAnswerMinLen = 3;
 
   useEffect(() => {
     return () => {
@@ -1554,65 +1385,6 @@ export default function App() {
     const timer = window.setInterval(pullRoom, 1000);
     return () => clearInterval(timer);
   }, [activeGameId, tacitMode, tacitRoomId, authHeaders]);
-
-  useEffect(() => {
-    // In normal gameplay we rely on socket push; polling is fallback only when game payload is missing.
-    if (activeGameId !== "werewolf" || werewolfMode !== "playing" || werewolfGame) return undefined;
-    werewolfSyncRetryRef.current = 0;
-    const pullRoom = async () => {
-      try {
-        let nextRoom = null;
-        if (werewolfRoomId) {
-          const roomRes = await fetch(`${API}/werewolf/rooms/${werewolfRoomId}`, { headers: authHeaders });
-          const roomData = await roomRes.json();
-          if (roomRes.ok && roomData?.room) nextRoom = roomData.room;
-        }
-        if (!nextRoom) {
-          const statusRes = await fetch(`${API}/werewolf/match/status`, { headers: authHeaders });
-          const statusData = await statusRes.json();
-          if (statusRes.ok && statusData?.matched && statusData?.room) nextRoom = statusData.room;
-        }
-        if (nextRoom) {
-          applyWerewolfRoom(nextRoom);
-          if (nextRoom.game) {
-            werewolfSyncRetryRef.current = 0;
-            return;
-          }
-        }
-        werewolfSyncRetryRef.current += 1;
-        if (werewolfSyncRetryRef.current >= 3) {
-          setWerewolfRoomId("");
-          setWerewolfRoomMembers([]);
-          setWerewolfGame(null);
-          setWerewolfMode("menu");
-          setIsWerewolfMatching(false);
-          setChatNotice("房间状态失效，请重新点击「多人匹配」");
-          werewolfSyncRetryRef.current = 0;
-        }
-      } catch (_error) {}
-    };
-    pullRoom();
-    const timer = window.setInterval(pullRoom, 1500);
-    return () => clearInterval(timer);
-  }, [activeGameId, werewolfMode, werewolfRoomId, werewolfGame, authHeaders]);
-
-  useEffect(() => {
-    if (activeGameId !== "werewolf" || werewolfMode !== "playing" || !werewolfGame || werewolfGame.phase !== "DAY_SPEECH" || werewolfGame.winner) {
-      setWerewolfSpeechCountdown(0);
-      return undefined;
-    }
-    const updateCountdown = () => {
-      const deadlineAt = Number(werewolfGame.speechDeadlineAt || 0);
-      if (deadlineAt > 0) {
-        setWerewolfSpeechCountdown(Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000)));
-      } else {
-        setWerewolfSpeechCountdown(Math.max(0, Number(werewolfGame.speechSecondsLeft || 0)));
-      }
-    };
-    updateCountdown();
-    const timer = window.setInterval(updateCountdown, 1000);
-    return () => clearInterval(timer);
-  }, [activeGameId, werewolfMode, werewolfGame]);
 
   useEffect(() => {
     if (!tacitCurrentQuestion || tacitMode !== "playing" || tacitIntroCountdown > 0) return undefined;
@@ -1831,21 +1603,15 @@ export default function App() {
     await toggleFollowForPeer(activeConversation.id, chatPeerFollow, setChatFollowBusy);
   };
 
-  const togglePeerProfileFollow = async () => {
-    if (!peerProfile?.id) return;
-    await toggleFollowForPeer(peerProfile.id, peerProfileFollow, setPeerProfileFollowBusy);
-  };
-
   const chatFollowButtonLabel = useMemo(() => {
     if (chatPeerFollow.mutualFollow || chatPeerFollow.isFriend) return "互相关注";
     if (chatPeerFollow.iFollow) return "已关注";
     return "关注";
   }, [chatPeerFollow]);
 
-  const peerProfileFollowButtonLabel = useMemo(() => {
-    if (peerProfileFollow.mutualFollow || peerProfileFollow.isFriend) return "互相关注";
-    if (peerProfileFollow.iFollow) return "已关注";
-    return "+ 关注";
+  const peerProfileAddContactLabel = useMemo(() => {
+    if (peerProfileFollow.isFriend || peerProfileFollow.mutualFollow) return "已是好友";
+    return "加通讯录";
   }, [peerProfileFollow]);
 
   useEffect(() => {
@@ -2014,9 +1780,20 @@ export default function App() {
         setSystemRobotProfiles([]);
       }
       setUserRobotProfiles([]);
+      setSystemRobotsReady(!authToken);
       return;
     }
     let cancelled = false;
+    setSystemRobotsReady(false);
+    const applySystemRobotFallback = () => {
+      const local = getSystemRobotProfilesFallback(user?.gender || "MALE", 12);
+      if (local.length) {
+        setSystemRobotProfiles(local);
+        setHeroRotationIndex(0);
+      } else if (!shouldPreferLocalSeedAvatars()) {
+        setSystemRobotProfiles([]);
+      }
+    };
     const loadRobots = async () => {
       try {
         const sysRes = await fetch(`${API}/planet/robot-library/system`, { headers: authHeaders });
@@ -2026,15 +1803,15 @@ export default function App() {
           const remote = Array.isArray(sysData.profiles) ? sysData.profiles : [];
           if (remote.length) {
             setSystemRobotProfiles(remote);
-          } else if (!shouldPreferLocalSeedAvatars()) {
-            setSystemRobotProfiles([]);
+            setHeroRotationIndex(0);
+          } else {
+            applySystemRobotFallback();
           }
-          setHeroRotationIndex(0);
-        } else if (!shouldPreferLocalSeedAvatars()) {
-          setSystemRobotProfiles([]);
+        } else {
+          applySystemRobotFallback();
         }
       } catch {
-        if (!cancelled) setSystemRobotProfiles([]);
+        if (!cancelled) applySystemRobotFallback();
       }
       try {
         const usrRes = await fetch(`${API}/planet/robot-library/user`, { headers: authHeaders });
@@ -2047,13 +1824,15 @@ export default function App() {
         }
       } catch {
         if (!cancelled) setUserRobotProfiles([]);
+      } finally {
+        if (!cancelled) setSystemRobotsReady(true);
       }
     };
     loadRobots();
     return () => {
       cancelled = true;
     };
-  }, [authToken, authHeaders]);
+  }, [authToken, authHeaders, user?.gender]);
 
   useEffect(() => {
     if (systemRobotProfiles.length <= 1) return undefined;
@@ -2079,13 +1858,23 @@ export default function App() {
 
   useEffect(() => {
     if (!user || !activeGameId) return;
-    if (activeGameId === "werewolf") {
-      loadWerewolfInvitations().catch(() => setWerewolfInvitations([]));
-    }
     if (activeGameId === "tacit") {
       loadTacitInvitations().catch(() => setTacitInvitations([]));
     }
   }, [user, activeGameId]);
+
+  useEffect(() => {
+    if (!isGameMatching) {
+      setGameMatchCountdown(0);
+      return undefined;
+    }
+    setGameMatchCountdown(GAME_MATCH_COUNTDOWN_START);
+    playGameSfx("countdown");
+    const timer = window.setInterval(() => {
+      setGameMatchCountdown((prev) => (prev <= 1 ? GAME_MATCH_COUNTDOWN_START : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isGameMatching]);
 
   useEffect(() => {
     if (
@@ -2126,24 +1915,12 @@ export default function App() {
       sentenceIntroCountdown > 0 ||
       !sentenceMyChoice ||
       sentencePeerChoice ||
-      sentenceResolving
+      sentenceResolveLockRef.current
     ) {
       return;
     }
     resolveSentenceRound(sentenceMyChoice);
-  }, [activeGameId, sentenceMode, sentenceMyChoice, sentencePeerChoice, sentenceResolving, sentenceIntroCountdown]);
-
-  useEffect(() => {
-    if (activeGameId !== "werewolf" || werewolfMode !== "playing") return;
-    setWerewolfIntroCountdown(3);
-  }, [activeGameId, werewolfMode, werewolfRoomId]);
-
-  useEffect(() => {
-    if (werewolfIntroCountdown <= 0) return undefined;
-    if (werewolfIntroCountdown === 3) playGameSfx("countdown");
-    const timer = window.setTimeout(() => setWerewolfIntroCountdown((prev) => Math.max(0, prev - 1)), 1000);
-    return () => clearTimeout(timer);
-  }, [werewolfIntroCountdown]);
+  }, [activeGameId, sentenceMode, sentenceMyChoice, sentencePeerChoice, sentenceIntroCountdown]);
 
   useEffect(() => {
     if (activeGameId !== "tacit" || tacitMode !== "playing") return;
@@ -2170,14 +1947,81 @@ export default function App() {
   }, [sentenceIntroCountdown]);
 
   useEffect(() => {
-    if (!werewolfGame?.winner) return;
-    playGameSfx("win");
-    setWerewolfFxText(`${
-      werewolfGame.winner === "WOLF" ? "狼人阵营" : "好人阵营"
-    }胜利`);
-    const timer = window.setTimeout(() => setWerewolfFxText(""), 1200);
+    if (activeGameId !== "commonground" || commonGroundMode !== "playing") return;
+    setCommonGroundIntroCountdown(3);
+  }, [activeGameId, commonGroundMode, commonGroundOpponent?.id]);
+
+  useEffect(() => {
+    if (commonGroundIntroCountdown <= 0) return undefined;
+    if (commonGroundIntroCountdown === 3) playGameSfx("countdown");
+    const timer = window.setTimeout(() => setCommonGroundIntroCountdown((prev) => Math.max(0, prev - 1)), 1000);
     return () => clearTimeout(timer);
-  }, [werewolfGame?.winner]);
+  }, [commonGroundIntroCountdown]);
+
+  useEffect(() => {
+    if (
+      activeGameId !== "commonground" ||
+      commonGroundMode !== "playing" ||
+      commonGroundIntroCountdown > 0 ||
+      commonGroundMyPicks.length ||
+      commonGroundPeerPicks.length ||
+      commonGroundResolving
+    ) {
+      return undefined;
+    }
+    if (commonGroundCountdown <= 0) {
+      if (!commonGroundCurrentRound?.options?.length) return undefined;
+      const fallback =
+        commonGroundDraftPicks.length > 0
+          ? [...commonGroundDraftPicks]
+          : [commonGroundCurrentRound.options[Math.floor(Math.random() * commonGroundCurrentRound.options.length)]];
+      setCommonGroundMyPicks(fallback);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setCommonGroundCountdown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [
+    activeGameId,
+    commonGroundMode,
+    commonGroundCountdown,
+    commonGroundDraftPicks,
+    commonGroundMyPicks.length,
+    commonGroundPeerPicks.length,
+    commonGroundResolving,
+    commonGroundCurrentRound,
+    commonGroundIntroCountdown
+  ]);
+
+  useEffect(() => {
+    if (
+      activeGameId !== "commonground" ||
+      commonGroundMode !== "playing" ||
+      commonGroundIntroCountdown > 0 ||
+      !commonGroundMyPicks.length ||
+      commonGroundPeerPicks.length ||
+      commonGroundResolving
+    ) {
+      return;
+    }
+    resolveCommonGroundRound(commonGroundMyPicks);
+  }, [
+    activeGameId,
+    commonGroundMode,
+    commonGroundMyPicks,
+    commonGroundPeerPicks.length,
+    commonGroundResolving,
+    commonGroundIntroCountdown
+  ]);
+
+  useEffect(() => {
+    if (!commonGroundPeerPicks.length || !commonGroundMyPicks.length) return;
+    playGameSfx(commonGroundOverlap.length ? "hit" : "miss");
+    setCommonGroundFxText(commonGroundOverlap.length ? `发现 ${commonGroundOverlap.length} 个共同点` : "本题暂无共同点");
+    const timer = window.setTimeout(() => setCommonGroundFxText(""), COMMON_GROUND_REVEAL_MS);
+    return () => clearTimeout(timer);
+  }, [commonGroundPeerPicks, commonGroundMyPicks, commonGroundOverlap.length]);
 
   useEffect(() => {
     if (!tacitCurrentQuestion?.done) return;
@@ -2488,22 +2332,6 @@ export default function App() {
       });
     });
 
-    socket.on("werewolf:room:update", (room) => {
-      applyWerewolfRoom(room);
-      if (room?.game) {
-        setWerewolfMode("playing");
-      } else if (room?.status === "IN_GAME") {
-        const mode = room.type === "MATCH" ? "多人匹配" : "好友房";
-        setWerewolfRulePack(buildWerewolfRulePack(room.acceptedCount || 6, mode));
-        setWerewolfMode(room.type === "MATCH" ? "playing" : "judge");
-      }
-    });
-    socket.on("werewolf:invite", (invite) => {
-      if (invite?.ownerName) {
-        setChatNotice(`${invite.ownerName} 邀请你加入狼人杀好友房`);
-      }
-      loadWerewolfInvitations().catch(() => null);
-    });
     socket.on("tacit:room:update", (room) => {
       if (!room?.id) return;
       setTacitRoomId(room.id);
@@ -2576,13 +2404,25 @@ export default function App() {
 
   useEffect(
     () => () => {
-      if (werewolfPollingRef.current) {
-        clearInterval(werewolfPollingRef.current);
-        werewolfPollingRef.current = null;
-      }
       if (tacitPollingRef.current) {
         clearInterval(tacitPollingRef.current);
         tacitPollingRef.current = null;
+      }
+      if (sentenceMatchTimerRef.current) {
+        clearTimeout(sentenceMatchTimerRef.current);
+        sentenceMatchTimerRef.current = null;
+      }
+      if (sentenceResolveTimerRef.current) {
+        clearTimeout(sentenceResolveTimerRef.current);
+        sentenceResolveTimerRef.current = null;
+      }
+      if (commonGroundMatchTimerRef.current) {
+        clearTimeout(commonGroundMatchTimerRef.current);
+        commonGroundMatchTimerRef.current = null;
+      }
+      if (commonGroundResolveTimerRef.current) {
+        clearTimeout(commonGroundResolveTimerRef.current);
+        commonGroundResolveTimerRef.current = null;
       }
       if (truthMatchTimerRef.current) {
         clearTimeout(truthMatchTimerRef.current);
@@ -2623,20 +2463,6 @@ export default function App() {
     },
     []
   );
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      const now = Date.now();
-      setWerewolfInviteCooldowns((prev) => {
-        const next = {};
-        Object.entries(prev).forEach(([uid, expireAt]) => {
-          if (Number(expireAt) > now) next[uid] = Number(expireAt);
-        });
-        return Object.keys(next).length === Object.keys(prev).length ? prev : next;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const isMembershipValid = useMemo(() => {
     if (!user?.membershipExpireAt || user.membershipType === "FREE") return false;
@@ -2974,8 +2800,102 @@ export default function App() {
     setShowMembershipGate(true);
   };
 
+  const rememberGameReturnPath = (gateContext) => {
+    if (!GAME_RETURN_GATE_CONTEXTS.has(gateContext)) return;
+    chatReturnPathRef.current = GAME_PATH_BY_ID[gateContext] || "";
+  };
+
+  const buildGameOpponentPeerProfile = (opponent) => {
+    if (!opponent?.id) return null;
+    const photoUrls = [];
+    const avatar = String(opponent.avatar || opponent.avatarUrl || "").trim();
+    if (avatar) photoUrls.push(avatar);
+    if (Array.isArray(opponent.galleryUrls)) {
+      opponent.galleryUrls.forEach((raw) => {
+        const url = String(raw || "").trim();
+        if (url && !photoUrls.includes(url)) photoUrls.push(url);
+      });
+    }
+    return {
+      id: opponent.id,
+      nickname: opponent.name || opponent.nickname || "对方",
+      gender: opponent.gender || "FEMALE",
+      age: opponent.age ?? null,
+      currentCity: opponent.city || opponent.currentCity || "同城",
+      hometown: opponent.hometown || "",
+      hobbies: opponent.hobbies || "",
+      partnerExpectation: opponent.partnerExpectation || "",
+      height: opponent.height ?? null,
+      weight: opponent.weight ?? null,
+      industry: opponent.industry || "",
+      avatarUrl: avatar,
+      photoUrls,
+      posts: []
+    };
+  };
+
+  const mapRobotToGameOpponent = (target, isBot = true) => ({
+    id: target.id,
+    name: target.nickname || target.name || "对方",
+    avatar: target.avatar || target.avatarUrl || "",
+    city: target.city || target.currentCity || "同城",
+    gender: target.gender || "FEMALE",
+    age: target.age,
+    hometown: target.hometown || "",
+    hobbies: target.hobbies || "",
+    partnerExpectation: target.partnerExpectation || "",
+    height: target.height,
+    weight: target.weight,
+    industry: target.industry || "",
+    galleryUrls: target.galleryUrls || [],
+    isBot
+  });
+
+  const openGameOpponentProfile = async (opponent, gateContext) => {
+    const snapshot = buildGameOpponentPeerProfile(opponent);
+    if (!snapshot?.id || !user?.id) return;
+    rememberGameReturnPath(gateContext);
+    if (!isMembershipValid) {
+      openMembershipGateFor(gateContext);
+      return;
+    }
+    setPeerProfile(null);
+    setPeerProfileCover("");
+    setPeerProfileTab("about");
+    setPeerProfileGateContext(gateContext);
+    setPeerProfileLoading(true);
+    setShowPeerProfileModal(true);
+    try {
+      const res = await fetch(
+        `${API}/users/${encodeURIComponent(snapshot.id)}/profile?viewerId=${encodeURIComponent(user.id)}`,
+        { headers: authHeaders }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "加载资料失败");
+      setPeerProfile(data.profile || snapshot);
+      await loadChatPeerFollowStatus(snapshot.id, true);
+    } catch (_error) {
+      setPeerProfile(snapshot);
+      try {
+        await loadChatPeerFollowStatus(snapshot.id, true);
+      } catch (_followError) {}
+    } finally {
+      setPeerProfileLoading(false);
+    }
+  };
+
+  const exitChatDetail = () => {
+    const returnPath = chatReturnPathRef.current;
+    chatReturnPathRef.current = "";
+    setActiveConversation(null);
+    if (returnPath) {
+      navigate(returnPath);
+    }
+  };
+
   const openPeerProfile = async (targetUserId, gateContext = "planet") => {
     if (!targetUserId || !user?.id) return;
+    rememberGameReturnPath(gateContext);
     if (!isMembershipValid) {
       openMembershipGateFor(gateContext);
       return;
@@ -2985,6 +2905,7 @@ export default function App() {
     setPeerProfileLoading(true);
     setShowPeerProfileModal(true);
     setPeerProfileTab("about");
+    setPeerProfileGateContext(gateContext);
     try {
       const res = await fetch(
         `${API}/users/${encodeURIComponent(targetUserId)}/profile?viewerId=${encodeURIComponent(user.id)}`,
@@ -3010,6 +2931,7 @@ export default function App() {
     onBeforeNavigate
   }) => {
     if (!targetUserId || !user?.id) return;
+    rememberGameReturnPath(gateContext);
     if (!isMembershipValid) {
       openMembershipGateFor(gateContext);
       return;
@@ -3046,6 +2968,7 @@ export default function App() {
       isFriend: false,
       mutualFollow: false
     });
+    setPeerProfileGateContext("planet");
   };
 
   const handlePeerSayHi = () => {
@@ -3060,8 +2983,30 @@ export default function App() {
       targetUserId: target.id,
       name: target.nickname || "对方",
       avatar: target.avatarUrl || "",
-      gateContext: "square"
+      gateContext: peerProfileGateContext
     });
+  };
+
+  const handlePeerAddContact = async () => {
+    if (!peerProfile?.id) return;
+    if (peerProfileFollow.isFriend || peerProfileFollow.mutualFollow) {
+      showToast("已是通讯录好友");
+      return;
+    }
+    if (!isMembershipValid) {
+      openMembershipGateFor(peerProfileGateContext);
+      return;
+    }
+    setPeerProfileAddContactBusy(true);
+    try {
+      await sendFriendRequest(peerProfile.id, peerProfile.nickname || "对方");
+      await loadChatPeerFollowStatus(peerProfile.id, true);
+      await refreshChatPanels(user.id);
+    } catch (error) {
+      setChatNotice(error.message || "加好友失败");
+    } finally {
+      setPeerProfileAddContactBusy(false);
+    }
   };
 
   const openSquarePostProfile = async (post) => {
@@ -3747,13 +3692,148 @@ export default function App() {
     setMessage("已批量清理聊天记录");
   };
 
-  const openWerewolfMenu = () => {
-    setWerewolfRoomMembers([]);
-    setWerewolfRoomId("");
-    setWerewolfRulePack(null);
-    setWerewolfMode("menu");
-    navigate(GAME_PATH_BY_ID.werewolf);
-    loadWerewolfInvitations().catch(() => setWerewolfInvitations([]));
+  const resetCommonGroundState = () => {
+    setCommonGroundMode("menu");
+    setCommonGroundTopic("love");
+    setIsCommonGroundMatching(false);
+    setCommonGroundOpponent(null);
+    setCommonGroundRounds([]);
+    setCommonGroundRoundIndex(0);
+    setCommonGroundDraftPicks([]);
+    setCommonGroundMyPicks([]);
+    setCommonGroundPeerPicks([]);
+    setCommonGroundCountdown(25);
+    setCommonGroundScore(0);
+    setCommonGroundLogs([]);
+    setCommonGroundResolving(false);
+    setCommonGroundIntroCountdown(0);
+    setCommonGroundFxText("");
+    if (commonGroundMatchTimerRef.current) {
+      clearTimeout(commonGroundMatchTimerRef.current);
+      commonGroundMatchTimerRef.current = null;
+    }
+    if (commonGroundResolveTimerRef.current) {
+      clearTimeout(commonGroundResolveTimerRef.current);
+      commonGroundResolveTimerRef.current = null;
+    }
+  };
+
+  const openCommonGroundMenu = () => {
+    resetCommonGroundState();
+    navigate(GAME_PATH_BY_ID.commonground);
+  };
+
+  const startCommonGroundGame = (opponent) => {
+    const rounds = createCommonGroundRounds(COMMON_GROUND_ROUNDS, commonGroundTopic);
+    setCommonGroundOpponent(opponent);
+    setCommonGroundRounds(rounds);
+    setCommonGroundRoundIndex(0);
+    setCommonGroundDraftPicks([]);
+    setCommonGroundMyPicks([]);
+    setCommonGroundPeerPicks([]);
+    setCommonGroundCountdown(25);
+    setCommonGroundScore(0);
+    setCommonGroundLogs([]);
+    setCommonGroundResolving(false);
+    setCommonGroundMode("playing");
+  };
+
+  const startCommonGroundMatch = () => {
+    if (isCommonGroundMatching) return;
+    setIsCommonGroundMatching(true);
+    if (commonGroundMatchTimerRef.current) clearTimeout(commonGroundMatchTimerRef.current);
+    commonGroundMatchTimerRef.current = window.setTimeout(() => {
+      const source = userRobotProfiles.length
+        ? userRobotProfiles
+        : [{ id: "fallback-bot", nickname: "隐藏款", age: 24, city: "同城", hobbies: "电影,音乐", avatar: "", gender: "FEMALE" }];
+      const target = source[Math.floor(Math.random() * source.length)];
+      setIsCommonGroundMatching(false);
+      startCommonGroundGame(mapRobotToGameOpponent(target, true));
+    }, GAME_MATCH_BOT_DELAY_MS);
+  };
+
+  const startCommonGroundInviteGame = (friend) => {
+    startCommonGroundGame(
+      mapRobotToGameOpponent(
+        {
+          id: friend.id,
+          nickname: friend.name,
+          avatar: friend.avatar || "",
+          city: friend.status || "在线",
+          gender: friend.gender || "FEMALE"
+        },
+        false
+      )
+    );
+  };
+
+  const toggleCommonGroundPick = (option) => {
+    if (
+      !commonGroundCurrentRound ||
+      commonGroundMyPicks.length ||
+      commonGroundPeerPicks.length ||
+      commonGroundResolving ||
+      commonGroundIntroCountdown > 0
+    ) {
+      return;
+    }
+    setCommonGroundDraftPicks((prev) => {
+      if (prev.includes(option)) return prev.filter((item) => item !== option);
+      if (prev.length >= COMMON_GROUND_MAX_PICK) return prev;
+      return [...prev, option];
+    });
+  };
+
+  const resolveCommonGroundRound = (myPicks) => {
+    if (!commonGroundCurrentRound || commonGroundResolving || commonGroundPeerPicks.length) return;
+    setCommonGroundResolving(true);
+    const options = commonGroundCurrentRound.options || [];
+    const delayMs = commonGroundOpponent?.isBot ? 1400 + Math.floor(Math.random() * 1800) : 1800;
+    if (commonGroundResolveTimerRef.current) clearTimeout(commonGroundResolveTimerRef.current);
+    commonGroundResolveTimerRef.current = window.setTimeout(() => {
+      const peerPicks = simulateCommonGroundBotPicks(myPicks, options, commonGroundOpponent?.isBot);
+      const overlap = countOverlap(myPicks, peerPicks);
+      const gained = scoreCommonGroundRound(myPicks, peerPicks);
+      setCommonGroundPeerPicks(peerPicks);
+      setCommonGroundScore((prev) => prev + gained);
+      setCommonGroundLogs((prev) => [
+        ...prev,
+        formatCommonGroundRoundLog(commonGroundRoundIndex, myPicks, peerPicks, overlap, gained)
+      ]);
+      if (commonGroundRoundIndex >= commonGroundRounds.length - 1) {
+        commonGroundResolveTimerRef.current = window.setTimeout(() => {
+          setCommonGroundMode("result");
+          setCommonGroundResolving(false);
+        }, COMMON_GROUND_REVEAL_MS);
+        return;
+      }
+      commonGroundResolveTimerRef.current = window.setTimeout(() => {
+        setCommonGroundRoundIndex((prev) => prev + 1);
+        setCommonGroundDraftPicks([]);
+        setCommonGroundMyPicks([]);
+        setCommonGroundPeerPicks([]);
+        setCommonGroundCountdown(25);
+        setCommonGroundResolving(false);
+      }, COMMON_GROUND_REVEAL_MS);
+    }, delayMs);
+  };
+
+  const confirmCommonGroundPicks = () => {
+    if (
+      !commonGroundCurrentRound ||
+      commonGroundMyPicks.length ||
+      commonGroundPeerPicks.length ||
+      commonGroundResolving ||
+      commonGroundDraftPicks.length === 0
+    ) {
+      return;
+    }
+    setCommonGroundMyPicks([...commonGroundDraftPicks]);
+  };
+
+  const closeCommonGroundModal = () => {
+    resetCommonGroundState();
+    navigate("/planet");
   };
 
   const openTacitMenu = () => {
@@ -3785,6 +3865,7 @@ export default function App() {
       clearTimeout(sentenceResolveTimerRef.current);
       sentenceResolveTimerRef.current = null;
     }
+    sentenceResolveLockRef.current = false;
   };
 
   const openSentenceMenu = () => {
@@ -3808,7 +3889,6 @@ export default function App() {
 
   const startSentenceMatch = () => {
     if (isSentenceMatching) return;
-    setSentenceMode("match");
     setIsSentenceMatching(true);
     if (sentenceMatchTimerRef.current) clearTimeout(sentenceMatchTimerRef.current);
     sentenceMatchTimerRef.current = window.setTimeout(() => {
@@ -3817,28 +3897,28 @@ export default function App() {
         : [{ id: "fallback-bot", nickname: "隐藏款", age: 24, city: "同城", hobbies: "电影,音乐", avatar: "", gender: "FEMALE" }];
       const target = source[Math.floor(Math.random() * source.length)];
       setIsSentenceMatching(false);
-      startSentenceGame({
-        id: target.id,
-        name: target.nickname || "隐藏款",
-        avatar: target.avatar || "",
-        city: target.city || "同城",
-        isBot: true
-      });
-    }, 1600);
+      startSentenceGame(mapRobotToGameOpponent(target, true));
+    }, GAME_MATCH_BOT_DELAY_MS);
   };
 
   const startSentenceInviteGame = (friend) => {
-    startSentenceGame({
-      id: friend.id,
-      name: friend.name,
-      avatar: friend.avatar || "",
-      city: friend.status || "在线",
-      isBot: false
-    });
+    startSentenceGame(
+      mapRobotToGameOpponent(
+        {
+          id: friend.id,
+          nickname: friend.name,
+          avatar: friend.avatar || "",
+          city: friend.status || "在线",
+          gender: friend.gender || "FEMALE"
+        },
+        false
+      )
+    );
   };
 
   const resolveSentenceRound = (myChoice) => {
-    if (!sentenceCurrentRound || sentenceResolving || sentencePeerChoice) return;
+    if (!sentenceCurrentRound || sentencePeerChoice || sentenceResolveLockRef.current) return;
+    sentenceResolveLockRef.current = true;
     setSentenceResolving(true);
     const options = sentenceCurrentRound.options || [];
     const delayMs = sentenceOpponent?.isBot ? 1200 + Math.floor(Math.random() * 1600) : 1600;
@@ -3861,6 +3941,7 @@ export default function App() {
       if (sentenceRoundIndex >= sentenceRounds.length - 1) {
         setSentenceMode("result");
         setSentenceResolving(false);
+        sentenceResolveLockRef.current = false;
         return;
       }
       if (sentenceResolveTimerRef.current) clearTimeout(sentenceResolveTimerRef.current);
@@ -3870,6 +3951,7 @@ export default function App() {
         setSentencePeerChoice("");
         setSentenceCountdown(20);
         setSentenceResolving(false);
+        sentenceResolveLockRef.current = false;
       }, 1200);
     }, delayMs);
   };
@@ -3877,7 +3959,6 @@ export default function App() {
   const pickSentenceChoice = (choice) => {
     if (!sentenceCurrentRound || sentenceMyChoice || sentencePeerChoice || sentenceResolving) return;
     setSentenceMyChoice(choice);
-    resolveSentenceRound(choice);
   };
 
   const closeSentenceModal = () => {
@@ -3981,14 +4062,16 @@ export default function App() {
     setTruthOpponent(null);
     setTruthDiceResult(null);
     setTruthRoundIndex(0);
-    setTruthAnswerDraft("");
+    setTruthAnswerChoice("");
+    setTruthPeerAnswerChoice("");
+    setTruthCurrentAnswerOptions([]);
     setTruthAwaitingMyAnswer(false);
     setTruthPhase("idle");
     setTruthPhaseCountdown(0);
     setTruthQuestionOptions([]);
     setTruthPickedQuestionIndex(-1);
     setTruthCurrentQuestion("");
-    setTruthCurrentDifficultyLabel("轻松");
+    setTruthCurrentDifficultyLabel("暧昧试探");
     setTruthRollingDice({ me: 1, peer: 1 });
     setTruthIsRolling(false);
     setTruthDiceSettling(false);
@@ -3996,6 +4079,7 @@ export default function App() {
     setTruthLogs([]);
     setTruthInviteMembers([]);
     truthRunRoundRef.current = null;
+    truthScheduleNextRef.current = null;
     truthRoundContextRef.current = null;
     if (truthMatchTimerRef.current) {
       clearTimeout(truthMatchTimerRef.current);
@@ -4088,13 +4172,15 @@ export default function App() {
     setTruthOpponent(opponent);
     setTruthDiceResult(null);
     setTruthRoundIndex(0);
-    setTruthAnswerDraft("");
+    setTruthAnswerChoice("");
+    setTruthPeerAnswerChoice("");
+    setTruthCurrentAnswerOptions([]);
     setTruthAwaitingMyAnswer(false);
     setTruthQuestionOptions([]);
     setTruthPhase("idle");
     setTruthPhaseCountdown(0);
     setTruthCurrentQuestion("");
-    setTruthCurrentDifficultyLabel(TRUTH_DIFFICULTY_OPTIONS.find((item) => item.id === truthDifficulty)?.label || "轻松");
+    setTruthCurrentDifficultyLabel(getTruthStyleLabel(truthDifficulty));
     setTruthRollingDice({ me: 1, peer: 1 });
     setTruthIsRolling(false);
     setTruthLogs([]);
@@ -4111,18 +4197,22 @@ export default function App() {
       }
       if (truthRoundTimerRef.current) clearTimeout(truthRoundTimerRef.current);
       truthRoundTimerRef.current = window.setTimeout(() => {
-        const mixedPoolIds = ["LIGHT", "HEART", "DEEP"];
-        const targetDifficultyId = truthDifficulty === "MIXED" ? pickRandomItem(mixedPoolIds, "LIGHT") : truthDifficulty;
-        const difficultyLabel = TRUTH_DIFFICULTY_OPTIONS.find((item) => item.id === targetDifficultyId)?.label || "轻松";
+        const mixedPoolIds = TRUTH_STYLE_POOL;
+        const targetDifficultyId = truthDifficulty === "MIXED" ? pickRandomItem(mixedPoolIds, "FLIRT") : truthDifficulty;
+        const difficultyLabel = getTruthStyleLabel(targetDifficultyId);
         const roundPool = TRUTH_CHALLENGE_BANK.filter((item) => item.difficulty === targetDifficultyId);
         const picked = sampleItems(roundPool.length ? roundPool : truthBankByDifficulty, 3);
-        const questionOptions = picked.length ? picked : [{ question: "你最看重关系里的哪一部分？", answer: "我会选择彼此真诚和稳定沟通。" }];
-        setTruthQuestionOptions(questionOptions);
+        const questionOptions = picked.length
+          ? picked
+          : TRUTH_CHALLENGE_BANK.filter((item) => item.difficulty === targetDifficultyId).slice(0, 3);
+        setTruthQuestionOptions(questionOptions.length ? questionOptions : [TRUTH_CHALLENGE_BANK[0]]);
         setTruthPickedQuestionIndex(-1);
         setTruthRoundIndex(nextRoundIdx + 1);
         setTruthCurrentQuestion("");
         setTruthCurrentDifficultyLabel(difficultyLabel);
-        setTruthAnswerDraft("");
+        setTruthAnswerChoice("");
+        setTruthPeerAnswerChoice("");
+        setTruthCurrentAnswerOptions([]);
         setTruthAwaitingMyAnswer(false);
         setTruthDiceSettling(false);
         setTruthIsRolling(true);
@@ -4170,32 +4260,48 @@ export default function App() {
           truthRoundContextRef.current = { nextRoundIdx, meLose, questionOptions, difficultyLabel, picked: false };
           setTruthPhase("pick");
 
+          const finishReviewAndAdvance = (roundIdx) => {
+            setTruthPhase("review");
+            startTruthPhaseCountdown(3, () => truthScheduleNextRef.current?.(roundIdx + 1));
+          };
+
           const pickQuestion = (item, optionIndex = -1) => {
             const ctx = truthRoundContextRef.current;
-            if (!ctx || ctx.picked) return;
+            if (!ctx || ctx.picked || !item) return;
             ctx.picked = true;
             clearTruthPhaseTimers();
-            setTruthPickedQuestionIndex(optionIndex);
+            if (optionIndex >= 0) setTruthPickedQuestionIndex(optionIndex);
+            const answerOptions =
+              Array.isArray(item.options) && item.options.length
+                ? item.options
+                : ["更愿意慢慢了解", "更想直接一点", "看当时的感觉"];
+            setTruthCurrentAnswerOptions(answerOptions);
+            setTruthAnswerChoice("");
+            setTruthPeerAnswerChoice("");
             truthAutoActionTimerRef.current = window.setTimeout(() => {
               setTruthCurrentQuestion(item.question);
-              setTruthDiceResult((prev) => (prev ? { ...prev, question: item.question, answer: item.answer } : prev));
-              setTruthLogs((prev) => [...prev, `系统题目（${difficultyLabel}）：${item.question}`]);
+              setTruthDiceResult((prev) => (prev ? { ...prev, question: item.question } : prev));
+              setTruthLogs((prev) => [...prev, `本回合题目（${difficultyLabel}）：${item.question}`]);
               setTruthPhase("answer");
               if (ctx.meLose) {
                 setTruthAwaitingMyAnswer(true);
                 startTruthPhaseCountdown(12, () => {
+                  const autoChoice = pickRandomItem(answerOptions, answerOptions[0]);
+                  setTruthAnswerChoice(autoChoice);
                   setTruthAwaitingMyAnswer(false);
-                  setTruthLogs((prev) => [...prev, "你回答：超时未作答"]);
-                  setTruthPhase("review");
-                  startTruthPhaseCountdown(3, () => scheduleNextRound(nextRoundIdx + 1));
+                  setTruthLogs((prev) => [...prev, `你选择：超时，系统代选「${autoChoice}」`]);
+                  finishReviewAndAdvance(ctx.nextRoundIdx);
                 });
                 return;
               }
               setTruthAwaitingMyAnswer(false);
-              startTruthPhaseCountdown(10, () => {
-                setTruthLogs((prev) => [...prev, `${opponent?.name || "对方"}回答：${item.answer}`]);
-                setTruthPhase("review");
-                startTruthPhaseCountdown(3, () => scheduleNextRound(nextRoundIdx + 1));
+              const thinkSec = 2 + Math.floor(Math.random() * 4);
+              ctx.peerThinkSec = thinkSec;
+              const peerChoice = pickRandomItem(answerOptions, answerOptions[0]);
+              startTruthPhaseCountdown(thinkSec, () => {
+                setTruthPeerAnswerChoice(peerChoice);
+                setTruthLogs((prev) => [...prev, `${opponent?.name || "对方"}选择了「${peerChoice}」`]);
+                finishReviewAndAdvance(ctx.nextRoundIdx);
               });
             }, 320);
           };
@@ -4215,24 +4321,26 @@ export default function App() {
             const autoItem = pickRandomItem(questionOptions, questionOptions[0]);
             pickQuestion(autoItem, questionOptions.findIndex((q) => q.question === autoItem?.question));
           });
-          truthRunRoundRef.current = (choiceQuestion) => pickQuestion(choiceQuestion);
+          truthRunRoundRef.current = (choiceQuestion, idx = -1) => pickQuestion(choiceQuestion, idx);
         }, 1300);
       }, 260);
     };
 
+    truthScheduleNextRef.current = scheduleNextRound;
     truthRunRoundRef.current = scheduleNextRound;
     scheduleNextRound(0);
   };
 
-  const submitTruthAnswer = () => {
-    const finalAnswer = truthAnswerDraft.trim();
-    if (!truthAwaitingMyAnswer || finalAnswer.length < truthAnswerMinLen) return;
+  const pickTruthAnswer = (choice) => {
+    const answer = String(choice || "").trim();
+    if (!truthAwaitingMyAnswer || !answer) return;
+    const ctx = truthRoundContextRef.current;
     clearTruthPhaseTimers();
     setTruthAwaitingMyAnswer(false);
-    setTruthLogs((prev) => [...prev, `你回答：${finalAnswer}`]);
+    setTruthAnswerChoice(answer);
+    setTruthLogs((prev) => [...prev, `你选择了「${answer}」`]);
     setTruthPhase("review");
-    const nextIdx = Number(truthRoundIndex || 0);
-    startTruthPhaseCountdown(3, () => truthRunRoundRef.current?.(nextIdx));
+    startTruthPhaseCountdown(3, () => truthScheduleNextRef.current?.((ctx?.nextRoundIdx ?? Math.max(0, truthRoundIndex - 1)) + 1));
   };
 
   const chooseTruthQuestion = (idx) => {
@@ -4240,12 +4348,11 @@ export default function App() {
     const target = truthQuestionOptions[idx];
     if (!target) return;
     setTruthPickedQuestionIndex(idx);
-    truthRunRoundRef.current?.(target);
+    truthRunRoundRef.current?.(target, idx);
   };
 
   const startTruthMatch = () => {
     if (isTruthMatching) return;
-    setTruthMode("match");
     setIsTruthMatching(true);
     if (truthMatchTimerRef.current) clearTimeout(truthMatchTimerRef.current);
     truthMatchTimerRef.current = window.setTimeout(() => {
@@ -4254,14 +4361,8 @@ export default function App() {
         : [{ id: "truth-fallback", nickname: "隐藏款", age: 24, city: "同城", hobbies: "摄影,电影", avatar: "", gender: "FEMALE" }];
       const target = source[Math.floor(Math.random() * source.length)];
       setIsTruthMatching(false);
-      startTruthChallenge({
-        id: target.id,
-        name: target.nickname || "隐藏款",
-        avatar: target.avatar || "",
-        city: target.city || "同城",
-        isBot: true
-      });
-    }, 1400);
+      startTruthChallenge(mapRobotToGameOpponent(target, true));
+    }, GAME_MATCH_BOT_DELAY_MS);
   };
 
   const startTruthInvite = (friend) => {
@@ -4299,13 +4400,14 @@ export default function App() {
       name: opponent.name || "对方",
       avatar: opponent.avatar || "",
       city: "好友房",
+      gender: opponent.gender || "FEMALE",
       isBot: false
     });
   };
 
   const handleTruthProfileGate = () => {
     if (!truthOpponent?.id) return;
-    openPeerProfile(truthOpponent.id, "truth");
+    openGameOpponentProfile(truthOpponent, "truth");
   };
 
   const handleTruthContact = () => {
@@ -4314,11 +4416,60 @@ export default function App() {
       targetUserId: truthOpponent.id,
       name: truthOpponent.name || "TA",
       avatar: truthOpponent.avatar || "",
-      gateContext: "truth",
-      onBeforeNavigate: () => {
-        resetTruthState();
-        navigate("/planet");
-      }
+      gateContext: "truth"
+    });
+  };
+
+  const handleSentenceViewProfile = () => {
+    if (!sentenceOpponent?.id) return;
+    openGameOpponentProfile(sentenceOpponent, "sentence");
+  };
+
+  const handleSentenceContact = () => {
+    if (!sentenceOpponent?.id) return;
+    openChatWithPeer({
+      targetUserId: sentenceOpponent.id,
+      name: sentenceOpponent.name || "对方",
+      avatar: sentenceOpponent.avatar || "",
+      gateContext: "sentence"
+    });
+  };
+
+  const handleTacitViewProfile = () => {
+    if (!tacitPeerMember?.userId) return;
+    openGameOpponentProfile(
+      {
+        id: tacitPeerMember.userId,
+        name: tacitPeerDisplay?.name || tacitPeerMember.name,
+        avatar: tacitPeerDisplay?.avatar || tacitPeerMember.avatar,
+        gender: tacitPeerMember.gender
+      },
+      "tacit"
+    );
+  };
+
+  const handleTacitContact = () => {
+    if (!tacitPeerMember?.userId) return;
+    openChatWithPeer({
+      targetUserId: tacitPeerMember.userId,
+      name: tacitPeerDisplay?.name || tacitPeerMember.name || "对方",
+      avatar: tacitPeerDisplay?.avatar || tacitPeerMember.avatar || "",
+      gateContext: "tacit"
+    });
+  };
+
+  const handleCommonGroundViewProfile = () => {
+    if (!commonGroundOpponent?.id) return;
+    openGameOpponentProfile(commonGroundOpponent, "commonground");
+  };
+
+  const handleCommonGroundContact = () => {
+    if (!commonGroundOpponent?.id) return;
+    openChatWithPeer({
+      targetUserId: commonGroundOpponent.id,
+      name: commonGroundOpponent.name || "对方",
+      avatar: commonGroundOpponent.avatar || "",
+      gateContext: "commonground"
     });
   };
 
@@ -4331,6 +4482,7 @@ export default function App() {
     if (!room) return;
     setTacitRoomId(room.id || "");
     setTacitRoom(room);
+    if (room.topicCategory) setTacitTopic(room.topicCategory);
     if (room.status === "WAITING") setTacitMode("room");
     if (room.status === "IN_PROGRESS") setTacitMode("playing");
     if (room.status === "FINISHED") setTacitMode("result");
@@ -4347,7 +4499,8 @@ export default function App() {
     if (tacitRoomId) return tacitRoomId;
     const res = await fetch(`${API}/tacit/rooms`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders }
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ topicCategory: tacitTopic })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || "创建默契挑战好友房失败");
@@ -4370,11 +4523,11 @@ export default function App() {
     setTacitRoom(null);
     setTacitRoomId("");
     setIsTacitMatching(true);
-    setTacitMode("match");
     try {
       const res = await fetch(`${API}/tacit/match/enqueue`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders }
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ topicCategory: tacitTopic })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "匹配失败");
@@ -4612,12 +4765,12 @@ export default function App() {
   const rematchTacitRound = () => {
     setTacitRoom(null);
     setTacitRoomId("");
-    setTacitMode("match");
     startTacitMatch();
   };
 
   const resetTacitSessionState = () => {
     setTacitMode("menu");
+    setTacitTopic("social");
     setTacitRoom(null);
     setTacitRoomId("");
     setIsTacitMatching(false);
@@ -4635,219 +4788,6 @@ export default function App() {
     await resetTacitSessionRemote();
     resetTacitSessionState();
     navigate("/planet");
-  };
-
-  const enterWerewolfMatch = () => {
-    startWerewolfMatching();
-  };
-
-  const enterWerewolfRoom = () => {
-    setWerewolfMode("room");
-    setShowWerewolfInvitePanel(false);
-    ensureWerewolfFriendRoom().catch((error) => setChatNotice(error.message || "创建好友房失败"));
-  };
-
-  const applyWerewolfRoom = (room) => {
-    if (!room) return;
-    setWerewolfRoomId(room.id || "");
-    setWerewolfRoomMembers(
-      Array.isArray(room.members)
-        ? room.members.map((m) => ({
-            id: m.userId,
-            name: m.name,
-            accepted: m.status === "ACCEPTED" || m.status === "HOST",
-            owner: m.status === "HOST",
-            status: m.status
-          }))
-        : []
-    );
-    setWerewolfGame(room.game || null);
-    if (room.game?.status === "IN_GAME") {
-      setWerewolfMode("playing");
-    }
-  };
-
-  const ensureWerewolfFriendRoom = async () => {
-    if (werewolfRoomId) return werewolfRoomId;
-    const res = await fetch(`${API}/werewolf/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders }
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || "创建好友房失败");
-    applyWerewolfRoom(data.room);
-    return data.room.id;
-  };
-
-  const loadWerewolfInvitations = async () => {
-    const res = await fetch(`${API}/werewolf/invitations`, { headers: authHeaders });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || "拉取狼人杀邀请失败");
-    setWerewolfInvitations(Array.isArray(data.invitations) ? data.invitations : []);
-  };
-
-  const resetWerewolfSessionRemote = async () => {
-    try {
-      await fetch(`${API}/werewolf/session/reset`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders }
-      });
-    } catch (_error) {}
-  };
-
-  const startWerewolfMatching = async () => {
-    if (isWerewolfMatching || werewolfPollingRef.current) return;
-    await resetWerewolfSessionRemote();
-    setWerewolfRoomId("");
-    setWerewolfRoomMembers([]);
-    setWerewolfGame(null);
-    setWerewolfMode("playing");
-    setIsWerewolfMatching(true);
-    fetch(`${API}/werewolf/match/enqueue`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders }
-    })
-      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok) throw new Error(data.message || "匹配失败");
-        if (data.matched && data.room) {
-          applyWerewolfRoom(data.room);
-          setWerewolfRulePack(buildWerewolfRulePack(6, "多人匹配"));
-          setWerewolfMode("playing");
-          setIsWerewolfMatching(false);
-          return;
-        }
-        werewolfPollingRef.current = window.setInterval(async () => {
-          try {
-            const statusRes = await fetch(`${API}/werewolf/match/status`, { headers: authHeaders });
-            const statusData = await statusRes.json();
-            if (!statusRes.ok) throw new Error(statusData.message || "查询匹配状态失败");
-            if (statusData.matched && statusData.room) {
-              applyWerewolfRoom(statusData.room);
-              setWerewolfRulePack(buildWerewolfRulePack(6, "多人匹配"));
-              setWerewolfMode("playing");
-              setIsWerewolfMatching(false);
-              clearInterval(werewolfPollingRef.current);
-              werewolfPollingRef.current = null;
-            }
-          } catch (_error) {
-            // keep polling for transient errors
-          }
-        }, 2000);
-      })
-      .catch((error) => {
-        setChatNotice(error.message || "匹配失败");
-        setIsWerewolfMatching(false);
-        setWerewolfMode("menu");
-      });
-  };
-
-  const startWerewolfRoomGame = () => {
-    if (!werewolfRoomId) return;
-    fetch(`${API}/werewolf/rooms/${werewolfRoomId}/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders }
-    })
-      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok) throw new Error(data.message || "开局失败");
-        applyWerewolfRoom(data.room);
-        setWerewolfRulePack(buildWerewolfRulePack(data.room.acceptedCount || acceptedMemberCount, "好友房"));
-        setWerewolfMode(data.room?.game ? "playing" : "judge");
-      })
-      .catch((error) => setChatNotice(error.message || "开局失败"));
-  };
-
-  const submitWerewolfAction = async (payload) => {
-    if (!werewolfRoomId) return;
-    setWerewolfActionLoading(true);
-    try {
-      const res = await fetch(`${API}/werewolf/rooms/${werewolfRoomId}/action`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "操作失败");
-      applyWerewolfRoom(data.room);
-      setWerewolfMode("playing");
-      if (payload.type === "speak") setWerewolfSpeechDraft("");
-    } catch (error) {
-      setChatNotice(error.message || "操作失败");
-    } finally {
-      setWerewolfActionLoading(false);
-    }
-  };
-
-  const refreshWerewolfRoom = async () => {
-    if (!werewolfRoomId) return;
-    const res = await fetch(`${API}/werewolf/rooms/${werewolfRoomId}`, { headers: authHeaders });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || "刷新狼人杀房间失败");
-    applyWerewolfRoom(data.room);
-  };
-
-  const inviteWerewolfFriend = (friend) => {
-    const now = Date.now();
-    const expireAt = Number(werewolfInviteCooldowns[friend.id] || 0);
-    if (expireAt > now) return;
-    setWerewolfInviteCooldowns((prev) => ({ ...prev, [friend.id]: now + 30000 }));
-    ensureWerewolfFriendRoom()
-      .then((roomId) =>
-        fetch(`${API}/werewolf/rooms/${roomId}/invite`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders },
-          body: JSON.stringify({ userId: friend.id })
-        })
-      )
-      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok) throw new Error(data.message || "邀请失败");
-        applyWerewolfRoom(data.room);
-        setChatNotice(`已邀请 ${friend.name}，30秒后可再次邀请`);
-      })
-      .catch((error) => {
-        setWerewolfInviteCooldowns((prev) => ({ ...prev, [friend.id]: 0 }));
-        setChatNotice(error.message || "邀请失败");
-      });
-  };
-
-  const respondWerewolfInvite = async (action) => {
-    if (!werewolfRoomId) return;
-    const res = await fetch(`${API}/werewolf/rooms/${werewolfRoomId}/respond`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders },
-      body: JSON.stringify({ action })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || "处理邀请失败");
-    applyWerewolfRoom(data.room);
-  };
-
-  const closeWerewolfModal = async () => {
-    await resetWerewolfSessionRemote();
-    setShowWerewolfInvitePanel(false);
-    setWerewolfInviteCooldowns({});
-    setIsWerewolfMatching(false);
-    setWerewolfRoomId("");
-    setWerewolfRoomMembers([]);
-    setWerewolfMode("menu");
-    setWerewolfGame(null);
-    setWerewolfSpeechDraft("");
-    setWerewolfActionLoading(false);
-    if (werewolfPollingRef.current) {
-      clearInterval(werewolfPollingRef.current);
-      werewolfPollingRef.current = null;
-    }
-    navigate("/planet");
-  };
-
-  const enterWerewolfInvitationRoom = async (roomId) => {
-    const res = await fetch(`${API}/werewolf/rooms/${roomId}`, { headers: authHeaders });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || "进入房间失败");
-    applyWerewolfRoom(data.room);
-    setWerewolfMode(data.room?.game ? "playing" : "room");
   };
 
   const closeMomentCompose = () => {
@@ -5625,34 +5565,38 @@ export default function App() {
           <div className="hero-match-card">
             <div className="hero-level">附近推荐</div>
             <div className="hero-profile-list">
-              {(visibleSystemRobotProfiles.length ? visibleSystemRobotProfiles : [{ id: "empty" }]).map((item) => (
-                <div key={item.id} className="hero-profile-card">
-                  {item.id === "empty" ? (
-                    <p className="feed-tip">正在加载隐藏款资料...</p>
-                  ) : (
-                    <>
-                      <img
-                        className="hero-profile-cover"
-                        src={resolveAssetUrl(item.avatar || "")}
-                        alt={item.nickname || "隐藏款"}
-                        decoding="sync"
-                        fetchPriority="high"
-                        onError={(e) => {
-                          e.currentTarget.onerror = null;
-                          e.currentTarget.src = item.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
-                        }}
-                      />
-                      <div className="hero-profile-meta">
-                        <strong>{item.nickname || "隐藏款"}</strong>
-                        <span>
-                          {item.age || "-"}岁 · {item.city || "同城"}
-                        </span>
-                        <small>{item.hobbies || "期待与你认识"}</small>
-                      </div>
-                    </>
-                  )}
+              {!systemRobotsReady ? (
+                <div className="hero-profile-card">
+                  <p className="feed-tip">正在加载隐藏款资料...</p>
                 </div>
-              ))}
+              ) : visibleSystemRobotProfiles.length ? (
+                visibleSystemRobotProfiles.map((item) => (
+                  <div key={item.id} className="hero-profile-card">
+                    <img
+                      className="hero-profile-cover"
+                      src={resolveAssetUrl(item.avatar || "")}
+                      alt={item.nickname || "隐藏款"}
+                      decoding="sync"
+                      fetchPriority="high"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = item.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
+                      }}
+                    />
+                    <div className="hero-profile-meta">
+                      <strong>{item.nickname || "隐藏款"}</strong>
+                      <span>
+                        {item.age || "-"}岁 · {item.city || "同城"}
+                      </span>
+                      <small>{item.hobbies || "期待与你认识"}</small>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="hero-profile-card">
+                  <p className="feed-tip">暂无隐藏款资料，请确认后端已启动后刷新</p>
+                </div>
+              )}
             </div>
             <p className="hero-title">寻找你附近的隐藏款</p>
             <button className="hero-action" type="button" onClick={startPlanetMatchFlow}>
@@ -5671,8 +5615,8 @@ export default function App() {
               const onOpen =
                 game.id === "sentence"
                   ? openSentenceMenu
-                  : game.id === "werewolf"
-                    ? openWerewolfMenu
+                  : game.id === "commonground"
+                    ? openCommonGroundMenu
                     : game.id === "truth"
                       ? openTruthMenu
                       : openTacitMenu;
@@ -5832,7 +5776,7 @@ export default function App() {
             <>
               <div className="chat-detail-page">
                 <div className="chat-detail-header chat-detail-header--momo">
-                  <button className="chat-detail-back" onClick={() => setActiveConversation(null)}>
+                  <button className="chat-detail-back" onClick={exitChatDetail}>
                     ‹
                   </button>
                   <div className="chat-detail-head-main">
@@ -6749,286 +6693,276 @@ export default function App() {
         </div>
       )}
 
-      {activeGameId === "werewolf" && (
+      {activeGameId === "commonground" && (
         <GamePageShell
-          variant="werewolf"
-          title="狼人杀"
-          subtitle="经典6人局，斗智斗勇找出狼人"
-          Icon={PlanetGameWerewolfIcon}
-          onBack={closeWerewolfModal}
+          variant="commonground"
+          title="共同点探宝"
+          subtitle="大胆找共鸣，挖出你们的暧昧共同点"
+          Icon={PlanetGameCommonGroundIcon}
+          onBack={closeCommonGroundModal}
           sfxEnabled={gameSfxEnabled}
           onToggleSfx={toggleGameSfx}
           showMenuHero={false}
           headerLayout="stacked"
         >
-          <div className={`game-page-panel werewolf-card game-menu-panel${werewolfMode === "menu" ? " game-menu-panel--compact" : ""}`}>
-            {werewolfMode === "menu" && (
-              <div className="game-menu game-menu--compact">
+          <div className="game-page-panel common-ground-card game-menu-panel">
+            <GameMatchOverlay
+              open={isCommonGroundMatching}
+              countdown={gameMatchCountdown}
+              tip="正在为你匹配同频玩家"
+            />
+            {commonGroundMode === "menu" && (
+              <div className="common-ground-menu">
                 <p className="game-menu-intro">
-                  固定 6 人开局，狼人藏身份、好人找线索，支持快速匹配或好友房组局。
+                  每局 {COMMON_GROUND_ROUNDS} 题，聊得更深、更暧昧——选中相同选项即得分，看看你们有多合拍。
                 </p>
-                <div className="game-menu-rules game-menu-rules--werewolf">
-                  <h3>6 人局身份配置</h3>
-                  <div className="game-rules-chips">
-                    {WEREWOLF_MENU_ROLE_LABELS.map(({ key, label }) => {
-                      const count = WEREWOLF_ROLE_CONFIG[6][key];
-                      if (!count) return null;
-                      return (
-                        <span key={key}>
-                          {label} ×{count}
+                <div className="common-ground-topic-section">
+                  <div className="common-ground-topic-head">
+                    <h3>选择探宝类型</h3>
+                    <span>先选主题，再开始匹配</span>
+                  </div>
+                  <div className="common-ground-topic-grid">
+                    {COMMON_GROUND_TOPIC_META.map((topic) => (
+                      <button
+                        key={topic.id}
+                        type="button"
+                        className={`common-ground-topic-card${commonGroundTopic === topic.id ? " active" : ""}`}
+                        onClick={() => setCommonGroundTopic(topic.id)}
+                      >
+                        <span className="common-ground-topic-emoji" aria-hidden="true">
+                          {topic.emoji}
                         </span>
-                      );
-                    })}
-                  </div>
-                  <h3>基本流程</h3>
-                  <ul className="game-rules-list">
-                    {WEREWOLF_MENU_FLOW.map((line) => (
-                      <li key={line}>{line}</li>
+                        <strong>{topic.label}</strong>
+                        <small>{topic.desc}</small>
+                      </button>
                     ))}
-                  </ul>
+                  </div>
                 </div>
-                {werewolfInvitations.length > 0 && (
-                  <div className="werewolf-invite-list game-menu-invites">
-                    {werewolfInvitations.map((item) => (
-                      <div key={`ww-invite-${item.roomId}`} className="contact-item">
-                        <img src={resolveAssetUrl(item.ownerAvatar)} alt={item.ownerName} className="chat-avatar" />
-                        <div className="contact-main">
-                          <strong>{item.ownerName}</strong>
-                          <span>邀请你加入狼人杀好友房</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            enterWerewolfInvitationRoom(item.roomId).catch((e) =>
-                              setChatNotice(e.message || "进入房间失败")
-                            )
-                          }
-                        >
-                          进入
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="game-menu-actions">
+                <div className="game-menu-actions common-ground-menu-actions">
                   <button
                     type="button"
-                    className="game-primary-btn game-primary-btn--werewolf"
-                    onClick={enterWerewolfMatch}
-                    disabled={isWerewolfMatching}
+                    className="game-primary-btn game-primary-btn--commonground"
+                    onClick={startCommonGroundMatch}
+                    disabled={isCommonGroundMatching}
                   >
-                    {isWerewolfMatching ? "匹配中..." : "多人匹配"}
+                    {isCommonGroundMatching ? "匹配中..." : "立即匹配"}
                   </button>
-                  <button type="button" className="game-secondary-btn" onClick={enterWerewolfRoom}>
-                    好友房邀请
+                  <button type="button" className="game-secondary-btn" onClick={() => setCommonGroundMode("invite")}>
+                    邀请好友
                   </button>
                 </div>
               </div>
             )}
-            {werewolfMode === "room" && (
+            {commonGroundMode === "invite" && (
               <div className="werewolf-mode-wrap">
-                <p>
-                  好友房（{werewolfRoomMembers.length}/12） · 已同意 {acceptedMemberCount} 人
-                </p>
-                <div className="werewolf-seats">
-                  {Array.from({ length: 12 }, (_, idx) => {
-                    const member = werewolfRoomMembers[idx];
-                    return (
-                      <div key={`seat-${idx + 1}`} className={`seat ${member ? "filled" : ""}`}>
-                        <strong>{`#${idx + 1}`}</strong>
-                        <span>{member ? member.name : "空位"}</span>
-                        {member && !member.owner && <button type="button">{member.status || "PENDING"}</button>}
+                <p>邀请好友一起探宝</p>
+                <p className="feed-tip">当前类型：{getCommonGroundTopicLabel(commonGroundTopic)}</p>
+                <div className="werewolf-invite-list">
+                  {contacts.length ? (
+                    contacts.map((item) => (
+                      <div key={`cg-invite-${item.id}`} className="contact-item">
+                        <img src={resolveAssetUrl(item.avatar)} alt={item.name} className="chat-avatar" />
+                        <div className="contact-main">
+                          <strong>{item.name}</strong>
+                          <span>{item.status}</span>
+                        </div>
+                        <button type="button" onClick={() => startCommonGroundInviteGame(item)}>
+                          开始
+                        </button>
                       </div>
+                    ))
+                  ) : (
+                    <p className="feed-tip">暂无可邀请好友，先去聊天页加好友吧。</p>
+                  )}
+                </div>
+                <button type="button" onClick={() => setCommonGroundMode("menu")}>
+                  返回菜单
+                </button>
+              </div>
+            )}
+            {commonGroundMode === "playing" && commonGroundCurrentRound && (
+              <div className="common-ground-play-panel">
+                {commonGroundIntroCountdown > 0 && (
+                  <div className="game-intro-overlay">{commonGroundIntroCountdown}</div>
+                )}
+                {commonGroundFxText && <div className="game-fx-toast">{commonGroundFxText}</div>}
+                <div className="truth-duel-bar common-ground-duel-bar">
+                  <div className={`truth-duel-player${!commonGroundMyPicks.length ? " is-active" : " is-ready"}`}>
+                    <img
+                      src={commonGroundMyAvatarUrl}
+                      alt={user?.nickname || "我"}
+                      className="truth-duel-avatar"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = getGenderFallbackAvatar(user?.gender);
+                      }}
+                    />
+                    <strong>{user?.nickname || "我"}</strong>
+                  </div>
+                  <div className="truth-duel-center">
+                    <span className="truth-duel-round">
+                      第 {commonGroundRoundIndex + 1} / {commonGroundRounds.length || COMMON_GROUND_ROUNDS} 题
+                    </span>
+                    <span className="truth-duel-vs">VS</span>
+                    <span className="truth-duel-style">共同点 {commonGroundScore}</span>
+                  </div>
+                  <div className={`truth-duel-player peer${commonGroundPeerPicks.length ? " is-ready" : ""}`}>
+                    <img
+                      src={commonGroundPeerAvatarUrl}
+                      alt={commonGroundOpponent?.name || "对方"}
+                      className="truth-duel-avatar"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = getGenderFallbackAvatar(commonGroundOpponent?.gender);
+                      }}
+                    />
+                    <strong>{commonGroundOpponent?.name || "对方"}</strong>
+                    {commonGroundResolving && !commonGroundPeerPicks.length && (
+                      <span className="common-ground-peer-status">思考中...</span>
+                    )}
+                  </div>
+                </div>
+                <div className="game-progress-wrap">
+                  <div className="game-progress-label">
+                    <span>探宝进度</span>
+                    <strong>{commonGroundProgressPercent}%</strong>
+                  </div>
+                  <div className="game-progress-bar">
+                    <span style={{ width: `${commonGroundProgressPercent}%` }} />
+                  </div>
+                </div>
+                <h4 className="common-ground-prompt">{commonGroundCurrentRound.prompt}</h4>
+                <div className="common-ground-play-meta">
+                  <span className="game-pill common-ground-topic-pill">
+                    {commonGroundTopicMeta.emoji} {commonGroundTopicMeta.label}
+                  </span>
+                </div>
+                <p className="feed-tip common-ground-hint">
+                  {commonGroundPeerPicks.length
+                    ? commonGroundOverlap.length
+                      ? `发现 ${commonGroundOverlap.length} 个共同点！`
+                      : "本题暂无共同点，下一题继续挖"
+                    : `${commonGroundCurrentRound.hint || `可多选 1-${COMMON_GROUND_MAX_PICK} 项`} · 剩余 ${commonGroundCountdown}s`}
+                </p>
+                <div className="common-ground-option-grid">
+                  {commonGroundCurrentRound.options.map((option) => {
+                    const isMine =
+                      commonGroundMyPicks.includes(option) ||
+                      (!commonGroundMyPicks.length && commonGroundDraftPicks.includes(option));
+                    const isPeer = commonGroundPeerPicks.includes(option);
+                    const isOverlap = isMine && isPeer;
+                    const className = [
+                      "common-ground-option",
+                      isOverlap ? "is-overlap" : "",
+                      isMine && !isOverlap ? "is-mine" : "",
+                      isPeer && !isOverlap ? "is-peer" : "",
+                      !commonGroundMyPicks.length && !commonGroundPeerPicks.length && isMine ? "is-selected" : ""
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
+                    return (
+                      <button
+                        key={`${commonGroundCurrentRound.id}-${option}`}
+                        type="button"
+                        className={className}
+                        disabled={
+                          Boolean(commonGroundMyPicks.length) ||
+                          commonGroundPeerPicks.length > 0 ||
+                          commonGroundResolving ||
+                          commonGroundIntroCountdown > 0
+                        }
+                        onClick={() => toggleCommonGroundPick(option)}
+                      >
+                        {option}
+                        {isOverlap ? <em>共同点</em> : null}
+                      </button>
                     );
                   })}
                 </div>
-                {showWerewolfInvitePanel && (
-                  <div className="werewolf-invite-list">
-                    {contacts.map((item) => {
-                      const member = werewolfRoomMembers.find((m) => m.id === item.id);
-                      const cooldownLeft = Math.max(
-                        0,
-                        Math.ceil((Number(werewolfInviteCooldowns[item.id] || 0) - Date.now()) / 1000)
-                      );
-                      const roomFull = invitedMemberCount >= 11;
-                      const disabled = roomFull || Boolean(member) || cooldownLeft > 0;
-                      let label = "邀请";
-                      if (member?.status === "PENDING") label = "已邀请";
-                      else if (member?.status === "ACCEPTED") label = "已同意";
-                      else if (cooldownLeft > 0) label = `已邀请(${cooldownLeft}s)`;
-                      else if (roomFull) label = "已满";
-                      return (
-                        <div key={`invite-${item.id}`} className="contact-item">
-                          <img src={resolveAssetUrl(item.avatar)} alt={item.name} className="chat-avatar" />
-                          <div className="contact-main">
-                            <strong>{item.name}</strong>
-                            <span>{item.status}</span>
-                          </div>
-                          <button type="button" disabled={disabled} onClick={() => inviteWerewolfFriend(item)}>
-                            {label}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  disabled={acceptedMemberCount < 6}
-                  onClick={startWerewolfRoomGame}
-                >
-                  {acceptedMemberCount < 6 ? "至少6名玩家同意后开始" : "开始游戏"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    ensureWerewolfFriendRoom().catch((e) => setChatNotice(e.message));
-                    setShowWerewolfInvitePanel((prev) => !prev);
-                  }}
-                >
-                  {showWerewolfInvitePanel ? "收起邀请列表" : "邀请好友"}
-                </button>
-                {currentWerewolfMember && !currentWerewolfMember.owner && !currentWerewolfMember.accepted && (
-                  <div className="werewolf-menu">
-                    <button
-                      type="button"
-                      onClick={() => respondWerewolfInvite("ACCEPT").catch((e) => setChatNotice(e.message))}
-                    >
-                      同意邀请
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => respondWerewolfInvite("DECLINE").catch((e) => setChatNotice(e.message))}
-                    >
-                      拒绝邀请
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-            {werewolfMode === "playing" && werewolfGame && (
-              <div className="werewolf-mode-wrap werewolf-judge-sheet">
-                {werewolfIntroCountdown > 0 && <div className="game-intro-overlay">{werewolfIntroCountdown}</div>}
-                {werewolfFxText && <div className="game-fx-toast">{werewolfFxText}</div>}
-                <div className="game-hud-row">
-                  <span className="game-pill">存活 {werewolfAliveCount}/{werewolfTotalCount || 0}</span>
-                  <span className={`game-pill ${werewolfGame.phase === "NIGHT" ? "danger" : "safe"}`}>
-                    {werewolfGame.phase === "NIGHT" ? "夜晚博弈" : werewolfGame.phase === "DAY_SPEECH" ? "白天发言" : "白天投票"}
-                  </span>
-                </div>
-                <p>
-                  第 {werewolfGame.day} 天 · {werewolfGame.phase === "NIGHT" ? "夜晚阶段" : werewolfGame.phase === "DAY_SPEECH" ? "白天发言" : werewolfGame.phase === "DAY_VOTE" ? "白天投票" : "游戏结束"}
-                </p>
-                <p className="feed-tip">
-                  你的身份：{werewolfGame.myRole || "未知"}
-                  {werewolfGame.winner ? ` · 胜利阵营：${werewolfGame.winner === "WOLF" ? "狼人" : "好人"}` : ""}
-                </p>
-                {werewolfGame.phase === "DAY_SPEECH" && !werewolfGame.winner && (
-                  <p className="feed-tip">
-                    发言倒计时：{Math.max(0, werewolfSpeechCountdown || Number(werewolfGame.speechSecondsLeft || 0))}s
-                  </p>
-                )}
-                <div className="werewolf-role-grid">
-                  {werewolfGame.players.map((item) => (
-                    <span key={`ww-player-${item.userId}`}>
-                      {item.name} · {item.alive ? "存活" : "出局"}
-                      {item.role ? ` · ${item.role}` : ""}
-                    </span>
-                  ))}
-                </div>
-                <div className="werewolf-script-list">
-                  {werewolfGame.logs.map((line) => (
-                    <p key={line.id}>{line.text}</p>
-                  ))}
-                </div>
-                {werewolfGame.actions?.canNightKill && (
-                  <div className="werewolf-menu">
-                    {werewolfGame.actions.allowedTargets.map((item) => (
-                      <button
-                        key={`kill-${item.userId}`}
-                        type="button"
-                        disabled={werewolfActionLoading}
-                        onClick={() => submitWerewolfAction({ type: "night-kill", targetUserId: item.userId })}
-                      >
-                        夜杀 {item.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {werewolfGame.actions?.canSpeak && (
-                  <div className="werewolf-menu">
-                    <input
-                      value={werewolfSpeechDraft}
-                      onChange={(e) => setWerewolfSpeechDraft(e.target.value)}
-                      placeholder="输入你的发言"
-                    />
-                    <button
-                      type="button"
-                      disabled={werewolfActionLoading}
-                      onClick={() => submitWerewolfAction({ type: "speak", text: werewolfSpeechDraft })}
-                    >
-                      提交发言
-                    </button>
-                  </div>
-                )}
-                {werewolfGame.actions?.canVote && (
-                  <div className="werewolf-menu">
-                    {werewolfGame.actions.allowedTargets.map((item) => (
-                      <button
-                        key={`vote-${item.userId}`}
-                        type="button"
-                        disabled={werewolfActionLoading}
-                        onClick={() => submitWerewolfAction({ type: "vote", targetUserId: item.userId })}
-                      >
-                        投票 {item.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {!werewolfGame.winner && !werewolfGame.actions?.canNightKill && !werewolfGame.actions?.canSpeak && !werewolfGame.actions?.canVote && (
-                  <p className="feed-tip">等待其他玩家行动中...</p>
-                )}
-              </div>
-            )}
-            {werewolfMode === "playing" && !werewolfGame && (
-              <div className="werewolf-mode-wrap">
-                <p>{isWerewolfMatching ? "正在匹配对手..." : "正在进入游戏房间..."}</p>
-                <p className="feed-tip">
-                  {isWerewolfMatching ? "系统正在为你组建 6 人局，请稍候。" : "正在同步对局状态，请稍候 1-2 秒。"}
-                </p>
-                {!isWerewolfMatching && (
-                  <button type="button" onClick={() => refreshWerewolfRoom().catch((e) => setChatNotice(e.message))}>
-                    立即重试
+                {!commonGroundMyPicks.length && !commonGroundPeerPicks.length && (
+                  <button
+                    type="button"
+                    className="game-primary-btn game-primary-btn--commonground common-ground-confirm-btn"
+                    disabled={commonGroundDraftPicks.length === 0 || commonGroundResolving || commonGroundIntroCountdown > 0}
+                    onClick={confirmCommonGroundPicks}
+                  >
+                    确认选择（{commonGroundDraftPicks.length}/{COMMON_GROUND_MAX_PICK}）
                   </button>
                 )}
               </div>
             )}
-            {werewolfMode === "judge" && werewolfRulePack && (
-              <div className="werewolf-mode-wrap werewolf-judge-sheet">
-                <p>
-                  法官一页纸 · {werewolfRulePack.modeLabel} · {werewolfRulePack.count}人局
-                </p>
-                <div className="werewolf-role-grid">
-                  <span>狼人 x {werewolfRulePack.role.wolf}</span>
-                  <span>预言家 x {werewolfRulePack.role.seer}</span>
-                  <span>女巫 x {werewolfRulePack.role.witch}</span>
-                  <span>猎人 x {werewolfRulePack.role.hunter}</span>
-                  <span>白痴 x {werewolfRulePack.role.idiot}</span>
-                  <span>平民 x {werewolfRulePack.role.villager}</span>
+            {commonGroundMode === "result" && (
+              <div className="game-result-panel common-ground-result-panel">
+                <div className="truth-duel-bar common-ground-duel-bar">
+                  <div className="truth-duel-player">
+                    <img
+                      src={commonGroundMyAvatarUrl}
+                      alt={user?.nickname || "我"}
+                      className="truth-duel-avatar"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = getGenderFallbackAvatar(user?.gender);
+                      }}
+                    />
+                    <strong>{user?.nickname || "我"}</strong>
+                  </div>
+                  <div className="truth-duel-center">
+                    <span className="truth-duel-round">探宝完成</span>
+                    <span className="truth-duel-vs">VS</span>
+                    <span className="truth-duel-style">共同点 {commonGroundScore}</span>
+                  </div>
+                  <div className="truth-duel-player peer">
+                    <img
+                      src={commonGroundPeerAvatarUrl}
+                      alt={commonGroundOpponent?.name || "对方"}
+                      className="truth-duel-avatar"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = getGenderFallbackAvatar(commonGroundOpponent?.gender);
+                      }}
+                    />
+                    <strong>{commonGroundOpponent?.name || "对方"}</strong>
+                  </div>
                 </div>
-                <p>统一规则：{werewolfRulePack.baseRule}</p>
-                <p>补充规则：女巫不能自救/一晚一药；猎人被毒不能开枪；白痴翻牌免死且失去投票权。</p>
-                <div className="werewolf-script-list">
-                  {werewolfRulePack.script.map((line, idx) => (
-                    <p key={`script-${idx}`}>{idx + 1}. {line}</p>
+                {(() => {
+                  const maxScore =
+                    (commonGroundRounds.length || COMMON_GROUND_ROUNDS) *
+                    COMMON_GROUND_MAX_PICK *
+                    COMMON_GROUND_POINTS_PER_MATCH;
+                  const percent = Math.round((commonGroundScore / Math.max(1, maxScore)) * 100);
+                  return (
+                    <>
+                      <div className={`result-rank-chip ${percent >= 70 ? "gold" : percent >= 45 ? "silver" : "bronze"}`}>
+                        {percent >= 70 ? "灵魂同频" : percent >= 45 ? "默契在线" : "继续磨合"}
+                      </div>
+                      <p className="feed-tip game-result-tip">
+                        {percent >= 70
+                          ? "共同点超多，你们真的很合拍！"
+                          : percent >= 45
+                            ? "已经挖到不少共鸣，再多聊几句会更熟。"
+                            : "共同点还在路上，下一局说不定就撞上了。"}
+                      </p>
+                    </>
+                  );
+                })()}
+                <div className="truth-result-logs common-ground-result-logs">
+                  {commonGroundLogs.map((line, idx) => (
+                    <p key={`cg-log-${idx}`}>{line}</p>
                   ))}
                 </div>
-                <button type="button" onClick={startWerewolfRoomGame}>
-                  确认开局
-                </button>
-                <button type="button" onClick={() => setWerewolfMode("menu")}>
-                  返回菜单
-                </button>
+                <div className="game-result-actions">
+                  <div className="game-menu-actions game-result-social">
+                    <button type="button" className="game-secondary-btn" onClick={handleCommonGroundViewProfile}>
+                      查看对方资料
+                    </button>
+                    <button type="button" className="game-secondary-btn" onClick={handleCommonGroundContact}>
+                      联系对方
+                    </button>
+                  </div>
+                  <button type="button" className="game-primary-btn game-primary-btn--commonground" onClick={startCommonGroundMatch}>
+                    再来一局
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -7039,7 +6973,7 @@ export default function App() {
         <GamePageShell
           variant="tacit"
           title="二选一默契挑战"
-          subtitle="10道二选一，看看默契值有多高"
+          subtitle="10道二选一，测测你们的暧昧默契"
           Icon={PlanetGameTacitIcon}
           onBack={closeTacitModal}
           sfxEnabled={gameSfxEnabled}
@@ -7048,9 +6982,37 @@ export default function App() {
           headerLayout="stacked"
         >
           <div className="game-page-panel werewolf-card tacit-card game-menu-panel">
+            <GameMatchOverlay open={isTacitMatching} countdown={gameMatchCountdown} tip="正在为你匹配默契对手" />
             {tacitMode === "menu" && (
               <div className="game-menu">
-                <p className="game-menu-intro">每局 10 题，选同一个答案 +10 分，看看你们的默契值有多高。</p>
+                <p className="game-menu-intro">
+                  每局 {TACIT_ROUNDS_PER_GAME} 题，选同一个答案 +10 分。先选主题，再开始匹配。
+                </p>
+                <div className="common-ground-topic-section tacit-topic-section">
+                  <div className="common-ground-topic-head">
+                    <h3>选择默契主题</h3>
+                    <span>尺度由浅入深，先选类型再匹配</span>
+                  </div>
+                  <div className="common-ground-topic-grid">
+                    {TACIT_TOPIC_META.map((topic) => (
+                      <button
+                        key={topic.id}
+                        type="button"
+                        className={`common-ground-topic-card tacit-topic-card${tacitTopic === topic.id ? " active" : ""}`}
+                        onClick={() => {
+                          setTacitTopic(topic.id);
+                          setTacitRoomId("");
+                        }}
+                      >
+                        <span className="common-ground-topic-emoji" aria-hidden="true">
+                          {topic.emoji}
+                        </span>
+                        <strong>{topic.label}</strong>
+                        <small>{topic.desc}</small>
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 {tacitInvitations.length > 0 && (
                   <div className="werewolf-invite-list game-menu-invites">
                     {tacitInvitations.map((item) => (
@@ -7075,8 +7037,13 @@ export default function App() {
                   </div>
                 )}
                 <div className="game-menu-actions">
-                  <button type="button" className="game-primary-btn game-primary-btn--tacit" onClick={startTacitMatch}>
-                    立即匹配
+                  <button
+                    type="button"
+                    className="game-primary-btn game-primary-btn--tacit"
+                    onClick={startTacitMatch}
+                    disabled={isTacitMatching}
+                  >
+                    {isTacitMatching ? "匹配中..." : "立即匹配"}
                   </button>
                   <button type="button" className="game-secondary-btn" onClick={() => setTacitMode("invite")}>
                     邀请好友
@@ -7084,21 +7051,10 @@ export default function App() {
                 </div>
               </div>
             )}
-            {tacitMode === "match" && (
-              <div className="werewolf-mode-wrap">
-                <p>匹配模式（2人）</p>
-                <p className="feed-tip">{isTacitMatching ? "匹配中，请稍候..." : "点击按钮开始匹配"}</p>
-                <button type="button" onClick={startTacitMatch} disabled={isTacitMatching}>
-                  {isTacitMatching ? "匹配中..." : "开始匹配"}
-                </button>
-                <button type="button" onClick={() => setTacitMode("menu")}>
-                  菜单
-                </button>
-              </div>
-            )}
             {tacitMode === "invite" && (
               <div className="werewolf-mode-wrap">
-                <p>选择一个好友开始 10 题默契挑战</p>
+                <p>选择一个好友开始 {TACIT_ROUNDS_PER_GAME} 题默契挑战</p>
+                <p className="feed-tip">当前主题：{getTacitTopicLabel(tacitTopic)}</p>
                 <div className="werewolf-invite-list">
                   {contacts.map((item) => (
                     <div key={`tacit-${item.id}`} className="contact-item">
@@ -7173,8 +7129,8 @@ export default function App() {
                   </div>
                 </div>
                 <p>
-                  第 {Number(tacitCurrentQuestion.sortOrder || 0) + 1} / {tacitRoom?.questionCount || 10} 题 · 当前默契值{" "}
-                  {tacitRoom?.score || 0}
+                  第 {Number(tacitCurrentQuestion.sortOrder || 0) + 1} / {tacitRoom?.questionCount || TACIT_ROUNDS_PER_GAME} 题 ·{" "}
+                  {tacitRoom?.topicLabel || getTacitTopicLabel(tacitTopic)} · 当前默契值 {tacitRoom?.score || 0}
                 </p>
                 <p className="feed-tip">本题剩余作答时间：{tacitCountdownSec}s</p>
                 <p className="tacit-question-title">{tacitCurrentQuestion.prompt}</p>
@@ -7219,44 +7175,61 @@ export default function App() {
               </div>
             )}
             {tacitMode === "result" && tacitRoom && (
-              <div className="werewolf-mode-wrap">
-                <p>挑战完成</p>
-                <h4 className="tacit-score">默契值：{tacitRoom.score || 0} / 100</h4>
+              <div className="game-result-panel tacit-result-panel">
+                <div className="truth-duel-bar game-result-duel">
+                  <div className="truth-duel-player">
+                    <img
+                      src={tacitMyAvatarUrl}
+                      alt={user?.nickname || "我"}
+                      className="truth-duel-avatar"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = getGenderFallbackAvatar(user?.gender);
+                      }}
+                    />
+                    <strong>{user?.nickname || "我"}</strong>
+                  </div>
+                  <div className="truth-duel-center">
+                    <span className="truth-duel-round">挑战完成</span>
+                    <span className="truth-duel-vs">VS</span>
+                    <span className="truth-duel-style">默契 {tacitRoom.score || 0}</span>
+                  </div>
+                  <div className="truth-duel-player peer">
+                    <img
+                      src={tacitPeerAvatarUrl}
+                      alt={tacitPeerDisplay?.name || "对方"}
+                      className="truth-duel-avatar"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = FEMALE_SYMBOL_AVATAR;
+                      }}
+                    />
+                    <strong>{tacitPeerDisplay?.name || tacitPeerMember?.name || "对方"}</strong>
+                  </div>
+                </div>
                 <div className={`result-rank-chip ${(tacitRoom.score || 0) >= 80 ? "gold" : (tacitRoom.score || 0) >= 50 ? "silver" : "bronze"}`}>
                   {(tacitRoom.score || 0) >= 80 ? "王者默契" : (tacitRoom.score || 0) >= 50 ? "进阶默契" : "新手默契"}
                 </div>
-                <p className="feed-tip">
+                <p className="feed-tip game-result-tip">
                   {(tacitRoom.score || 0) >= 80
                     ? "默契爆表，简直心有灵犀！"
                     : (tacitRoom.score || 0) >= 50
                       ? "默契不错，再玩几局会更合拍。"
                       : "默契值还有提升空间，继续互相了解吧。"}
                 </p>
-                {tacitPeerMember && (
-                  <div className="contact-item">
-                    <img
-                      src={resolveAssetUrl(tacitPeerDisplay?.avatar || tacitPeerMember.avatar)}
-                      alt={tacitPeerDisplay?.name || tacitPeerMember.name}
-                      className="chat-avatar"
-                    />
-                    <div className="contact-main">
-                      <strong>{tacitPeerDisplay?.name || tacitPeerMember.name || "对方玩家"}</strong>
-                      <span>本局对手 · 点击可添加好友</span>
-                    </div>
-                    <button type="button" onClick={() => onTacitAddFriend()}>
-                      添加
+                <div className="game-result-actions">
+                  <div className="game-menu-actions game-result-social">
+                    <button type="button" className="game-secondary-btn" onClick={handleTacitViewProfile}>
+                      查看对方资料
+                    </button>
+                    <button type="button" className="game-secondary-btn" onClick={handleTacitContact}>
+                      联系对方
                     </button>
                   </div>
-                )}
-                <button type="button" onClick={() => inviteTacitReplay()}>
-                  邀请再来一局
-                </button>
-                <button type="button" onClick={() => rematchTacitRound()}>
-                  重新匹配
-                </button>
-                <button type="button" onClick={() => setTacitMode("menu")}>
-                  返回菜单
-                </button>
+                  <button type="button" className="game-primary-btn game-primary-btn--tacit" onClick={rematchTacitRound}>
+                    再来一局
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -7276,6 +7249,7 @@ export default function App() {
           headerLayout="stacked"
         >
           <div className="game-page-panel game-page-panel--sentence sentence-menu-panel">
+            <GameMatchOverlay open={isSentenceMatching} countdown={gameMatchCountdown} tip="正在为你匹配同频玩家" />
             {sentenceMode === "menu" && (
               <div className="sentence-menu">
                 <p className="sentence-menu-intro">
@@ -7307,28 +7281,18 @@ export default function App() {
                   </div>
                 </div>
                 <div className="sentence-mode-actions">
-                  <button type="button" className="sentence-primary-btn" onClick={startSentenceMatch}>
-                    立即匹配
+                  <button
+                    type="button"
+                    className="sentence-primary-btn"
+                    onClick={startSentenceMatch}
+                    disabled={isSentenceMatching}
+                  >
+                    {isSentenceMatching ? "匹配中..." : "立即匹配"}
                   </button>
                   <button type="button" className="sentence-secondary-btn" onClick={() => setSentenceMode("invite")}>
                     邀请好友
                   </button>
                 </div>
-              </div>
-            )}
-            {sentenceMode === "match" && (
-              <div className="werewolf-mode-wrap">
-                <p>句子接龙匹配中（2人）</p>
-                <p className="feed-tip">
-                  当前题型：{getSentenceTopicLabel(sentenceTopic)} ·{" "}
-                  {isSentenceMatching ? "正在为你匹配同频玩家..." : "点击按钮开始匹配"}
-                </p>
-                <button type="button" onClick={startSentenceMatch} disabled={isSentenceMatching}>
-                  {isSentenceMatching ? "匹配中..." : "开始匹配"}
-                </button>
-                <button type="button" onClick={() => setSentenceMode("menu")}>
-                  返回菜单
-                </button>
               </div>
             )}
             {sentenceMode === "invite" && (
@@ -7358,10 +7322,64 @@ export default function App() {
               </div>
             )}
             {sentenceMode === "playing" && sentenceCurrentRound && (
-              <div className="werewolf-mode-wrap">
+              <div className="sentence-play-panel">
                 {sentenceIntroCountdown > 0 && <div className="game-intro-overlay">{sentenceIntroCountdown}</div>}
                 {sentenceFxText && <div className="game-fx-toast">{sentenceFxText}</div>}
-                <div className="game-progress-wrap">
+                <div className="sentence-duel-bar">
+                  <div className={`sentence-duel-player${sentenceMyChoice ? " is-ready" : " is-active"}`}>
+                    <div className="sentence-duel-avatar-wrap">
+                      <img
+                        src={sentenceMyAvatarUrl}
+                        alt={user?.nickname || "我"}
+                        className="sentence-duel-avatar"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = getGenderFallbackAvatar(user?.gender);
+                        }}
+                      />
+                    </div>
+                    <strong>{user?.nickname || "我"}</strong>
+                    <span className="sentence-duel-status">
+                      {sentenceMyChoice ? "已选句" : "选句中"}
+                    </span>
+                  </div>
+                  <div className="sentence-duel-center">
+                    <span className="sentence-duel-vs">VS</span>
+                    <strong className="sentence-duel-score">{sentenceScore}</strong>
+                    <span className="sentence-duel-score-label">默契分</span>
+                  </div>
+                  <div
+                    className={`sentence-duel-player peer${sentencePeerChoice ? " is-ready" : sentenceMyChoice ? " is-thinking" : ""}`}
+                  >
+                    <div className="sentence-duel-avatar-wrap">
+                      <img
+                        src={sentencePeerAvatarUrl}
+                        alt={sentenceOpponent?.name || "对方"}
+                        className="sentence-duel-avatar"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = getGenderFallbackAvatar(sentenceOpponent?.gender);
+                        }}
+                      />
+                    </div>
+                    <strong>{sentenceOpponent?.name || "对方"}</strong>
+                    <span className="sentence-duel-status">
+                      {sentencePeerChoice ? "已选句" : sentenceMyChoice ? "思考中..." : "待选句"}
+                    </span>
+                  </div>
+                </div>
+                <div className="sentence-play-meta">
+                  <span className="game-pill">
+                    第 {sentenceRoundIndex + 1}/{sentenceRounds.length} 题
+                  </span>
+                  <span className="game-pill sentence-topic-pill">
+                    {sentenceTopicMeta.emoji} {getSentenceTopicLabel(sentenceTopic)}
+                  </span>
+                  <span className={`game-pill${sentenceCountdown <= 5 ? " danger" : ""}`}>
+                    {sentenceCountdown}s
+                  </span>
+                </div>
+                <div className="game-progress-wrap sentence-play-progress">
                   <div className="game-progress-label">
                     <span>接龙进度</span>
                     <strong>{sentenceProgressPercent}%</strong>
@@ -7370,53 +7388,105 @@ export default function App() {
                     <span style={{ width: `${sentenceProgressPercent}%` }} />
                   </div>
                 </div>
-                <p>
-                  第 {sentenceRoundIndex + 1} / {sentenceRounds.length} 题 · {sentenceOpponent?.name || "对方"} ·{" "}
-                  {getSentenceTopicLabel(sentenceTopic)}
-                </p>
-                <p className="feed-tip">本题倒计时：{sentenceCountdown}s</p>
-                <div className="sentence-round-card">
-                  <strong>{sentenceCurrentRound.stem}</strong>
-                  <div className="sentence-options">
+                <div className="sentence-round-card sentence-round-card--play">
+                  <p className="sentence-stem-kicker">同频接龙 · 选出你的下一句</p>
+                  <strong className="sentence-stem-text">{sentenceCurrentRound.stem}</strong>
+                  <div className="sentence-options sentence-options--play">
                     {sentenceCurrentRound.options.map((option) => (
                       <button
                         key={option}
                         type="button"
-                        className={sentenceMyChoice === option ? "active-choice" : ""}
+                        className={`sentence-option-btn${sentenceMyChoice === option ? " active-choice" : ""}${
+                          sentencePeerChoice === option && sentencePeerChoice !== sentenceMyChoice ? " peer-picked" : ""
+                        }${sentencePeerChoice === option && sentencePeerChoice === sentenceMyChoice ? " matched" : ""}`}
                         disabled={Boolean(sentenceMyChoice) || sentenceResolving}
                         onClick={() => pickSentenceChoice(option)}
                       >
-                        {option}
+                        <span className="sentence-option-text">{option}</span>
+                        {sentenceMyChoice === option && <em className="sentence-option-tag mine">我的选择</em>}
+                        {sentencePeerChoice === option && sentenceMyChoice && sentencePeerChoice !== sentenceMyChoice && (
+                          <em className="sentence-option-tag peer">对方选择</em>
+                        )}
+                        {sentencePeerChoice === option && sentencePeerChoice === sentenceMyChoice && (
+                          <em className="sentence-option-tag peer">双方同选</em>
+                        )}
                       </button>
                     ))}
                   </div>
                 </div>
                 {sentenceMyChoice && (
-                  <p className="feed-tip">
-                    你选择：{sentenceMyChoice}
-                    {sentencePeerChoice ? ` ｜ 对方选择：${sentencePeerChoice}` : " ｜ 等待对方选择..."}
-                  </p>
+                  <div
+                    className={`sentence-sync-card${
+                      sentencePeerChoice
+                        ? sentencePeerChoice === sentenceMyChoice
+                          ? " is-match"
+                          : " is-miss"
+                        : " is-waiting"
+                    }`}
+                  >
+                    <p>
+                      你选了「{sentenceMyChoice}」
+                      {sentencePeerChoice
+                        ? sentencePeerChoice === sentenceMyChoice
+                          ? " · 双方同频，默契 +20"
+                          : ` · 对方选了「${sentencePeerChoice}」`
+                        : " · 等待对方选句..."}
+                    </p>
+                  </div>
                 )}
-                <p className="feed-tip">当前默契分：{sentenceScore}</p>
               </div>
             )}
             {sentenceMode === "result" && (
-              <div className="werewolf-mode-wrap">
-                <p>本局完成：默契分 {sentenceScore} / 100</p>
+              <div className="sentence-result-panel game-result-panel">
+                <div className="sentence-result-duel">
+                  <div className="sentence-duel-player">
+                    <img
+                      src={sentenceMyAvatarUrl}
+                      alt={user?.nickname || "我"}
+                      className="sentence-duel-avatar"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = getGenderFallbackAvatar(user?.gender);
+                      }}
+                    />
+                    <strong>{user?.nickname || "我"}</strong>
+                  </div>
+                  <div className="sentence-result-score">
+                    <strong>{sentenceScore}</strong>
+                    <span>默契分 / 100</span>
+                  </div>
+                  <div className="sentence-duel-player">
+                    <img
+                      src={sentencePeerAvatarUrl}
+                      alt={sentenceOpponent?.name || "对方"}
+                      className="sentence-duel-avatar"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = getGenderFallbackAvatar(sentenceOpponent?.gender);
+                      }}
+                    />
+                    <strong>{sentenceOpponent?.name || "对方"}</strong>
+                  </div>
+                </div>
                 <div className={`result-rank-chip ${sentenceScore >= 80 ? "gold" : sentenceScore >= 50 ? "silver" : "bronze"}`}>
                   {sentenceScore >= 80 ? "灵魂同频" : sentenceScore >= 50 ? "默契在线" : "继续磨合"}
                 </div>
-                <div className="werewolf-script-list">
+                <div className="sentence-result-logs">
                   {sentenceLogs.map((line, idx) => (
                     <p key={`sentence-log-${idx}`}>{line}</p>
                   ))}
                 </div>
-                <div className="werewolf-menu">
-                  <button type="button" onClick={startSentenceMatch}>
+                <div className="game-result-actions">
+                  <div className="game-menu-actions game-result-social">
+                    <button type="button" className="game-secondary-btn" onClick={handleSentenceViewProfile}>
+                      查看对方资料
+                    </button>
+                    <button type="button" className="game-secondary-btn" onClick={handleSentenceContact}>
+                      联系对方
+                    </button>
+                  </div>
+                  <button type="button" className="game-primary-btn" onClick={startSentenceMatch}>
                     再来一局
-                  </button>
-                  <button type="button" onClick={() => setSentenceMode("menu")}>
-                    返回菜单
                   </button>
                 </div>
               </div>
@@ -7555,25 +7625,23 @@ export default function App() {
 
               <div className="peer-home-actionbar">
                 <button type="button" className="peer-home-sayhi-btn" onClick={handlePeerSayHi}>
-                  打招呼
+                  发起聊天
                 </button>
                 <button
                   type="button"
                   className={`peer-home-follow-btn ${
                     peerProfileFollow.mutualFollow || peerProfileFollow.isFriend
                       ? "peer-home-follow-btn--mutual"
-                      : peerProfileFollow.iFollow
-                        ? "peer-home-follow-btn--done"
-                        : ""
+                      : ""
                   }`}
                   disabled={
-                    peerProfileFollowBusy ||
+                    peerProfileAddContactBusy ||
                     peerProfileFollow.mutualFollow ||
                     peerProfileFollow.isFriend
                   }
-                  onClick={togglePeerProfileFollow}
+                  onClick={handlePeerAddContact}
                 >
-                  {peerProfileFollowBusy ? "…" : peerProfileFollowButtonLabel}
+                  {peerProfileAddContactBusy ? "…" : peerProfileAddContactLabel}
                 </button>
               </div>
             </>
@@ -7735,7 +7803,7 @@ export default function App() {
         <GamePageShell
           variant="truth"
           title="真心话挑战"
-          subtitle="掷骰选题，勇敢说出真心话"
+          subtitle="掷骰选题，撩出真心话"
           Icon={PlanetGameTruthIcon}
           onBack={closeTruthModal}
           sfxEnabled={gameSfxEnabled}
@@ -7744,29 +7812,42 @@ export default function App() {
           headerLayout="stacked"
         >
           <div className="game-page-panel truth-modal-card game-menu-panel">
+            <GameMatchOverlay open={isTruthMatching} countdown={gameMatchCountdown} tip="正在为你匹配异性用户" />
             {truthMode === "menu" && (
               <div className="game-menu">
                 <p className="game-menu-intro">
-                  双方掷骰决定谁来选题，点数低的一方作答，共 {TRUTH_ROUNDS_PER_GAME} 回合真心话挑战。
+                  双方掷骰决定谁来选题，点数低的一方从选项里选答案，共 {TRUTH_ROUNDS_PER_GAME} 回合暧昧真心话。
                 </p>
-                <div className="game-menu-section">
-                  <h3>选择题目风格</h3>
-                  <div className="game-option-grid">
-                    {TRUTH_DIFFICULTY_OPTIONS.map((item) => (
+                <div className="common-ground-topic-section truth-topic-section">
+                  <div className="common-ground-topic-head">
+                    <h3>选择真心话题库</h3>
+                    <span>尺度由浅入深，先选风格再匹配</span>
+                  </div>
+                  <div className="common-ground-topic-grid">
+                    {TRUTH_STYLE_OPTIONS.map((item) => (
                       <button
                         key={item.id}
                         type="button"
-                        className={`game-option-card${truthDifficulty === item.id ? " active" : ""}`}
+                        className={`common-ground-topic-card truth-topic-card${truthDifficulty === item.id ? " active" : ""}`}
                         onClick={() => setTruthDifficulty(item.id)}
                       >
-                        {item.label}
+                        <span className="common-ground-topic-emoji" aria-hidden="true">
+                          {item.emoji}
+                        </span>
+                        <strong>{item.label}</strong>
+                        <small>{item.desc}</small>
                       </button>
                     ))}
                   </div>
                 </div>
                 <div className="game-menu-actions">
-                  <button type="button" className="game-primary-btn game-primary-btn--truth" onClick={startTruthMatch}>
-                    立即匹配
+                  <button
+                    type="button"
+                    className="game-primary-btn game-primary-btn--truth"
+                    onClick={startTruthMatch}
+                    disabled={isTruthMatching}
+                  >
+                    {isTruthMatching ? "匹配中..." : "立即匹配"}
                   </button>
                   <button type="button" className="game-secondary-btn" onClick={openTruthInviteRoom}>
                     邀请好友
@@ -7774,7 +7855,6 @@ export default function App() {
                 </div>
               </div>
             )}
-            {truthMode === "match" && <p>{isTruthMatching ? "正在匹配异性用户..." : "匹配完成，即将进入挑战"}</p>}
             {truthMode === "invite" && (
               <div className="werewolf-mode-wrap">
                 <p>邀请房间（实时状态）</p>
@@ -7815,10 +7895,64 @@ export default function App() {
               </div>
             )}
             {truthMode === "playing" && (
-              <div className={`werewolf-mode-wrap truth-round-panel ${truthRoundAnimating ? "round-enter" : ""}`}>
-                <p>
-                  对手：{truthOpponent?.name || "隐藏款"} · 本局共 {TRUTH_ROUNDS_PER_GAME} 回合，系统自动摇骰子与出题。
-                </p>
+              <div className={`truth-play-panel ${truthRoundAnimating ? "round-enter" : ""}`}>
+                <div className="truth-duel-bar">
+                  <div
+                    className={`truth-duel-player${
+                      (truthPhase === "pick" && truthDiceResult && !truthDiceResult.meLose) ||
+                      (truthPhase === "answer" && truthAwaitingMyAnswer)
+                        ? " is-active"
+                        : ""
+                    }${truthAnswerChoice ? " is-ready" : ""}`}
+                  >
+                    <img
+                      src={truthMyAvatarUrl}
+                      alt={user?.nickname || "我"}
+                      className="truth-duel-avatar"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = getGenderFallbackAvatar(user?.gender);
+                      }}
+                    />
+                    <strong>{user?.nickname || "我"}</strong>
+                    <span className={`truth-duel-dice${truthIsRolling ? " rolling" : ""}${truthDiceSettling ? " settling" : ""}`}>
+                      <em aria-hidden="true">{getDiceFace(truthRollingDice.me)}</em>
+                      {truthRollingDice.me} 点
+                    </span>
+                  </div>
+                  <div className="truth-duel-center">
+                    <span className="truth-duel-round">
+                      第 {Math.max(1, truthRoundIndex)}/{TRUTH_ROUNDS_PER_GAME} 题
+                    </span>
+                    <span className="truth-duel-vs">VS</span>
+                    <span className="truth-duel-style">
+                      {truthCurrentDifficultyLabel || getTruthStyleLabel(truthDifficulty)}
+                    </span>
+                  </div>
+                  <div
+                    className={`truth-duel-player peer${
+                      (truthPhase === "pick" && truthDiceResult?.meLose) ||
+                      (truthPhase === "answer" && !truthAwaitingMyAnswer && truthDiceResult && !truthIsRolling)
+                        ? " is-active"
+                        : ""
+                    }${truthPeerAnswerChoice ? " is-ready" : ""}`}
+                  >
+                    <img
+                      src={truthPeerAvatarUrl}
+                      alt={truthOpponent?.name || "对方"}
+                      className="truth-duel-avatar"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = getGenderFallbackAvatar(truthOpponent?.gender);
+                      }}
+                    />
+                    <strong>{truthOpponent?.name || "对方"}</strong>
+                    <span className={`truth-duel-dice${truthIsRolling ? " rolling" : ""}${truthDiceSettling ? " settling" : ""}`}>
+                      <em aria-hidden="true">{getDiceFace(truthRollingDice.peer)}</em>
+                      {truthRollingDice.peer} 点
+                    </span>
+                  </div>
+                </div>
                 <div className="truth-phase-stepper">
                   {truthPhaseSteps.map((step, idx) => (
                     <span
@@ -7829,30 +7963,13 @@ export default function App() {
                     </span>
                   ))}
                 </div>
-                <p className="feed-tip">
-                  题目风格：{TRUTH_DIFFICULTY_OPTIONS.find((item) => item.id === truthDifficulty)?.label || "轻松"}
-                  {truthDifficulty === "MIXED" ? "（每回合随机）" : ""} · 当前进行：第{" "}
-                  {Math.max(1, truthRoundIndex)} / {TRUTH_ROUNDS_PER_GAME} 回合
-                </p>
-                <div className={`truth-dice-board ${truthIsRolling ? "rolling" : ""} ${truthDiceSettling ? "settling" : ""}`}>
-                  <div className="truth-dice-cell">
-                    <span className="truth-dice-face" aria-hidden="true">
-                      {getDiceFace(truthRollingDice.me)}
-                    </span>
-                    <span>你：{truthRollingDice.me} 点</span>
-                  </div>
-                  <div className="truth-dice-cell">
-                    <span className="truth-dice-face" aria-hidden="true">
-                      {getDiceFace(truthRollingDice.peer)}
-                    </span>
-                    <span>对方：{truthRollingDice.peer} 点</span>
-                  </div>
-                </div>
-                {truthIsRolling && <p className="feed-tip">骰子滚动中...</p>}
+                {truthIsRolling && <p className="feed-tip truth-play-tip">骰子滚动中...</p>}
                 {truthPhase === "pick" && !truthIsRolling && (
-                  <div className="werewolf-mode-wrap">
+                  <div className="truth-phase-card">
                     <p className="feed-tip">
-                      {truthDiceResult?.meLose ? `对方选题中（剩余 ${truthPhaseCountdown}s）` : `请选择 1 个问题（剩余 ${truthPhaseCountdown}s）`}
+                      {truthDiceResult?.meLose
+                        ? `${truthOpponent?.name || "对方"}选题中（剩余 ${truthPhaseCountdown}s）`
+                        : `请选择 1 个问题（剩余 ${truthPhaseCountdown}s）`}
                     </p>
                     <div className="truth-phase-progress">
                       <span style={{ width: `${Math.max(0, Math.min(100, (truthPhaseCountdown / 8) * 100))}%` }} />
@@ -7876,71 +7993,147 @@ export default function App() {
                   </div>
                 )}
                 {!truthIsRolling && truthCurrentQuestion && (
-                  <div className="werewolf-script-list">
-                    <p>题目（{truthCurrentDifficultyLabel}）：{truthCurrentQuestion}</p>
+                  <div className="truth-question-banner">
+                    <span className="truth-question-kicker">{truthCurrentDifficultyLabel} · 本回合题目</span>
+                    <p>{truthCurrentQuestion}</p>
                   </div>
                 )}
                 {truthPhase === "answer" && truthAwaitingMyAnswer && !truthIsRolling && (
-                  <div className="werewolf-mode-wrap">
-                    <p className="feed-tip">你的作答时间：{truthPhaseCountdown}s</p>
+                  <div className="truth-phase-card truth-answer-panel">
+                    <p className="feed-tip">请选择一个最像你的答案（剩余 {truthPhaseCountdown}s）</p>
                     <div className="truth-phase-progress">
                       <span style={{ width: `${Math.max(0, Math.min(100, (truthPhaseCountdown / 12) * 100))}%` }} />
                     </div>
-                    <textarea
-                      className="truth-answer-input"
-                      value={truthAnswerDraft}
-                      onChange={(e) => setTruthAnswerDraft(e.target.value)}
-                      placeholder="这一回合你点数更低，请输入你的真心话回答"
-                      maxLength={120}
-                    />
-                    <p className="feed-tip">至少输入 {truthAnswerMinLen} 个字再提交</p>
-                    <button type="button" onClick={submitTruthAnswer} disabled={truthAnswerDraft.trim().length < truthAnswerMinLen}>
-                      提交我的回答
-                    </button>
+                    <div className="truth-answer-options">
+                      {truthCurrentAnswerOptions.map((option) => (
+                        <button
+                          key={option}
+                          type="button"
+                          className={`truth-answer-option${truthAnswerChoice === option ? " picked" : ""}`}
+                          onClick={() => pickTruthAnswer(option)}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
                 {truthPhase === "answer" && !truthAwaitingMyAnswer && !truthIsRolling && truthDiceResult && (
-                  <>
-                    <p className="feed-tip">对方作答中（剩余 {truthPhaseCountdown}s）...</p>
+                  <div className="truth-phase-card">
+                    <p className="feed-tip">
+                      {truthOpponent?.name || "对方"}思考中（剩余 {truthPhaseCountdown}s）...
+                    </p>
                     <div className="truth-phase-progress">
-                      <span style={{ width: `${Math.max(0, Math.min(100, (truthPhaseCountdown / 10) * 100))}%` }} />
+                      <span
+                        style={{
+                          width: `${Math.max(
+                            0,
+                            Math.min(
+                              100,
+                              (truthPhaseCountdown / Math.max(1, truthRoundContextRef.current?.peerThinkSec || 5)) * 100
+                            )
+                          )}%`
+                        }}
+                      />
                     </div>
-                  </>
+                  </div>
                 )}
                 {truthPhase === "review" && (
-                  <>
-                    <p className="feed-tip">答案已提交，对方查看中（{truthPhaseCountdown}s）...</p>
+                  <div className="truth-phase-card">
+                    <p className="feed-tip">本回合结果回顾（{truthPhaseCountdown}s 后进入下一题）</p>
                     <div className="truth-phase-progress">
                       <span style={{ width: `${Math.max(0, Math.min(100, (truthPhaseCountdown / 3) * 100))}%` }} />
                     </div>
-                  </>
+                    <div className="truth-review-card">
+                      {truthAnswerChoice ? (
+                        <div className="truth-review-row">
+                          <img
+                            src={truthMyAvatarUrl}
+                            alt=""
+                            className="truth-review-avatar"
+                            onError={(e) => {
+                              e.currentTarget.onerror = null;
+                              e.currentTarget.src = getGenderFallbackAvatar(user?.gender);
+                            }}
+                          />
+                          <p>你的选择：{truthAnswerChoice}</p>
+                        </div>
+                      ) : null}
+                      {truthPeerAnswerChoice ? (
+                        <div className="truth-review-row">
+                          <img
+                            src={truthPeerAvatarUrl}
+                            alt=""
+                            className="truth-review-avatar"
+                            onError={(e) => {
+                              e.currentTarget.onerror = null;
+                              e.currentTarget.src = getGenderFallbackAvatar(truthOpponent?.gender);
+                            }}
+                          />
+                          <p>{truthOpponent?.name || "对方"}的选择：{truthPeerAnswerChoice}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
             {truthMode === "result" && (
-              <div className="werewolf-mode-wrap">
-                <p>本局已完成 {TRUTH_ROUNDS_PER_GAME} / {TRUTH_ROUNDS_PER_GAME} 回合</p>
+              <div className="truth-result-panel game-result-panel">
+                <div className="truth-duel-bar">
+                  <div className="truth-duel-player">
+                    <img
+                      src={truthMyAvatarUrl}
+                      alt={user?.nickname || "我"}
+                      className="truth-duel-avatar"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = getGenderFallbackAvatar(user?.gender);
+                      }}
+                    />
+                    <strong>{user?.nickname || "我"}</strong>
+                  </div>
+                  <div className="truth-duel-center">
+                    <span className="truth-duel-round">挑战完成</span>
+                    <span className="truth-duel-vs">VS</span>
+                    <span className="truth-duel-style">{TRUTH_ROUNDS_PER_GAME} 回合</span>
+                  </div>
+                  <div className="truth-duel-player peer">
+                    <img
+                      src={truthPeerAvatarUrl}
+                      alt={truthOpponent?.name || "对方"}
+                      className="truth-duel-avatar"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = getGenderFallbackAvatar(truthOpponent?.gender);
+                      }}
+                    />
+                    <strong>{truthOpponent?.name || "对方"}</strong>
+                  </div>
+                </div>
                 {truthDiceResult && (
-                  <p>
+                  <p className="feed-tip truth-result-tip">
                     最后一回合骰子：你 {truthDiceResult.me} 点 / 对方 {truthDiceResult.peer} 点
                   </p>
                 )}
-                <div className="werewolf-script-list">
+                <div className="truth-result-logs">
                   {truthLogs.map((line, idx) => (
                     <p key={`truth-log-${idx}`}>{line}</p>
                   ))}
                 </div>
-                <div className="werewolf-menu">
-                  <button type="button" onClick={handleTruthProfileGate}>
-                    查看对方资料
-                  </button>
-                  <button type="button" onClick={handleTruthContact}>
-                    联系对方
+                <div className="game-result-actions">
+                  <div className="game-menu-actions game-result-social">
+                    <button type="button" className="game-secondary-btn" onClick={handleTruthProfileGate}>
+                      查看对方资料
+                    </button>
+                    <button type="button" className="game-secondary-btn" onClick={handleTruthContact}>
+                      联系对方
+                    </button>
+                  </div>
+                  <button type="button" className="game-primary-btn game-primary-btn--truth" onClick={startTruthMatch}>
+                    再来一局
                   </button>
                 </div>
-                <button type="button" onClick={() => setTruthMode("menu")}>
-                  再来一局
-                </button>
               </div>
             )}
           </div>

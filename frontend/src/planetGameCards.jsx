@@ -26,15 +26,17 @@ export function PlanetGameSentenceIcon() {
   );
 }
 
-export function PlanetGameWerewolfIcon() {
+export function PlanetGameCommonGroundIcon() {
   return (
     <GameCardSvg>
-      <path d="M11 19l3.5-9 5.5 7 5.5-7 3.5 9" fill="#fff" opacity="0.92" />
-      <ellipse cx="24" cy="29" rx="13.5" ry="11.5" fill="#fff" />
-      <circle cx="18" cy="27" r="2.4" fill="#6b4ce6" />
-      <circle cx="30" cy="27" r="2.4" fill="#6b4ce6" />
-      <ellipse cx="24" cy="33" rx="3.8" ry="2.2" fill="#6b4ce6" />
-      <path d="M20 31h8" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
+      <path
+        d="M24 8l4.2 8.5 9.4 1.4-6.8 6.6 1.6 9.3L24 29.8l-8.4 4.4 1.6-9.3-6.8-6.6 9.4-1.4L24 8z"
+        fill="#fff"
+        opacity="0.95"
+      />
+      <circle cx="14" cy="34" r="5.5" fill="#fff" opacity="0.88" />
+      <circle cx="34" cy="34" r="5.5" fill="#fff" opacity="0.72" />
+      <path d="M12.5 34h3M31.5 34h3" stroke="#2bb673" strokeWidth="1.8" strokeLinecap="round" />
     </GameCardSvg>
   );
 }
@@ -70,14 +72,14 @@ export function PlanetGameTacitIcon() {
 
 export const GAME_ROUTES = {
   "/planet/games/sentence": "sentence",
-  "/planet/games/werewolf": "werewolf",
+  "/planet/games/commonground": "commonground",
   "/planet/games/truth": "truth",
   "/planet/games/tacit": "tacit"
 };
 
 export const GAME_PATH_BY_ID = {
   sentence: "/planet/games/sentence",
-  werewolf: "/planet/games/werewolf",
+  commonground: "/planet/games/commonground",
   truth: "/planet/games/truth",
   tacit: "/planet/games/tacit"
 };
@@ -91,16 +93,17 @@ export const PLANET_MATCH_GAMES = [
     Icon: PlanetGameSentenceIcon
   },
   {
-    id: "werewolf",
-    title: "狼人杀",
-    players: "5.5万人正在玩",
-    variant: "werewolf",
-    badge: "热门",
-    Icon: PlanetGameWerewolfIcon
+    id: "commonground",
+    title: "共同点探宝",
+    players: "8.2万人正在玩",
+    variant: "commonground",
+    badge: "新品",
+    Icon: PlanetGameCommonGroundIcon
   },
   {
     id: "truth",
     title: "真心话挑战",
+    desc: "掷骰选题，撩出真心话",
     players: "1.5万人正在玩",
     variant: "truth",
     Icon: PlanetGameTruthIcon
@@ -108,6 +111,7 @@ export const PLANET_MATCH_GAMES = [
   {
     id: "tacit",
     title: "二选一默契挑战",
+    desc: "10道二选一，测测暧昧默契",
     players: "6.5万人正在玩",
     variant: "tacit",
     Icon: PlanetGameTacitIcon

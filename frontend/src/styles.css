@@ -2021,6 +2021,10 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
   background: linear-gradient(145deg, #5ad8ff 0%, #2f8fff 100%);
 }
 
+.game-card--commonground .game-card-icon {
+  background: linear-gradient(145deg, #6ee7a8 0%, #2bb673 100%);
+}
+
 .game-card--werewolf .game-card-icon {
   background: linear-gradient(145deg, #b07cff 0%, #6b4ce6 100%);
 }
@@ -2346,6 +2350,612 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
   padding: 10px;
   display: grid;
   gap: 10px;
+}
+
+.sentence-play-panel,
+.sentence-result-panel {
+  display: grid;
+  gap: 12px;
+  position: relative;
+  overflow: hidden;
+}
+
+.sentence-duel-bar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 10px;
+  border-radius: 16px;
+  background: linear-gradient(160deg, #f4f9ff 0%, #eaf3ff 100%);
+  border: 1px solid rgba(90, 140, 230, 0.16);
+}
+
+.sentence-duel-player {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  text-align: center;
+}
+
+.sentence-duel-player.peer {
+  justify-self: end;
+}
+
+.sentence-duel-avatar-wrap {
+  position: relative;
+  width: 58px;
+  height: 58px;
+}
+
+.sentence-duel-avatar {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid #fff;
+  box-shadow: 0 6px 16px rgba(70, 100, 180, 0.18);
+  background: #edf2ff;
+}
+
+.sentence-duel-player.is-active .sentence-duel-avatar-wrap::after,
+.sentence-duel-player.is-thinking .sentence-duel-avatar-wrap::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid #3b8cff;
+  animation: sentence-pulse 1.2s ease-in-out infinite;
+}
+
+.sentence-duel-player.is-ready .sentence-duel-avatar {
+  border-color: #8ed0ff;
+}
+
+@keyframes sentence-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
+.sentence-duel-player strong {
+  font-size: 13px;
+  color: #24304a;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sentence-duel-status {
+  font-size: 11px;
+  color: #7a849c;
+}
+
+.sentence-duel-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+}
+
+.sentence-duel-vs {
+  font-size: 11px;
+  font-weight: 800;
+  color: #8a94ad;
+  letter-spacing: 0.08em;
+}
+
+.sentence-duel-score {
+  font-size: 24px;
+  line-height: 1;
+  color: #2f8fff;
+}
+
+.sentence-duel-score-label {
+  font-size: 10px;
+  color: #8a94ad;
+}
+
+.sentence-play-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sentence-topic-pill {
+  background: #eef6ff;
+  color: #2f6fd8;
+}
+
+.sentence-play-progress .game-progress-bar span {
+  background: linear-gradient(90deg, #5ad8ff 0%, #2f8fff 100%);
+}
+
+.sentence-round-card--play {
+  border-radius: 16px;
+  padding: 14px 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #f5f9ff 100%);
+  border: 1px solid rgba(100, 140, 220, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.sentence-stem-kicker {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #7a8aa8;
+  letter-spacing: 0.04em;
+}
+
+.sentence-stem-text {
+  color: #1f2a44;
+  font-size: 17px;
+  line-height: 1.45;
+}
+
+.sentence-options--play {
+  gap: 10px;
+}
+
+.sentence-option-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: #edf4ff;
+  color: #3251a5;
+  border-radius: 12px;
+  padding: 12px 14px;
+  border: 1.5px solid transparent;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.sentence-option-btn:active:not(:disabled) {
+  transform: scale(0.99);
+}
+
+.sentence-option-text {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.sentence-option-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+
+.sentence-option-tag.mine {
+  background: rgba(47, 91, 213, 0.12);
+  color: #2f5bd5;
+}
+
+.sentence-option-tag.peer {
+  background: rgba(255, 107, 157, 0.14);
+  color: #d44b7d;
+}
+
+.sentence-option-btn.active-choice {
+  background: linear-gradient(135deg, #4fc3ff 0%, #2f8fff 100%);
+  color: #fff;
+  border-color: rgba(47, 143, 255, 0.35);
+  box-shadow: 0 8px 18px rgba(47, 143, 255, 0.24);
+}
+
+.sentence-option-btn.active-choice .sentence-option-tag.mine {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+.sentence-option-btn.peer-picked {
+  border-color: rgba(255, 107, 157, 0.35);
+}
+
+.sentence-option-btn.matched {
+  border-color: rgba(47, 200, 120, 0.45);
+  box-shadow: 0 0 0 1px rgba(47, 200, 120, 0.18);
+}
+
+.sentence-sync-card {
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.sentence-sync-card p {
+  margin: 0;
+}
+
+.sentence-sync-card.is-waiting {
+  background: #f3f7ff;
+  color: #5a6788;
+}
+
+.sentence-sync-card.is-match {
+  background: #e9fbf1;
+  color: #2f8b57;
+}
+
+.sentence-sync-card.is-miss {
+  background: #fff3f6;
+  color: #b24d68;
+}
+
+.sentence-result-duel {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 10px;
+  border-radius: 16px;
+  background: linear-gradient(160deg, #f4f9ff 0%, #eaf3ff 100%);
+}
+
+.sentence-result-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.sentence-result-score strong {
+  font-size: 28px;
+  line-height: 1;
+  color: #2f8fff;
+}
+
+.sentence-result-score span {
+  font-size: 11px;
+  color: #8a94ad;
+}
+
+.sentence-result-logs {
+  display: grid;
+  gap: 8px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 12px;
+  background: #f7f9ff;
+  border: 1px solid #e6ecfb;
+}
+
+.sentence-result-logs p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #5a6788;
+}
+
+.sentence-result-actions,
+.game-result-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.sentence-result-social,
+.game-result-social {
+  padding-top: 0;
+}
+
+.game-result-panel {
+  display: grid;
+  gap: 12px;
+  position: relative;
+}
+
+.game-result-tip {
+  margin: 0;
+}
+
+.tacit-result-panel .truth-duel-bar {
+  background: linear-gradient(160deg, #fff8f0 0%, #fff2e4 100%);
+  border-color: rgba(255, 140, 60, 0.16);
+}
+
+.tacit-result-panel .truth-duel-avatar {
+  box-shadow: 0 6px 16px rgba(255, 140, 60, 0.16);
+  background: #fff6eb;
+}
+
+.common-ground-play-panel,
+.common-ground-result-panel {
+  display: grid;
+  gap: 12px;
+  position: relative;
+}
+
+.common-ground-duel-bar {
+  background: linear-gradient(160deg, #eefdf5 0%, #e4f9ef 100%);
+  border-color: rgba(43, 182, 115, 0.16);
+}
+
+.common-ground-duel-bar .truth-duel-avatar {
+  box-shadow: 0 6px 16px rgba(43, 182, 115, 0.16);
+  background: #f0fdf7;
+}
+
+.common-ground-peer-status {
+  font-size: 11px;
+  color: #3d8f68;
+}
+
+.common-ground-prompt {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.45;
+  color: #1f3d30;
+  text-align: center;
+}
+
+.common-ground-hint {
+  margin: 0;
+  text-align: center;
+}
+
+.common-ground-option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.common-ground-option {
+  position: relative;
+  min-height: 52px;
+  padding: 12px 10px;
+  border-radius: 14px;
+  border: 1.5px solid rgba(43, 182, 115, 0.18);
+  background: rgba(255, 255, 255, 0.92);
+  color: #2a4a3a;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.common-ground-option.is-selected {
+  border-color: #2bb673;
+  background: linear-gradient(160deg, #f0fdf7 0%, #e8faf0 100%);
+  box-shadow: 0 6px 14px rgba(43, 182, 115, 0.14);
+}
+
+.common-ground-option.is-mine {
+  border-color: #5ad8ff;
+  background: linear-gradient(160deg, #f4fbff 0%, #eaf7ff 100%);
+}
+
+.common-ground-option.is-peer {
+  border-color: #ffc56a;
+  background: linear-gradient(160deg, #fffaf2 0%, #fff4e4 100%);
+}
+
+.common-ground-option.is-overlap {
+  border-color: #2bb673;
+  background: linear-gradient(160deg, #dcfce9 0%, #bbf7d4 100%);
+  color: #14532d;
+  box-shadow: 0 8px 18px rgba(43, 182, 115, 0.18);
+}
+
+.common-ground-option em {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  font-style: normal;
+  color: #15803d;
+}
+
+.common-ground-confirm-btn {
+  width: 100%;
+}
+
+.common-ground-result-logs {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(43, 182, 115, 0.12);
+}
+
+.common-ground-result-logs p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #4a6358;
+}
+
+.common-ground-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+
+.common-ground-menu-actions {
+  margin-top: auto;
+}
+
+.common-ground-topic-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+}
+
+.common-ground-topic-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.common-ground-topic-head h3 {
+  margin: 0;
+  font-size: 15px;
+  color: #1f3d30;
+}
+
+.common-ground-topic-head span {
+  font-size: 11px;
+  color: #6b8f7a;
+  white-space: nowrap;
+}
+
+.common-ground-topic-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.common-ground-topic-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 10px;
+  border: 1.5px solid rgba(43, 182, 115, 0.2);
+  border-radius: 14px;
+  background: linear-gradient(160deg, #ffffff 0%, #f3fdf8 100%);
+  text-align: left;
+  box-shadow: 0 4px 12px rgba(43, 182, 115, 0.08);
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.common-ground-topic-card:active {
+  transform: scale(0.98);
+}
+
+.common-ground-topic-card.active {
+  border-color: #2bb673;
+  background: linear-gradient(160deg, #eefdf5 0%, #dff8eb 100%);
+  box-shadow: 0 6px 16px rgba(43, 182, 115, 0.18);
+}
+
+.common-ground-topic-emoji {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.common-ground-topic-card strong {
+  font-size: 14px;
+  color: #1f3d30;
+}
+
+.common-ground-topic-card small {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #6b8f7a;
+}
+
+.common-ground-play-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.common-ground-topic-pill {
+  background: #eefdf5;
+  color: #1f7a4f;
+}
+
+.truth-topic-section .common-ground-topic-head h3 {
+  color: #5a2040;
+}
+
+.truth-topic-section .common-ground-topic-head span {
+  color: #9a6a84;
+}
+
+.truth-topic-card {
+  border-color: rgba(255, 120, 170, 0.22);
+  background: linear-gradient(160deg, #ffffff 0%, #fff5f9 100%);
+  box-shadow: 0 4px 12px rgba(255, 105, 150, 0.08);
+}
+
+.truth-topic-card.active {
+  border-color: #ff6b9d;
+  background: linear-gradient(160deg, #fff0f6 0%, #ffe3ef 100%);
+  box-shadow: 0 6px 16px rgba(255, 105, 150, 0.2);
+}
+
+.truth-topic-card strong {
+  color: #5a2040;
+}
+
+.truth-topic-card small {
+  color: #9a6a84;
+}
+
+.tacit-topic-section .common-ground-topic-head h3 {
+  color: #6a3a12;
+}
+
+.tacit-topic-section .common-ground-topic-head span {
+  color: #a67a52;
+}
+
+.tacit-topic-card {
+  border-color: rgba(255, 140, 60, 0.22);
+  background: linear-gradient(160deg, #ffffff 0%, #fff8f2 100%);
+  box-shadow: 0 4px 12px rgba(255, 120, 40, 0.08);
+}
+
+.tacit-topic-card.active {
+  border-color: #ff8a3d;
+  background: linear-gradient(160deg, #fff4ea 0%, #ffe8d6 100%);
+  box-shadow: 0 6px 16px rgba(255, 120, 40, 0.2);
+}
+
+.tacit-topic-card strong {
+  color: #6a3a12;
+}
+
+.tacit-topic-card small {
+  color: #a67a52;
+}
+
+.sentence-duel-player--clickable {
+  justify-self: end;
+}
+
+.sentence-peer-profile-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  box-shadow: none;
+}
+
+.sentence-peer-profile-btn:hover {
+  opacity: 0.92;
+}
+
+.sentence-peer-profile-link {
+  font-size: 11px;
+  color: #2f8fff;
+  font-weight: 600;
 }
 
 .sentence-round-card strong {
@@ -3482,6 +4092,52 @@ button:hover {
   font-size: 14px;
 }
 
+.truth-answer-panel {
+  gap: 10px;
+}
+
+.truth-answer-options {
+  display: grid;
+  gap: 10px;
+}
+
+.truth-answer-option {
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1.5px solid rgba(255, 79, 134, 0.16);
+  background: linear-gradient(160deg, #ffffff 0%, #fff5f8 100%);
+  color: #5a3048;
+  font-size: 14px;
+  line-height: 1.45;
+  box-shadow: 0 4px 12px rgba(255, 79, 134, 0.08);
+}
+
+.truth-answer-option.picked,
+.truth-answer-option:active {
+  background: linear-gradient(135deg, #ff8eb8 0%, #ff4f86 100%);
+  color: #fff;
+  border-color: rgba(255, 79, 134, 0.35);
+  box-shadow: 0 8px 18px rgba(255, 79, 134, 0.22);
+}
+
+.truth-review-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #fff5f8;
+  border: 1px solid rgba(255, 79, 134, 0.14);
+}
+
+.truth-review-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #6a4050;
+}
+
 .truth-invite-list {
   max-height: 140px;
   overflow: auto;
@@ -3537,8 +4193,195 @@ button:hover {
   position: relative;
 }
 
-.truth-round-panel.round-enter {
+.truth-play-panel,
+.truth-result-panel {
+  display: grid;
+  gap: 12px;
+  position: relative;
+}
+
+.truth-play-panel.round-enter {
   animation: truthRoundSlideIn 0.36s ease;
+}
+
+.truth-duel-bar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 10px;
+  border-radius: 16px;
+  background: linear-gradient(160deg, #fff5f8 0%, #ffeef4 100%);
+  border: 1px solid rgba(255, 79, 134, 0.14);
+}
+
+.truth-duel-player {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  text-align: center;
+}
+
+.truth-duel-player.peer {
+  justify-self: end;
+}
+
+.truth-duel-avatar {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid #fff;
+  box-shadow: 0 6px 16px rgba(255, 79, 134, 0.16);
+  background: #fff0f5;
+}
+
+.truth-duel-player.is-active .truth-duel-avatar {
+  box-shadow: 0 0 0 2px rgba(255, 79, 134, 0.35), 0 6px 16px rgba(255, 79, 134, 0.18);
+}
+
+.truth-duel-player.is-ready .truth-duel-avatar {
+  border-color: #ffc0d6;
+}
+
+.truth-duel-player strong {
+  font-size: 13px;
+  color: #4a3040;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.truth-duel-dice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #8a5a6a;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(255, 79, 134, 0.12);
+}
+
+.truth-duel-dice em {
+  font-style: normal;
+  font-size: 16px;
+  line-height: 1;
+  color: #d44b7d;
+}
+
+.truth-duel-dice.rolling em {
+  animation: truthDiceSpin 0.45s linear infinite;
+}
+
+.truth-duel-dice.settling {
+  animation: truthDicePulse 0.42s ease;
+}
+
+.truth-duel-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+}
+
+.truth-duel-round,
+.truth-duel-style {
+  font-size: 11px;
+  color: #8a5a6a;
+  white-space: nowrap;
+}
+
+.truth-duel-vs {
+  font-size: 11px;
+  font-weight: 800;
+  color: #c24b68;
+  letter-spacing: 0.08em;
+}
+
+.truth-play-tip,
+.truth-result-tip {
+  text-align: center;
+  margin: 0;
+}
+
+.truth-phase-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 79, 134, 0.1);
+}
+
+.truth-question-banner {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #fff7fa 100%);
+  border: 1px solid rgba(255, 79, 134, 0.12);
+}
+
+.truth-question-kicker {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #b24d68;
+  margin-bottom: 6px;
+}
+
+.truth-question-banner p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #3a2430;
+  font-weight: 600;
+}
+
+.truth-review-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.truth-review-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(255, 79, 134, 0.14);
+}
+
+.truth-review-row p {
+  margin: 0;
+}
+
+.truth-result-panel {
+  gap: 14px;
+}
+
+.truth-result-logs {
+  display: grid;
+  gap: 8px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 12px;
+  background: #fff7fa;
+  border: 1px solid rgba(255, 79, 134, 0.1);
+}
+
+.truth-result-logs p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6a4050;
 }
 
 .truth-question-cards button {
@@ -3784,7 +4627,7 @@ button:hover {
 .peer-home-overlay {
   position: fixed;
   inset: 0;
-  z-index: 70;
+  z-index: 5000;
   background: #f3f4f8;
   display: flex;
   flex-direction: column;
@@ -4117,7 +4960,7 @@ button:hover {
 }
 
 .membership-gate-overlay {
-  z-index: 90;
+  z-index: 5000;
   align-items: flex-end;
   padding: 0;
   background: rgba(10, 14, 30, 0.5);
@@ -5155,6 +5998,10 @@ button:hover {
   background: linear-gradient(180deg, #d8f0ff 0%, #edf5ff 38%, #f6f8ff 100%);
 }
 
+.game-page--commonground {
+  background: linear-gradient(165deg, #e4f9ef 0%, #f0fdf6 45%, #f3f7ff 100%);
+}
+
 .game-page--werewolf {
   background: linear-gradient(165deg, #ebe4ff 0%, #f5f0ff 45%, #edf2ff 100%);
 }
@@ -5353,6 +6200,11 @@ button:hover {
   box-shadow: 0 8px 18px rgba(107, 76, 230, 0.28);
 }
 
+.game-primary-btn--commonground {
+  background: linear-gradient(135deg, #6ee7a8 0%, #2bb673 100%);
+  box-shadow: 0 8px 18px rgba(43, 182, 115, 0.28);
+}
+
 .game-primary-btn--truth {
   background: linear-gradient(135deg, #ff8eb8 0%, #ff4f86 100%);
   box-shadow: 0 8px 18px rgba(255, 79, 134, 0.28);
@@ -5536,6 +6388,10 @@ button:hover {
   background: linear-gradient(145deg, #5ad8ff 0%, #2f8fff 100%);
 }
 
+.game-page--commonground .game-page-head-icon {
+  background: linear-gradient(145deg, #6ee7a8 0%, #2bb673 100%);
+}
+
 .game-page--werewolf .game-page-head-icon {
   background: linear-gradient(145deg, #b07cff 0%, #6b4ce6 100%);
 }
@@ -5656,12 +6512,106 @@ button:hover {
 }
 
 .game-page-panel {
+  position: relative;
   background: rgba(255, 255, 255, 0.88);
   border: 1px solid rgba(130, 150, 220, 0.16);
   border-radius: 16px;
   padding: 14px 12px;
   box-shadow: 0 8px 24px rgba(80, 100, 170, 0.1);
   backdrop-filter: blur(8px);
+}
+
+.game-match-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  border-radius: inherit;
+  background: rgba(18, 24, 40, 0.42);
+  backdrop-filter: blur(4px);
+  animation: gameMatchFadeIn 0.2s ease;
+}
+
+.game-match-modal {
+  width: min(100%, 240px);
+  padding: 22px 18px 20px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 36px rgba(30, 40, 80, 0.18);
+  text-align: center;
+}
+
+.game-match-label {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #2a3142;
+}
+
+.game-match-count {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #f4f7ff 0%, #e8eeff 100%);
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+  color: #3b5ccc;
+  box-shadow: inset 0 0 0 1px rgba(100, 130, 220, 0.16);
+  animation: gameMatchPulse 1s ease infinite;
+}
+
+.game-page--commonground .game-match-count {
+  background: linear-gradient(145deg, #eefdf5 0%, #dff8eb 100%);
+  color: #1f7a4f;
+}
+
+.game-page--truth .game-match-count {
+  background: linear-gradient(145deg, #fff0f6 0%, #ffe4ef 100%);
+  color: #d44b7d;
+}
+
+.game-page--tacit .game-match-count {
+  background: linear-gradient(145deg, #fff8f0 0%, #fff0df 100%);
+  color: #d4622a;
+}
+
+.game-page--sentence .game-match-count {
+  background: linear-gradient(145deg, #eef6ff 0%, #e3f0ff 100%);
+  color: #2f6fd8;
+}
+
+.game-match-tip {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #7a849c;
+}
+
+@keyframes gameMatchFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes gameMatchPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+  }
 }
 
 .game-page-panel .werewolf-menu button {

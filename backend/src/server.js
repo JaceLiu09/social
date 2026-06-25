@@ -12,7 +12,7 @@ import { prisma } from "./prisma.js";
 import { randomInt, randomFakeBotPhoneDigits } from "./fakeBotPhone.js";
 import { createAdminRouter } from "./adminApi.js";
 import * as oss from "./ossClient.js";
-import { sampleTacitQuestionsForRound } from "./tacitQuestionBank.js";
+import { sampleTacitQuestionsForRound, normalizeTacitTopic, getTacitTopicLabel } from "./tacitQuestionBank.js";
 import {
   COIN_PACKAGES,
   DEFAULT_GIFTS,
@@ -648,7 +648,14 @@ async function scheduleWerewolfSimulation(roomId) {
 async function seedTacitQuestionsIfMissing(roomId) {
   const exists = await prisma.tacitQuestion.count({ where: { roomId } });
   if (exists > 0) return;
-  const questions = sampleTacitQuestionsForRound({ icebreakerCount: 5, valueCount: 5 });
+  const room = await prisma.tacitRoom.findUnique({
+    where: { id: roomId },
+    select: { topicCategory: true }
+  });
+  const questions = sampleTacitQuestionsForRound({
+    topicCategory: room?.topicCategory || "social",
+    count: 10
+  });
   await prisma.tacitQuestion.createMany({
     data: questions.map((item, idx) => ({
       roomId,
@@ -701,11 +708,13 @@ async function completeTacitMatchWithBotIfNeeded(userId) {
   const bot = candidates[Math.floor(Math.random() * candidates.length)] || null;
   if (!bot) return null;
 
+  const topicCategory = normalizeTacitTopic(queueEntry.topicCategory);
   const room = await prisma.tacitRoom.create({
     data: {
       type: "MATCH",
       status: "IN_PROGRESS",
-      ownerUserId: userId
+      ownerUserId: userId,
+      topicCategory
     }
   });
   await prisma.tacitRoomMember.createMany({
@@ -776,6 +785,8 @@ async function getTacitRoomPayload(roomId) {
     type: room.type,
     status: room.status,
     ownerUserId: room.ownerUserId,
+    topicCategory: room.topicCategory || "social",
+    topicLabel: getTacitTopicLabel(room.topicCategory),
     acceptedCount: acceptedMembers.length,
     questionCount: room.questions.length,
     finishedCount,
@@ -3191,6 +3202,7 @@ app.post("/tacit/match/enqueue", async (req, res) => {
       select: { gender: true }
     });
     if (!currentUser) return res.status(401).json({ message: "未登录或登录态失效" });
+    const topicCategory = normalizeTacitTopic(req.body?.topicCategory);
     const existingMember = await prisma.tacitRoomMember.findFirst({
       where: {
         userId,
@@ -3207,8 +3219,8 @@ app.post("/tacit/match/enqueue", async (req, res) => {
     }
     await prisma.tacitMatchQueue.upsert({
       where: { userId },
-      update: {},
-      create: { userId }
+      update: { topicCategory },
+      create: { userId, topicCategory }
     });
     const targetGender = currentUser.gender === "MALE" ? "FEMALE" : "MALE";
     const queued = await prisma.tacitMatchQueue.findMany({
@@ -3231,11 +3243,13 @@ app.post("/tacit/match/enqueue", async (req, res) => {
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     );
     const userIds = pair.map((q) => q.userId);
+    const topicCategory = normalizeTacitTopic(meInQueue.topicCategory || partnerInQueue.topicCategory);
     const room = await prisma.tacitRoom.create({
       data: {
         type: "MATCH",
         status: "IN_PROGRESS",
-        ownerUserId: userIds[0]
+        ownerUserId: userIds[0],
+        topicCategory
       }
     });
     await prisma.tacitRoomMember.createMany({
@@ -3339,11 +3353,13 @@ app.post("/tacit/rooms", async (req, res) => {
   try {
     const userId = getAuthUserId(req);
     if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const topicCategory = normalizeTacitTopic(req.body?.topicCategory);
     const room = await prisma.tacitRoom.create({
       data: {
         type: "FRIEND",
         status: "WAITING",
-        ownerUserId: userId
+        ownerUserId: userId,
+        topicCategory
       }
     });
     await prisma.tacitRoomMember.create({
