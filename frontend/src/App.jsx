@@ -53,10 +53,9 @@ import {
   PlanetGameTacitIcon,
   PlanetGameTruthIcon
 } from "./planetGameCards.jsx";
+import { resolveRuntimeApiBaseUrl } from "./runtimeApi.js";
 
-const ENV_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").trim();
-const DEFAULT_API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:4000`;
-const API = (ENV_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/$/, "");
+const API = resolveRuntimeApiBaseUrl();
 const AUTH_STORAGE_KEY = "social_auth_v1";
 const GAME_MATCH_COUNTDOWN_START = 3;
 const GAME_MATCH_BOT_DELAY_MS = 3200;
@@ -453,21 +452,29 @@ function resolveAssetUrl(url) {
   if (localSeed) return localSeed;
   const seedHit = resolveSeedAvatarUrl(raw);
   if (seedHit) return seedHit;
-  // 上传文件挂在 API 的 /uploads；OSS 私有桶走 API 的 /oss-media；历史绝对 URL 统一到当前 API
-  try {
-    const u = new URL(raw);
-    const path = u.pathname.startsWith("/") ? u.pathname : `/${u.pathname}`;
+
+  const toApiMediaUrl = (pathname, search = "") => {
+    const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
     if (path.startsWith("/uploads/")) {
-      return `${API}${path}${u.search || ""}`;
+      return `${API}${path}${search}`;
     }
     const ossRest = ossObjectPathFromUrlPathname(path);
     if (ossRest) {
-      return `${API}/oss-media${ossRest}${u.search || ""}`;
+      return `${API}/oss-media${ossRest}${search}`;
     }
+    return null;
+  };
+
+  // 上传文件挂在 API 的 /uploads；OSS 私有桶走 API 的 /oss-media；历史绝对 URL 也统一到当前 API
+  try {
+    const u = new URL(raw.startsWith("//") ? `https:${raw}` : raw);
+    const hit = toApiMediaUrl(u.pathname, u.search || "");
+    if (hit) return hit;
   } catch (_e) {
     /* 非绝对 URL */
   }
-  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+
+  if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("//")) return raw;
   if (raw.startsWith("/avatars/")) return raw.split("#")[0];
   if (raw.startsWith("/")) return `${API}${raw}`;
   return raw;
