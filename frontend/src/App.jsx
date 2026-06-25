@@ -6879,7 +6879,7 @@ export default function App() {
               tip="正在为你匹配同频玩家"
             />
             {commonGroundMode === "menu" && (
-              <div className="common-ground-menu">
+              <div className="game-menu">
                 <p className="game-menu-intro">
                   每局 {COMMON_GROUND_ROUNDS} 题，聊得更深、更暧昧——选中相同选项即得分，看看你们有多合拍。
                 </p>
@@ -6905,7 +6905,7 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-                <div className="game-menu-actions common-ground-menu-actions">
+                <div className="game-menu-actions">
                   <button
                     type="button"
                     className="game-primary-btn game-primary-btn--commonground"
