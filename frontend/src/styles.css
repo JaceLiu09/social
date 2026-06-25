@@ -1782,12 +1782,22 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
 
 .me-qq-cover {
   position: relative;
-  height: min(40vw, 200px);
-  min-height: 160px;
-  background-size: cover;
-  background-position: center;
-  background-color: #b8c9e8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: min(56vw, 280px);
+  max-height: min(85vw, 420px);
+  background-color: #e8ecf4;
   overflow: hidden;
+}
+
+.me-qq-cover-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: min(85vw, 420px);
+  object-fit: contain;
+  object-position: center;
 }
 
 .me-qq-cover-art {
@@ -1800,8 +1810,8 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
   pointer-events: none;
 }
 
-.me-qq-cover[style*="background-image"] .me-qq-cover-art {
-  opacity: 0.15;
+.me-qq-cover:has(.me-qq-cover-img) .me-qq-cover-shade {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.12));
 }
 
 .me-qq-cover-shade {

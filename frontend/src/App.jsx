@@ -6564,11 +6564,20 @@ export default function App() {
             </div>
           ) : (
             <div className="me-qq-page">
-              <div
-                className="me-qq-cover"
-                style={profileCover ? { backgroundImage: `url(${profileCover})` } : undefined}
-              >
-                <div className="me-qq-cover-art" aria-hidden="true" />
+              <div className="me-qq-cover">
+                {profileCover ? (
+                  <img
+                    className="me-qq-cover-img"
+                    src={profileCover}
+                    alt=""
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.style.display = "none";
+                    }}
+                  />
+                ) : (
+                  <div className="me-qq-cover-art" aria-hidden="true" />
+                )}
                 <div className="me-qq-cover-shade" />
                 <button
                   type="button"
