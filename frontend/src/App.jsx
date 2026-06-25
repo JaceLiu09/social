@@ -694,6 +694,18 @@ const ROUTE_TAB = {
   "/match": "planet-match"
 };
 
+/** openPeerProfile / openChatWithPeer 记录返回路径时允许的 gateContext */
+const GAME_RETURN_GATE_CONTEXTS = new Set([
+  "planet",
+  "square",
+  "chat",
+  "truth",
+  "sentence",
+  "tacit",
+  "commonground",
+  "invite"
+]);
+
 const LEGAL_ROUTES = {
   "/legal/privacy-policy": PRIVACY_POLICY_DOC,
   "/legal/user-agreement": USER_AGREEMENT_DOC
@@ -2812,7 +2824,14 @@ export default function App() {
 
   const rememberGameReturnPath = (gateContext) => {
     if (!GAME_RETURN_GATE_CONTEXTS.has(gateContext)) return;
-    chatReturnPathRef.current = GAME_PATH_BY_ID[gateContext] || "";
+    if (GAME_PATH_BY_ID[gateContext]) {
+      chatReturnPathRef.current = GAME_PATH_BY_ID[gateContext];
+      return;
+    }
+    const path = window.location.pathname;
+    if (path && path !== "/chat" && !path.startsWith("/legal")) {
+      chatReturnPathRef.current = path;
+    }
   };
 
   const buildGameOpponentPeerProfile = (opponent) => {
@@ -3089,17 +3108,28 @@ export default function App() {
     (peerProfile?.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR);
   const peerPosts = Array.isArray(peerProfile?.posts) ? peerProfile.posts : [];
 
+  const getPlanetMatchTargetId = () =>
+    String(planetMatchProfile?.id || blindBoxTarget?.id || "").trim();
+
   const handlePlanetDetailGate = () => {
-    if (!planetMatchProfile?.id) return;
-    openPeerProfile(planetMatchProfile.id, "planet");
+    const targetId = getPlanetMatchTargetId();
+    if (!targetId || !user?.id) {
+      showToast("无法获取对方资料，请重新匹配");
+      return;
+    }
+    openGameOpponentProfile({ ...(planetMatchProfile || {}), id: targetId }, "planet");
   };
 
   const handlePlanetContact = () => {
-    if (!planetMatchProfile?.id) return;
+    const targetId = getPlanetMatchTargetId();
+    if (!targetId || !user?.id) {
+      showToast("无法联系对方，请重新匹配");
+      return;
+    }
     openChatWithPeer({
-      targetUserId: planetMatchProfile.id,
-      name: planetMatchProfile.nickname || blindBoxTarget?.nickname || "对方",
-      avatar: planetMatchProfile.avatar || "",
+      targetUserId: targetId,
+      name: planetMatchProfile?.nickname || blindBoxTarget?.nickname || "对方",
+      avatar: planetMatchProfile?.avatar || "",
       gateContext: "planet"
     });
   };
@@ -8150,7 +8180,7 @@ export default function App() {
         </GamePageShell>
       )}
 
-      {tab === "planet-match" && (
+      {tab === "planet-match" && !showPeerProfileModal && !showMembershipGate && (
         <section className="planet-match-page" aria-labelledby="planet-match-main-title">
           <div className="planet-match-page-bg" aria-hidden>
             <div className="planet-match-page-stars" />
