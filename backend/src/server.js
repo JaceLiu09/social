@@ -3243,13 +3243,15 @@ app.post("/tacit/match/enqueue", async (req, res) => {
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     );
     const userIds = pair.map((q) => q.userId);
-    const topicCategory = normalizeTacitTopic(meInQueue.topicCategory || partnerInQueue.topicCategory);
+    const roomTopicCategory = normalizeTacitTopic(
+      meInQueue.topicCategory || partnerInQueue.topicCategory
+    );
     const room = await prisma.tacitRoom.create({
       data: {
         type: "MATCH",
         status: "IN_PROGRESS",
         ownerUserId: userIds[0],
-        topicCategory
+        topicCategory: roomTopicCategory
       }
     });
     await prisma.tacitRoomMember.createMany({

@@ -324,6 +324,9 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = PLANET_MATCH_REQU
     if (error?.name === "AbortError") {
       throw new Error("匹配请求超时，请检查网络后重试");
     }
+    if (error instanceof TypeError) {
+      throw new Error("无法连接服务器，请确认已部署并刷新页面");
+    }
     throw error;
   } finally {
     window.clearTimeout(timer);

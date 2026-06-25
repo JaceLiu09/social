@@ -161,7 +161,7 @@ fi
 if pm2 describe social-frontend >/dev/null 2>&1; then
   pm2 restart social-frontend --update-env
 else
-  pm2 start npm --name social-frontend --cwd "${APP_DIR}/frontend" -- run preview -- --host 0.0.0.0 --port "${FRONTEND_PORT}"
+  FRONTEND_PREVIEW_PORT="${FRONTEND_PORT}" pm2 start npm --name social-frontend --cwd "${APP_DIR}/frontend" -- run preview -- --host 0.0.0.0 --port "${FRONTEND_PORT}"
 fi
 
 if pm2 describe social-admin >/dev/null 2>&1; then
