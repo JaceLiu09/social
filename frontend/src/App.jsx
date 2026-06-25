@@ -6578,30 +6578,6 @@ export default function App() {
                 >
                   ⚙
                 </button>
-                <div className="me-qq-cover-mask">
-                  <div className="profile-gallery-row">
-                    {galleryRawPhotos.map((rawUrl, idx) => (
-                      <button
-                        key={`${rawUrl}-${idx}`}
-                        className={`profile-thumb-btn ${
-                          (!selectedCover && idx === 0) || selectedCover === rawUrl ? "active-thumb" : ""
-                        }`}
-                        type="button"
-                        onClick={() => setSelectedCover(rawUrl)}
-                      >
-                        <img src={resolveAssetUrl(rawUrl)} alt={`相册${idx + 1}`} className="profile-thumb" />
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      className="profile-thumb add-thumb-btn"
-                      onClick={() => setMePage("profile-edit")}
-                      aria-label="添加照片"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
               </div>
 
               <div className="me-qq-sheet">
@@ -6633,6 +6609,29 @@ export default function App() {
                       <em>{myPosts.length}</em>
                       <small>动态</small>
                     </div>
+                  </div>
+
+                  <div className="me-qq-gallery-row profile-gallery-row">
+                    {galleryRawPhotos.map((rawUrl, idx) => (
+                      <button
+                        key={`${rawUrl}-${idx}`}
+                        className={`profile-thumb-btn ${
+                          (!selectedCover && idx === 0) || selectedCover === rawUrl ? "active-thumb" : ""
+                        }`}
+                        type="button"
+                        onClick={() => setSelectedCover(rawUrl)}
+                      >
+                        <img src={resolveAssetUrl(rawUrl)} alt={`相册${idx + 1}`} className="profile-thumb" />
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="profile-thumb add-thumb-btn"
+                      onClick={() => setMePage("profile-edit")}
+                      aria-label="添加照片"
+                    >
+                      +
+                    </button>
                   </div>
 
                   <button

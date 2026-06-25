@@ -1782,8 +1782,8 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
 
 .me-qq-cover {
   position: relative;
-  height: min(48vw, 260px);
-  min-height: 200px;
+  height: min(40vw, 200px);
+  min-height: 160px;
   background-size: cover;
   background-position: center;
   background-color: #b8c9e8;
@@ -1827,22 +1827,6 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
   box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12);
 }
 
-.me-qq-cover-mask {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  padding: 10px 12px 14px;
-  background: linear-gradient(180deg, rgba(16, 23, 42, 0.08), rgba(16, 23, 42, 0.42));
-  pointer-events: none;
-}
-
-.me-qq-cover-mask .profile-gallery-row {
-  pointer-events: auto;
-}
-
 .me-qq-sheet {
   position: relative;
   margin-top: -28px;
@@ -1850,6 +1834,44 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
   border-radius: 20px 20px 0 0;
   padding: 0 14px 18px;
   box-shadow: 0 -8px 28px rgba(15, 23, 42, 0.06);
+}
+
+.me-qq-gallery-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  margin: 4px 0 14px;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+
+.me-qq-gallery-row::-webkit-scrollbar {
+  display: none;
+}
+
+.me-qq-gallery-row .profile-thumb {
+  width: 62px;
+  height: 62px;
+  border-radius: 10px;
+  border: 2px solid #e5e7eb;
+  object-fit: cover;
+}
+
+.me-qq-gallery-row .profile-thumb-btn.active-thumb {
+  outline: 2px solid #60a5fa;
+  outline-offset: 1px;
+}
+
+.me-qq-gallery-row .add-thumb-btn {
+  width: 62px;
+  height: 62px;
+  min-width: 62px;
+  border-radius: 10px;
+  background: #f3f4f6;
+  color: #9ca3af;
+  border: 1px dashed #d1d5db;
+  font-size: 28px;
 }
 
 .me-qq-identity {
