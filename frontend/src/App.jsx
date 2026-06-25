@@ -410,6 +410,32 @@ function formatBirthDateText(value) {
   return `${y}-${m}-${d}`;
 }
 
+function formatBirthdayShort(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
+function getZodiacLabel(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const md = (date.getMonth() + 1) * 100 + date.getDate();
+  if (md >= 1222 || md <= 119) return "摩羯座";
+  if (md <= 218) return "水瓶座";
+  if (md <= 320) return "双鱼座";
+  if (md <= 419) return "白羊座";
+  if (md <= 520) return "金牛座";
+  if (md <= 621) return "双子座";
+  if (md <= 722) return "巨蟹座";
+  if (md <= 822) return "狮子座";
+  if (md <= 922) return "处女座";
+  if (md <= 1023) return "天秤座";
+  if (md <= 1122) return "天蝎座";
+  return "射手座";
+}
+
 /** manifest / 库里相对路径 /avatars/... → 前端 public 静态资源（本地 Vite / 线上 nginx） */
 function resolveSeedAvatarUrl(raw) {
   const local = mapSeedAssetToLocal(raw);
@@ -1206,6 +1232,29 @@ export default function App() {
   }, [profileForm.avatarUrl, user?.avatarUrl, profilePhotos]);
   /** 封面始终走 resolveAssetUrl；selectedCover 存数据库里的原始字符串（相对路径或绝对 URL） */
   const profileCover = resolveAssetUrl(selectedCover || primaryRaw);
+  const meAvatarUrl = resolveAssetUrl(primaryRaw || user?.avatarUrl || "");
+  const meHobbyTags = useMemo(() => {
+    const raw = String(user?.hobbies || profileForm.hobbies || "").trim();
+    if (!raw) return [];
+    return raw
+      .split(/[,，、\s]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+  }, [user?.hobbies, profileForm.hobbies]);
+  const meZonePreviews = useMemo(
+    () =>
+      myPosts.slice(0, 10).map((post) => ({
+        id: post.id,
+        text: String(post.text || "").trim(),
+        thumb:
+          Array.isArray(post.imageUrls) && post.imageUrls[0]
+            ? resolveAssetUrl(post.imageUrls[0])
+            : "",
+        createdAt: post.createdAt
+      })),
+    [myPosts]
+  );
   const filteredConversations = useMemo(
     () =>
       conversations.filter((item) => {
@@ -5491,6 +5540,7 @@ export default function App() {
             <div className="header-placeholder" />
           </>
         ) : tab === "me" ? (
+          mePage === "home" ? null : (
           <>
             {mePage === "moment-compose" ? (
               <>
@@ -5561,6 +5611,7 @@ export default function App() {
               </>
             )}
           </>
+          )
         ) : tab === "chat" ? (
           activeConversation ? null : (
             <>
@@ -6525,72 +6576,221 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <>
-              <div className="profile-hero" style={{ backgroundImage: `url(${profileCover})` }}>
-                <div className="profile-hero-mask">
-                  <div className="profile-hero-top">
-                    <button className="hero-edit-btn" onClick={() => setMePage("profile-edit")}>
-                      编辑
+            <div className="me-qq-page">
+              <div
+                className="me-qq-cover"
+                style={profileCover ? { backgroundImage: `url(${profileCover})` } : undefined}
+              >
+                <div className="me-qq-cover-art" aria-hidden="true" />
+                <div className="me-qq-cover-shade" />
+                <button
+                  type="button"
+                  className="me-qq-cover-settings"
+                  onClick={() => setMePage("settings")}
+                  aria-label="设置"
+                >
+                  ⚙
+                </button>
+              </div>
+
+              <div className="me-qq-scroll">
+                <div className="me-qq-sheet">
+                  <div className="me-qq-identity">
+                    <img
+                      className="me-qq-avatar"
+                      src={meAvatarUrl}
+                      alt={user.nickname || "我"}
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src =
+                          user.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
+                      }}
+                    />
+                    <div className="me-qq-identity-main">
+                      <div className="me-qq-name-row">
+                        <h2>{user.nickname}</h2>
+                        <span className="me-qq-status-pill">在线</span>
+                      </div>
+                      <div className="me-qq-id-row">
+                        <span className="me-qq-id-badge">ID</span>
+                        <span>{toTenDigitId(user.id)}</span>
+                      </div>
+                    </div>
+                    <div className="me-qq-stat-pill" aria-label={`${myPosts.length}条动态`}>
+                      <span className="me-qq-stat-icon" aria-hidden="true">
+                        ♡
+                      </span>
+                      <em>{myPosts.length}</em>
+                      <small>动态</small>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="me-qq-info-strip"
+                    onClick={() => setMePage("profile-edit")}
+                  >
+                    <div className="me-qq-info-lines">
+                      <p className="me-qq-info-line">
+                        <span>{user.gender === "MALE" ? "♂ 男" : "♀ 女"}</span>
+                        <span>{user.age ?? "-"}岁</span>
+                        {formatBirthdayShort(user.birthDate) ? (
+                          <span>
+                            {formatBirthdayShort(user.birthDate)}
+                            {getZodiacLabel(user.birthDate) ? ` ${getZodiacLabel(user.birthDate)}` : ""}
+                          </span>
+                        ) : null}
+                        {user.currentCity ? <span>{user.currentCity}</span> : null}
+                        {user.hometown ? <span>{user.hometown}</span> : null}
+                      </p>
+                      <p className="me-qq-info-line me-qq-info-line--muted">
+                        {user.industry ? <span>{user.industry}</span> : null}
+                        <span>盲盒币 {coinBalance}</span>
+                        {myWealthLabel ? <span>财富 {myWealthLabel}</span> : null}
+                      </p>
+                    </div>
+                    <span className="me-qq-chevron" aria-hidden="true">
+                      ›
+                    </span>
+                  </button>
+
+                  <div className="me-qq-badges" aria-label="等级与会员">
+                    <span className="me-qq-badge me-qq-badge--level">Lv.{user.wealthLevel ?? 0}</span>
+                    <span
+                      className={`me-qq-badge me-qq-badge--vip${isMembershipValid ? "" : " me-qq-badge--muted"}`}
+                    >
+                      {membershipStatusText}
+                    </span>
+                    <span className="me-qq-badge me-qq-badge--coin">币 {coinBalance}</span>
+                    <span className="me-qq-badge me-qq-badge--online">在线</span>
+                  </div>
+
+                  <div className="me-qq-bio">
+                    <p>{user.partnerExpectation || profileForm.partnerExpectation || "做一个有趣的人"}</p>
+                    <button
+                      type="button"
+                      className="me-qq-bio-edit"
+                      aria-label="编辑签名"
+                      onClick={() => setMePage("profile-edit")}
+                    >
+                      ✎
                     </button>
                   </div>
-                  <div className="profile-gallery-row">
-                    {galleryRawPhotos.map((rawUrl, idx) => (
-                      <button
-                        key={`${rawUrl}-${idx}`}
-                        className={`profile-thumb-btn ${
-                          (!selectedCover && idx === 0) || selectedCover === rawUrl ? "active-thumb" : ""
-                        }`}
-                        type="button"
-                        onClick={() => setSelectedCover(rawUrl)}
-                      >
-                        <img src={resolveAssetUrl(rawUrl)} alt={`相册${idx + 1}`} className="profile-thumb" />
-                      </button>
+
+                  <div className="me-qq-tags">
+                    {meHobbyTags.map((tag) => (
+                      <span className="me-qq-tag" key={tag}>
+                        {tag}
+                      </span>
                     ))}
-                    <button className="profile-thumb add-thumb-btn" onClick={() => setMePage("profile-edit")}>
-                      +
+                    <button type="button" className="me-qq-tag me-qq-tag--add" onClick={() => setMePage("profile-edit")}>
+                      添加标签 +
                     </button>
                   </div>
+
+                  <section className="me-qq-section">
+                    <div className="me-qq-section-head">
+                      <h3>
+                        <span className="me-qq-section-icon" aria-hidden="true">
+                          ✦
+                        </span>
+                        我的空间
+                      </h3>
+                      <button type="button" className="me-qq-section-link" onClick={openMomentCompose}>
+                        分享动态
+                      </button>
+                    </div>
+                    {meZonePreviews.length ? (
+                      <div className="me-qq-hscroll">
+                        {meZonePreviews.map((item) => (
+                          <div className="me-qq-zone-card" key={item.id}>
+                            {item.thumb ? (
+                              <img src={item.thumb} alt="" />
+                            ) : (
+                              <div className="me-qq-zone-text">{item.text || "动态"}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <button type="button" className="me-qq-empty-zone" onClick={openMomentCompose}>
+                        还没有动态，去分享第一条吧
+                      </button>
+                    )}
+                  </section>
+
+                  {galleryRawPhotos.length > 0 ? (
+                    <section className="me-qq-section">
+                      <div className="me-qq-section-head">
+                        <h3>
+                          <span className="me-qq-section-icon" aria-hidden="true">
+                            ▦
+                          </span>
+                          精选照片
+                        </h3>
+                      </div>
+                      <div className="me-qq-hscroll me-qq-hscroll--photos">
+                        {galleryRawPhotos.map((rawUrl, idx) => (
+                          <button
+                            type="button"
+                            key={`me-photo-${rawUrl}-${idx}`}
+                            className={`me-qq-photo-card${
+                              (!selectedCover && idx === 0) || selectedCover === rawUrl ? " active" : ""
+                            }`}
+                            onClick={() => setSelectedCover(rawUrl)}
+                          >
+                            <img src={resolveAssetUrl(rawUrl)} alt={`精选照片${idx + 1}`} />
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          className="me-qq-photo-card me-qq-photo-card--add"
+                          onClick={() => setMePage("profile-edit")}
+                          aria-label="添加照片"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  <section className="me-qq-section me-qq-section--feed">
+                    <div className="me-qq-section-head">
+                      <h3>全部动态</h3>
+                    </div>
+                    <div className="me-qq-feed-list">
+                      {myPosts.length === 0 ? (
+                        <p className="me-qq-feed-empty">你还没有发布动态</p>
+                      ) : (
+                        myPosts.map((post) => (
+                          <article className="me-qq-feed-card" key={post.id}>
+                            {post.text ? <p className="me-qq-feed-text">{post.text}</p> : null}
+                            {renderSquarePhotoGrid(post.imageUrls, `mine-${post.id}`)}
+                            <time className="me-qq-feed-time">{post.createdAt}</time>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                  </section>
                 </div>
               </div>
 
-              <div className="profile-info-card">
-                <h3>{user.nickname}</h3>
-                <p>
-                  {user.gender === "MALE" ? "男生" : "女生"} · {user.age}岁 · 在线
-                </p>
-                {myWealthLabel ? (
-                  <p>
-                    <span className={`wealth-level-badge wealth-level-badge--${user.wealthLevel || 0}`}>
-                      财富 {myWealthLabel}
-                    </span>
-                  </p>
-                ) : null}
-                <p>盲盒币：{coinBalance}</p>
-              </div>
-
-              <div className="status-card my-stats">
-                <p>用户ID：{toTenDigitId(user.id)}</p>
-                <p>个人签名：{user.partnerExpectation || "做一个有趣的人"}</p>
-                <p>会员状态：{membershipStatusText}</p>
-              </div>
-
-              <div className="my-dynamics-head">
-                <h3 className="section-title">我的动态</h3>
-                <button type="button" className="moment-entry-fab" onClick={openMomentCompose} aria-label="发动态">
-                  +
+              <div className="me-qq-bottom-bar">
+                <button
+                  type="button"
+                  className="me-qq-bottom-btn"
+                  onClick={() => setChatNotice(`我的名片 ID：${toTenDigitId(user.id)}`)}
+                >
+                  个性名片
+                </button>
+                <button type="button" className="me-qq-bottom-btn" onClick={() => setMePage("profile-edit")}>
+                  编辑资料
+                </button>
+                <button type="button" className="me-qq-bottom-btn me-qq-bottom-btn--primary" onClick={openMomentCompose}>
+                  发动态
                 </button>
               </div>
-              <div className="my-post-list">
-                {myPosts.length === 0 && <p className="feed-tip">你还没有发布动态</p>}
-                {myPosts.map((post) => (
-                  <div className="post dark-post" key={post.id}>
-                    {post.text ? <p>{post.text}</p> : null}
-                    {renderSquarePhotoGrid(post.imageUrls, `mine-${post.id}`)}
-                    <small>{post.createdAt}</small>
-                  </div>
-                ))}
-              </div>
-            </>
+            </div>
           )}
         </section>
       )}

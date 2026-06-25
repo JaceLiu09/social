@@ -1758,6 +1758,508 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
   box-shadow: 0 4px 14px rgba(79, 134, 234, 0.35);
 }
 
+/* —— 自己页：QQ 风格资料卡 —— */
+.main-app.tab-me {
+  padding-top: 0;
+  background: #eef0f5;
+}
+
+.main-app.tab-me .main-content.scroll-pane {
+  padding: 0;
+  overflow: visible;
+}
+
+.main-app.tab-me .fab {
+  display: none;
+}
+
+.me-qq-page {
+  position: relative;
+  min-height: calc(100vh - 72px - env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+}
+
+.me-qq-cover {
+  position: relative;
+  height: min(38vw, 210px);
+  min-height: 168px;
+  background-size: cover;
+  background-position: center;
+  background-color: #b8c9e8;
+  overflow: hidden;
+}
+
+.me-qq-cover-art {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 20%, rgba(255, 255, 255, 0.55), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 85% 30%, rgba(147, 197, 253, 0.45), transparent 50%),
+    linear-gradient(145deg, #93c5fd 0%, #c4b5fd 42%, #fbcfe8 100%);
+  pointer-events: none;
+}
+
+.me-qq-cover[style*="background-image"] .me-qq-cover-art {
+  opacity: 0.15;
+}
+
+.me-qq-cover-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.22));
+  pointer-events: none;
+}
+
+.me-qq-cover-settings {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  right: 12px;
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  color: #4b5568;
+  font-size: 18px;
+  line-height: 1;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12);
+}
+
+.me-qq-scroll {
+  position: relative;
+  margin-top: -28px;
+}
+
+.me-qq-sheet {
+  background: #fff;
+  border-radius: 20px 20px 0 0;
+  padding: 0 14px 18px;
+  box-shadow: 0 -8px 28px rgba(15, 23, 42, 0.06);
+}
+
+.me-qq-identity {
+  display: grid;
+  grid-template-columns: 78px 1fr auto;
+  gap: 10px 12px;
+  align-items: start;
+  padding-top: 4px;
+}
+
+.me-qq-avatar {
+  width: 78px;
+  height: 78px;
+  margin-top: -34px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid #fff;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.14);
+  background: #e8ebf3;
+}
+
+.me-qq-identity-main {
+  min-width: 0;
+  padding-top: 8px;
+}
+
+.me-qq-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.me-qq-name-row h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: #111827;
+  line-height: 1.2;
+}
+
+.me-qq-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.me-qq-id-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.me-qq-id-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: #111827;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.me-qq-stat-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  padding-top: 10px;
+  color: #374151;
+}
+
+.me-qq-stat-icon {
+  font-size: 18px;
+  line-height: 1;
+  color: #f472b6;
+}
+
+.me-qq-stat-pill em {
+  font-style: normal;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.me-qq-stat-pill small {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.me-qq-info-strip {
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px 10px 12px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: #f8f9fc;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.me-qq-info-lines {
+  flex: 1;
+  min-width: 0;
+}
+
+.me-qq-info-line {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: #374151;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.me-qq-info-line--muted {
+  margin-top: 4px;
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.me-qq-chevron {
+  flex-shrink: 0;
+  color: #c4c9d4;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.me-qq-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.me-qq-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.me-qq-badge--level {
+  background: linear-gradient(135deg, #fde68a, #fbbf24);
+  color: #7c2d12;
+}
+
+.me-qq-badge--vip {
+  background: linear-gradient(135deg, #c4b5fd, #8b5cf6);
+  color: #fff;
+}
+
+.me-qq-badge--vip.me-qq-badge--muted {
+  background: #eef0f5;
+  color: #9ca3af;
+}
+
+.me-qq-badge--coin {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.me-qq-badge--online {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.me-qq-bio {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f2f7;
+}
+
+.me-qq-bio p {
+  flex: 1;
+  margin: 0;
+  color: #374151;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.me-qq-bio-edit {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.me-qq-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.me-qq-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 12px;
+}
+
+.me-qq-tag--add {
+  border: 1px dashed #d1d5db;
+  background: #fff;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.me-qq-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #f0f2f7;
+}
+
+.me-qq-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.me-qq-section-head h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 16px;
+  color: #111827;
+}
+
+.me-qq-section-icon {
+  color: #8b5cf6;
+  font-size: 14px;
+}
+
+.me-qq-section-link {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+.me-qq-hscroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.me-qq-hscroll::-webkit-scrollbar {
+  display: none;
+}
+
+.me-qq-zone-card {
+  flex: 0 0 auto;
+  width: 88px;
+  height: 88px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #eef0f5;
+}
+
+.me-qq-zone-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.me-qq-zone-text {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  box-sizing: border-box;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #4b5563;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+}
+
+.me-qq-empty-zone {
+  width: 100%;
+  padding: 18px 12px;
+  border: 1px dashed #d8dee8;
+  border-radius: 12px;
+  background: #fafbfc;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.me-qq-photo-card {
+  flex: 0 0 auto;
+  width: 108px;
+  height: 108px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #eef0f5;
+}
+
+.me-qq-photo-card.active {
+  border-color: #60a5fa;
+}
+
+.me-qq-photo-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.me-qq-photo-card--add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  color: #9ca3af;
+  border: 1px dashed #d1d5db;
+}
+
+.me-qq-feed-list {
+  display: grid;
+  gap: 10px;
+}
+
+.me-qq-feed-card {
+  padding: 12px;
+  border-radius: 12px;
+  background: #f8f9fc;
+  border: 1px solid #eef0f5;
+}
+
+.me-qq-feed-text {
+  margin: 0 0 8px;
+  color: #374151;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.me-qq-feed-time {
+  display: block;
+  margin-top: 8px;
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.me-qq-feed-empty {
+  margin: 0;
+  padding: 16px 0;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.me-qq-bottom-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  z-index: 25;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.2fr;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.96);
+  border-top: 1px solid #e9ebf2;
+  backdrop-filter: blur(10px);
+}
+
+.me-qq-bottom-btn {
+  min-height: 42px;
+  border-radius: 10px;
+  border: 1px solid #d8dee8;
+  background: #fff;
+  color: #374151;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.me-qq-bottom-btn--primary {
+  border-color: #3b82f6;
+  background: #3b82f6;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.28);
+}
+
 .header-btn--publish {
   background: #07c160 !important;
   color: #fff !important;
