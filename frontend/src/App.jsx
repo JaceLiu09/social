@@ -1242,19 +1242,6 @@ export default function App() {
       .filter(Boolean)
       .slice(0, 8);
   }, [user?.hobbies, profileForm.hobbies]);
-  const meZonePreviews = useMemo(
-    () =>
-      myPosts.slice(0, 10).map((post) => ({
-        id: post.id,
-        text: String(post.text || "").trim(),
-        thumb:
-          Array.isArray(post.imageUrls) && post.imageUrls[0]
-            ? resolveAssetUrl(post.imageUrls[0])
-            : "",
-        createdAt: post.createdAt
-      })),
-    [myPosts]
-  );
   const filteredConversations = useMemo(
     () =>
       conversations.filter((item) => {
@@ -6591,10 +6578,33 @@ export default function App() {
                 >
                   ⚙
                 </button>
+                <div className="me-qq-cover-mask">
+                  <div className="profile-gallery-row">
+                    {galleryRawPhotos.map((rawUrl, idx) => (
+                      <button
+                        key={`${rawUrl}-${idx}`}
+                        className={`profile-thumb-btn ${
+                          (!selectedCover && idx === 0) || selectedCover === rawUrl ? "active-thumb" : ""
+                        }`}
+                        type="button"
+                        onClick={() => setSelectedCover(rawUrl)}
+                      >
+                        <img src={resolveAssetUrl(rawUrl)} alt={`相册${idx + 1}`} className="profile-thumb" />
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="profile-thumb add-thumb-btn"
+                      onClick={() => setMePage("profile-edit")}
+                      aria-label="添加照片"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
               </div>
 
-              <div className="me-qq-scroll">
-                <div className="me-qq-sheet">
+              <div className="me-qq-sheet">
                   <div className="me-qq-identity">
                     <img
                       className="me-qq-avatar"
@@ -6688,82 +6698,24 @@ export default function App() {
                     </button>
                   </div>
 
-                  <section className="me-qq-section">
-                    <div className="me-qq-section-head">
+                  <section className="me-qq-section me-qq-section--feed">
+                    <div className="me-qq-section-head my-dynamics-head">
                       <h3>
                         <span className="me-qq-section-icon" aria-hidden="true">
                           ✦
                         </span>
-                        我的空间
+                        我的动态
                       </h3>
                       <button type="button" className="me-qq-section-link" onClick={openMomentCompose}>
-                        分享动态
+                        发动态
                       </button>
                     </div>
-                    {meZonePreviews.length ? (
-                      <div className="me-qq-hscroll">
-                        {meZonePreviews.map((item) => (
-                          <div className="me-qq-zone-card" key={item.id}>
-                            {item.thumb ? (
-                              <img src={item.thumb} alt="" />
-                            ) : (
-                              <div className="me-qq-zone-text">{item.text || "动态"}</div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <button type="button" className="me-qq-empty-zone" onClick={openMomentCompose}>
-                        还没有动态，去分享第一条吧
-                      </button>
-                    )}
-                  </section>
-
-                  {galleryRawPhotos.length > 0 ? (
-                    <section className="me-qq-section">
-                      <div className="me-qq-section-head">
-                        <h3>
-                          <span className="me-qq-section-icon" aria-hidden="true">
-                            ▦
-                          </span>
-                          精选照片
-                        </h3>
-                      </div>
-                      <div className="me-qq-hscroll me-qq-hscroll--photos">
-                        {galleryRawPhotos.map((rawUrl, idx) => (
-                          <button
-                            type="button"
-                            key={`me-photo-${rawUrl}-${idx}`}
-                            className={`me-qq-photo-card${
-                              (!selectedCover && idx === 0) || selectedCover === rawUrl ? " active" : ""
-                            }`}
-                            onClick={() => setSelectedCover(rawUrl)}
-                          >
-                            <img src={resolveAssetUrl(rawUrl)} alt={`精选照片${idx + 1}`} />
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          className="me-qq-photo-card me-qq-photo-card--add"
-                          onClick={() => setMePage("profile-edit")}
-                          aria-label="添加照片"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </section>
-                  ) : null}
-
-                  <section className="me-qq-section me-qq-section--feed">
-                    <div className="me-qq-section-head">
-                      <h3>全部动态</h3>
-                    </div>
-                    <div className="me-qq-feed-list">
+                    <div className="me-qq-feed-list my-post-list">
                       {myPosts.length === 0 ? (
-                        <p className="me-qq-feed-empty">你还没有发布动态</p>
+                        <p className="me-qq-feed-empty feed-tip">你还没有发布动态</p>
                       ) : (
                         myPosts.map((post) => (
-                          <article className="me-qq-feed-card" key={post.id}>
+                          <article className="me-qq-feed-card post dark-post" key={post.id}>
                             {post.text ? <p className="me-qq-feed-text">{post.text}</p> : null}
                             {renderSquarePhotoGrid(post.imageUrls, `mine-${post.id}`)}
                             <time className="me-qq-feed-time">{post.createdAt}</time>
@@ -6773,7 +6725,6 @@ export default function App() {
                     </div>
                   </section>
                 </div>
-              </div>
 
               <div className="me-qq-bottom-bar">
                 <button
