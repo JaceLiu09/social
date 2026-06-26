@@ -824,7 +824,6 @@ export default function App() {
 
   const [chatMode, setChatMode] = useState("chat");
   const [mePage, setMePage] = useState("home");
-  const [meProfileTab, setMeProfileTab] = useState("posts");
   const [showMeTagInput, setShowMeTagInput] = useState(false);
   const [meTagDraft, setMeTagDraft] = useState("");
   const [meTagSaving, setMeTagSaving] = useState(false);
@@ -6658,162 +6657,180 @@ export default function App() {
                 >
                   ⚙
                 </button>
-                <div className="me-momo-cover-foot">
-                  {user.currentCity || user.hometown ? (
-                    <span className="me-momo-cover-loc">
-                      {[user.currentCity, user.hometown].filter(Boolean).join(" · ")}
-                    </span>
-                  ) : null}
-                  <div className="me-momo-thumb-row">
-                    {galleryRawPhotos.map((rawUrl, idx) => (
-                      <button
-                        key={`${rawUrl}-${idx}`}
-                        type="button"
-                        className={`me-momo-thumb-btn${
-                          (!selectedCover && idx === 0) || selectedCover === rawUrl ? " active" : ""
-                        }`}
-                        onClick={() => setSelectedCover(rawUrl)}
-                      >
-                        <img src={resolveAssetUrl(rawUrl)} alt={`相册${idx + 1}`} />
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      className="me-momo-thumb-btn me-momo-thumb-btn--add"
-                      onClick={() => setMePage("profile-edit")}
-                      aria-label="添加照片"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
               </div>
 
-              <div className="me-momo-sheet peer-home-sheet">
-                <div className="peer-home-name-row">
-                  <h2 className="peer-home-name">{user.nickname}</h2>
-                  <span
-                    className={`peer-home-gender-badge ${
-                      user.gender === "MALE" ? "peer-home-gender-badge--male" : "peer-home-gender-badge--female"
-                    }`}
+              <div className="me-momo-sheet me-qq-sheet">
+                <div className="me-qq-identity">
+                  <img
+                    className="me-qq-avatar"
+                    src={meAvatarUrl}
+                    alt={user.nickname || "我"}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = user.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;
+                    }}
+                  />
+                  <div className="me-qq-identity-main">
+                    <div className="me-qq-name-row">
+                      <h2>{user.nickname}</h2>
+                      <span className="me-qq-status-pill">在线</span>
+                    </div>
+                    <div className="me-qq-id-row">
+                      <span className="me-qq-id-badge">ID</span>
+                      <span>{toTenDigitId(user.id)}</span>
+                    </div>
+                  </div>
+                  <div className="me-qq-stat-pill" aria-label={`${myPosts.length}条动态`}>
+                    <span className="me-qq-stat-icon" aria-hidden="true">
+                      ♡
+                    </span>
+                    <em>{myPosts.length}</em>
+                    <small>动态</small>
+                  </div>
+                </div>
+
+                <div className="me-qq-gallery-row profile-gallery-row">
+                  {galleryRawPhotos.map((rawUrl, idx) => (
+                    <button
+                      key={`${rawUrl}-${idx}`}
+                      className={`profile-thumb-btn ${
+                        (!selectedCover && idx === 0) || selectedCover === rawUrl ? "active-thumb" : ""
+                      }`}
+                      type="button"
+                      onClick={() => setSelectedCover(rawUrl)}
+                    >
+                      <img src={resolveAssetUrl(rawUrl)} alt={`相册${idx + 1}`} className="profile-thumb" />
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="profile-thumb add-thumb-btn"
+                    onClick={() => setMePage("profile-edit")}
+                    aria-label="添加照片"
                   >
-                    {user.gender === "MALE" ? "♂" : "♀"} {user.age ?? "-"}
+                    +
+                  </button>
+                </div>
+
+                <button type="button" className="me-qq-info-strip" onClick={() => setMePage("profile-edit")}>
+                  <div className="me-qq-info-lines">
+                    <p className="me-qq-info-line">
+                      <span>{user.gender === "MALE" ? "♂ 男" : "♀ 女"}</span>
+                      <span>{user.age ?? "-"}岁</span>
+                      {formatBirthdayShort(user.birthDate) ? (
+                        <span>
+                          {formatBirthdayShort(user.birthDate)}
+                          {getZodiacLabel(user.birthDate) ? ` ${getZodiacLabel(user.birthDate)}` : ""}
+                        </span>
+                      ) : null}
+                      {user.currentCity ? <span>{user.currentCity}</span> : null}
+                      {user.hometown ? <span>{user.hometown}</span> : null}
+                    </p>
+                    <p className="me-qq-info-line me-qq-info-line--muted">
+                      {user.industry ? <span>{user.industry}</span> : null}
+                      <span>盲盒币 {coinBalance}</span>
+                      {myWealthLabel ? <span>财富 {myWealthLabel}</span> : null}
+                    </p>
+                  </div>
+                  <span className="me-qq-chevron" aria-hidden="true">
+                    ›
                   </span>
+                </button>
+
+                <div className="me-qq-badges" aria-label="等级与会员">
+                  <span className="me-qq-badge me-qq-badge--level">Lv.{user.wealthLevel ?? 0}</span>
                   <span
                     className={`me-qq-badge me-qq-badge--vip${isMembershipValid ? "" : " me-qq-badge--muted"}`}
                   >
                     {membershipStatusText}
                   </span>
-                  {myWealthLabel ? (
-                    <span className="me-qq-badge me-qq-badge--level">财富 {myWealthLabel}</span>
-                  ) : null}
+                  <span className="me-qq-badge me-qq-badge--coin">币 {coinBalance}</span>
+                  <span className="me-qq-badge me-qq-badge--online">在线</span>
                 </div>
-                <p className="peer-home-subline">
-                  ID {toTenDigitId(user.id)} · 盲盒币 {coinBalance} · 在线
-                </p>
 
-                <div className="peer-home-tabs">
+                <div className="me-qq-bio">
+                  <p>{user.partnerExpectation || profileForm.partnerExpectation || "做一个有趣的人"}</p>
                   <button
                     type="button"
-                    className={meProfileTab === "about" ? "active" : ""}
-                    onClick={() => setMeProfileTab("about")}
+                    className="me-qq-bio-edit"
+                    aria-label="编辑签名"
+                    onClick={() => setMePage("profile-edit")}
                   >
-                    关于我
-                  </button>
-                  <button
-                    type="button"
-                    className={meProfileTab === "posts" ? "active" : ""}
-                    onClick={() => setMeProfileTab("posts")}
-                  >
-                    我的动态 {myPosts.length}
+                    ✎
                   </button>
                 </div>
 
-                {meProfileTab === "about" ? (
-                  <>
-                    <h3 className="peer-home-section-title">个人信息</h3>
-                    <div className="peer-home-tag-grid">
-                      <div className="peer-home-tag">
-                        {user.gender === "MALE" ? "男" : "女"} · {user.age ?? "-"}岁
-                      </div>
-                      {formatBirthdayShort(user.birthDate) ? (
-                        <div className="peer-home-tag">
-                          {formatBirthdayShort(user.birthDate)}
-                          {getZodiacLabel(user.birthDate) ? ` ${getZodiacLabel(user.birthDate)}` : ""}
-                        </div>
-                      ) : null}
-                      {user.currentCity ? <div className="peer-home-tag">{user.currentCity}</div> : null}
-                      {user.hometown ? <div className="peer-home-tag">来自 {user.hometown}</div> : null}
-                      {user.industry ? <div className="peer-home-tag">{user.industry}</div> : null}
-                      <div className="peer-home-tag">Lv.{user.wealthLevel ?? 0}</div>
-                    </div>
-                    <div className="peer-home-quote">
-                      <strong>个人签名</strong>
-                      <p>{user.partnerExpectation || profileForm.partnerExpectation || "做一个有趣的人"}</p>
-                      <button type="button" className="me-momo-inline-edit" onClick={() => setMePage("profile-edit")}>
-                        编辑资料
+                <div className="me-qq-tags">
+                  {meHobbyTags.map((tag) => (
+                    <span className="me-qq-tag" key={tag}>
+                      {tag}
+                    </span>
+                  ))}
+                  {showMeTagInput ? (
+                    <div className="me-qq-tag-input-row">
+                      <input
+                        type="text"
+                        className="me-qq-tag-input"
+                        value={meTagDraft}
+                        maxLength={16}
+                        placeholder="输入标签"
+                        autoFocus
+                        disabled={meTagSaving}
+                        onChange={(e) => setMeTagDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            appendMeTag();
+                          }
+                          if (e.key === "Escape") {
+                            setShowMeTagInput(false);
+                            setMeTagDraft("");
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="me-qq-tag-input-btn"
+                        disabled={meTagSaving || !meTagDraft.trim()}
+                        onClick={appendMeTag}
+                      >
+                        {meTagSaving ? "…" : "添加"}
+                      </button>
+                      <button
+                        type="button"
+                        className="me-qq-tag-input-cancel"
+                        disabled={meTagSaving}
+                        onClick={() => {
+                          setShowMeTagInput(false);
+                          setMeTagDraft("");
+                        }}
+                      >
+                        取消
                       </button>
                     </div>
-                    <div className="me-qq-tags me-momo-tags">
-                      {meHobbyTags.map((tag) => (
-                        <span className="me-qq-tag" key={tag}>
-                          {tag}
-                        </span>
-                      ))}
-                      {showMeTagInput ? (
-                        <div className="me-qq-tag-input-row">
-                          <input
-                            type="text"
-                            className="me-qq-tag-input"
-                            value={meTagDraft}
-                            maxLength={16}
-                            placeholder="输入标签"
-                            autoFocus
-                            disabled={meTagSaving}
-                            onChange={(e) => setMeTagDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                appendMeTag();
-                              }
-                              if (e.key === "Escape") {
-                                setShowMeTagInput(false);
-                                setMeTagDraft("");
-                              }
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="me-qq-tag-input-btn"
-                            disabled={meTagSaving || !meTagDraft.trim()}
-                            onClick={appendMeTag}
-                          >
-                            {meTagSaving ? "…" : "添加"}
-                          </button>
-                          <button
-                            type="button"
-                            className="me-qq-tag-input-cancel"
-                            disabled={meTagSaving}
-                            onClick={() => {
-                              setShowMeTagInput(false);
-                              setMeTagDraft("");
-                            }}
-                          >
-                            取消
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          className="me-qq-tag me-qq-tag--add"
-                          onClick={() => setShowMeTagInput(true)}
-                        >
-                          添加标签 +
-                        </button>
-                      )}
-                    </div>
-                  </>
-                ) : (
+                  ) : (
+                    <button
+                      type="button"
+                      className="me-qq-tag me-qq-tag--add"
+                      onClick={() => setShowMeTagInput(true)}
+                    >
+                      添加标签 +
+                    </button>
+                  )}
+                </div>
+
+                <section className="me-qq-section me-qq-section--feed">
+                  <div className="me-qq-section-head my-dynamics-head">
+                    <h3>
+                      <span className="me-qq-section-icon" aria-hidden="true">
+                        ✦
+                      </span>
+                      我的动态
+                    </h3>
+                    <button type="button" className="me-qq-section-link" onClick={openMomentCompose}>
+                      发动态
+                    </button>
+                  </div>
                   <div className="me-momo-feed">
                     {myPosts.length === 0 ? (
                       <p className="me-momo-feed-empty feed-tip">你还没有发布动态</p>
@@ -6854,7 +6871,7 @@ export default function App() {
                       ))
                     )}
                   </div>
-                )}
+                </section>
               </div>
 
               <div className="me-qq-bottom-bar">
