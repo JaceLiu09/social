@@ -824,6 +824,9 @@ export default function App() {
 
   const [chatMode, setChatMode] = useState("chat");
   const [mePage, setMePage] = useState("home");
+  const [showMeTagInput, setShowMeTagInput] = useState(false);
+  const [meTagDraft, setMeTagDraft] = useState("");
+  const [meTagSaving, setMeTagSaving] = useState(false);
   const [meDetailPage, setMeDetailPage] = useState("");
   const [meHeaderAvatarFailed, setMeHeaderAvatarFailed] = useState(false);
   const [authMode, setAuthMode] = useState("login");
@@ -3180,6 +3183,47 @@ export default function App() {
       setPullHint("刷新中...");
       await loadSquarePosts(true);
       setPullHint("下拉刷新");
+    }
+  };
+
+  const appendMeTag = async () => {
+    const tag = meTagDraft.trim();
+    if (!tag) {
+      setShowMeTagInput(false);
+      return;
+    }
+    if (!user || !authToken) return;
+    const existing = String(user.hobbies || profileForm.hobbies || "")
+      .split(/[,，、\s]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (existing.includes(tag)) {
+      showToast("标签已存在");
+      return;
+    }
+    if (existing.length >= 8) {
+      showToast("最多添加 8 个标签");
+      return;
+    }
+    const nextHobbies = [...existing, tag].join("，");
+    setMeTagSaving(true);
+    try {
+      const res = await fetch(`${API}/auth/profile`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ hobbies: nextHobbies })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "添加失败");
+      setUser(data.user);
+      setProfileForm((prev) => ({ ...prev, hobbies: nextHobbies }));
+      setMeTagDraft("");
+      setShowMeTagInput(false);
+      showToast("标签已添加");
+    } catch (error) {
+      setChatNotice(error.message || "添加标签失败");
+    } finally {
+      setMeTagSaving(false);
     }
   };
 
@@ -6498,11 +6542,6 @@ export default function App() {
                   >
                     上传头像
                   </button>
-                  <input
-                    placeholder="头像/封面地址（可选）"
-                    value={profileForm.avatarUrl}
-                    onChange={(e) => setProfileForm((prev) => ({ ...prev, avatarUrl: e.target.value }))}
-                  />
                 </div>
 
                 <div className="modern-edit-group">
@@ -6701,9 +6740,57 @@ export default function App() {
                         {tag}
                       </span>
                     ))}
-                    <button type="button" className="me-qq-tag me-qq-tag--add" onClick={() => setMePage("profile-edit")}>
-                      添加标签 +
-                    </button>
+                    {showMeTagInput ? (
+                      <div className="me-qq-tag-input-row">
+                        <input
+                          type="text"
+                          className="me-qq-tag-input"
+                          value={meTagDraft}
+                          maxLength={16}
+                          placeholder="输入标签"
+                          autoFocus
+                          disabled={meTagSaving}
+                          onChange={(e) => setMeTagDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              appendMeTag();
+                            }
+                            if (e.key === "Escape") {
+                              setShowMeTagInput(false);
+                              setMeTagDraft("");
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="me-qq-tag-input-btn"
+                          disabled={meTagSaving || !meTagDraft.trim()}
+                          onClick={appendMeTag}
+                        >
+                          {meTagSaving ? "…" : "添加"}
+                        </button>
+                        <button
+                          type="button"
+                          className="me-qq-tag-input-cancel"
+                          disabled={meTagSaving}
+                          onClick={() => {
+                            setShowMeTagInput(false);
+                            setMeTagDraft("");
+                          }}
+                        >
+                          取消
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="me-qq-tag me-qq-tag--add"
+                        onClick={() => setShowMeTagInput(true)}
+                      >
+                        添加标签 +
+                      </button>
+                    )}
                   </div>
 
                   <section className="me-qq-section me-qq-section--feed">

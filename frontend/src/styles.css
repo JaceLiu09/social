@@ -2121,6 +2121,49 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
   cursor: pointer;
 }
 
+.me-qq-tag-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  flex-basis: 100%;
+}
+
+.me-qq-tag-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  font-size: 13px;
+  background: #fff;
+}
+
+.me-qq-tag-input-btn,
+.me-qq-tag-input-cancel {
+  flex-shrink: 0;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: none;
+}
+
+.me-qq-tag-input-btn {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.me-qq-tag-input-btn:disabled {
+  opacity: 0.5;
+}
+
+.me-qq-tag-input-cancel {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
 .me-qq-section {
   margin-top: 18px;
   padding-top: 14px;
