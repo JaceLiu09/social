@@ -19,9 +19,17 @@ import {
   FRIENDLINESS_PER_ROUND,
   MALE_UNLOCK_FEE,
   MEMBERSHIP_PRICE,
-  MIN_ROUNDS_FOR_UNLOCK
+  MIN_ROUNDS_FOR_UNLOCK,
+  POINT_MEMBERSHIP_REDEEM
 } from "./config.js";
-import { computeWealthLevel, walletSnapshot } from "./wealthLevel.js";
+import { walletSnapshot } from "./wealthLevel.js";
+import {
+  applyCharmGain,
+  applyCoinRecharge,
+  applyCoinSpend,
+  redeemPointsMembership
+} from "./pointsService.js";
+import { normalizeIncomeRange } from "./incomeRanges.js";
 
 const app = express();
 app.use(cors());
@@ -910,7 +918,7 @@ function buildVirtualUser(index, existingPhones) {
     weight: male ? randomInt(62, 82) : randomInt(45, 60),
     hometown: hometownPool[index % hometownPool.length],
     currentCity: cityPool[index % cityPool.length],
-    income: "8k-15k",
+    income: "1万-2万",
     industry: "互联网",
     hobbies: hobbiesPool[index % hobbiesPool.length],
     partnerExpectation: "真诚沟通，三观契合",
@@ -936,7 +944,7 @@ function buildFakeBotUser({ index, gender, avatarUrls, existingPhones }) {
   const male = gender === "MALE";
   const cityPool = ["上海", "深圳", "广州", "杭州", "成都", "北京", "重庆", "南京"];
   const hometownPool = ["苏州", "武汉", "西安", "长沙", "青岛", "郑州", "厦门", "天津"];
-  const incomes = ["6k-10k", "8k-15k", "10k-20k", "15k-25k"];
+  const incomes = ["3000-5000", "5000-1万", "1万-2万", "2万以上"];
   const industries = ["互联网", "设计", "运营", "教育", "金融", "医疗", "传媒", "制造业"];
   const hobbiesPool = male
     ? ["篮球,健身,电影", "跑步,摄影,咖啡", "露营,自驾,音乐", "羽毛球,桌游,旅行"]
@@ -1042,10 +1050,36 @@ async function ensureGiftCatalog() {
   });
 }
 
+async function normalizeFakeBotIncomes() {
+  try {
+    const robots = await prisma.user.findMany({
+      where: {
+        OR: [
+          { fakeRobotLibrary: { in: ["SYSTEM", "USER"] } },
+          { phone: { startsWith: "fakem" } },
+          { phone: { startsWith: "fakef" } }
+        ]
+      },
+      select: { id: true, income: true }
+    });
+    await Promise.all(
+      robots.map(async (user) => {
+        const next = normalizeIncomeRange(user.income);
+        if (next !== user.income) {
+          await prisma.user.update({ where: { id: user.id }, data: { income: next } });
+        }
+      })
+    );
+  } catch (_e) {
+    /* 列尚未迁移等场景：避免阻塞进程启动 */
+  }
+}
+
 async function ensureDefaultUsers() {
   await backfillFakeRobotLibraryFlags();
   await syncFakeBotLoginPasswords();
   await ensureGiftCatalog();
+  await normalizeFakeBotIncomes();
 
   const defaults = [
     {
@@ -2344,14 +2378,6 @@ function findCoinPackage(packageId) {
   return COIN_PACKAGES.find((p) => p.id === String(packageId || "").trim()) || null;
 }
 
-async function applyWealthLevel(tx, userId, totalCoinRecharged) {
-  const { wealthLevel } = computeWealthLevel(totalCoinRecharged);
-  return tx.user.update({
-    where: { id: userId },
-    data: { wealthLevel }
-  });
-}
-
 async function payCoinRechargeOrder(orderId, userId) {
   return prisma.$transaction(async (tx) => {
     const order = await tx.coinRechargeOrder.findUnique({ where: { id: orderId } });
@@ -2365,25 +2391,14 @@ async function payCoinRechargeOrder(orderId, userId) {
     if (order.status !== "PENDING") {
       throw new Error("订单状态不可支付");
     }
-    const currentUser = await tx.user.findUnique({ where: { id: userId } });
-    if (!currentUser) throw new Error("用户不存在");
-    const nextBalance = (currentUser.coinBalance || 0) + order.coins;
-    const nextRecharged = (currentUser.totalCoinRecharged || 0) + order.amount;
-    const [paidOrder, updatedUser] = await Promise.all([
+    const [paidOrder, rechargeResult] = await Promise.all([
       tx.coinRechargeOrder.update({
         where: { id: order.id },
         data: { status: "PAID", paidAt: new Date() }
       }),
-      tx.user.update({
-        where: { id: userId },
-        data: {
-          coinBalance: nextBalance,
-          totalCoinRecharged: nextRecharged
-        }
-      })
+      applyCoinRecharge(tx, userId, order.coins, order.amount, order.id)
     ]);
-    const userWithLevel = await applyWealthLevel(tx, userId, nextRecharged);
-    return { order: paidOrder, user: userWithLevel, wallet: walletSnapshot(userWithLevel) };
+    return { order: paidOrder, user: rechargeResult.user, wallet: rechargeResult.wallet };
   });
 }
 
@@ -2407,10 +2422,61 @@ app.get("/wallet", async (req, res) => {
   if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { coinBalance: true, totalCoinRecharged: true, wealthLevel: true }
+    select: {
+      coinBalance: true,
+      totalCoinRecharged: true,
+      totalCoinSpent: true,
+      contributionPoints: true,
+      charmValue: true,
+      wealthLevel: true,
+      membershipType: true,
+      membershipExpireAt: true
+    }
   });
   if (!user) return res.status(404).json({ message: "用户不存在" });
   return res.json({ wallet: walletSnapshot(user) });
+});
+
+app.get("/points/ledger", async (req, res) => {
+  const userId = getAuthUserId(req);
+  if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+  const pointType = String(req.query.pointType || "").trim();
+  const take = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+  const where = { userId };
+  if (pointType === "CONTRIBUTION" || pointType === "CHARM") {
+    where.pointType = pointType;
+  }
+  const rows = await prisma.pointLedger.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    take
+  });
+  return res.json({ ledger: rows });
+});
+
+app.get("/membership/points-redeem", (_req, res) => {
+  return res.json({ options: POINT_MEMBERSHIP_REDEEM });
+});
+
+const membershipRedeemSchema = z.object({
+  redeemId: z.string().min(1)
+});
+
+app.post("/membership/redeem", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const parsed = membershipRedeemSchema.parse(req.body || {});
+    const result = await prisma.$transaction(async (tx) =>
+      redeemPointsMembership(tx, userId, parsed.redeemId)
+    );
+    return res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.issues[0]?.message || "参数错误" });
+    }
+    return res.status(400).json({ message: error.message || "兑换失败" });
+  }
 });
 
 app.get("/gifts/catalog", async (_req, res) => {
@@ -2439,11 +2505,7 @@ app.post("/gifts/send", async (req, res) => {
     if (!toUser) return res.status(404).json({ message: "对方用户不存在" });
 
     const result = await prisma.$transaction(async (tx) => {
-      const sender = await tx.user.findUnique({ where: { id: fromUserId } });
-      if (!sender) throw new Error("用户不存在");
-      if ((sender.coinBalance || 0) < gift.coinPrice) {
-        throw new Error("盲盒币不足，请先充值");
-      }
+      const spendResult = await applyCoinSpend(tx, fromUserId, gift.coinPrice, "GIFT_SEND", gift.id);
       const giftText = JSON.stringify({
         giftId: gift.id,
         giftName: gift.name,
@@ -2459,7 +2521,7 @@ app.post("/gifts/send", async (req, res) => {
           mediaUrl: gift.icon
         }
       });
-      await tx.giftTransaction.create({
+      const giftTx = await tx.giftTransaction.create({
         data: {
           giftId: gift.id,
           fromUserId,
@@ -2470,11 +2532,8 @@ app.post("/gifts/send", async (req, res) => {
           messageId: message.id
         }
       });
-      const updatedSender = await tx.user.update({
-        where: { id: fromUserId },
-        data: { coinBalance: (sender.coinBalance || 0) - gift.coinPrice }
-      });
-      return { message, wallet: walletSnapshot(updatedSender) };
+      await applyCharmGain(tx, parsed.toUserId, gift.coinPrice, giftTx.id);
+      return { message, wallet: spendResult.wallet, pointsEarned: spendResult.pointsEarned };
     });
 
     const payload = {
@@ -2494,7 +2553,7 @@ app.post("/gifts/send", async (req, res) => {
         io.to(socketId).emit("chat:message", payload);
       });
     }
-    return res.json({ message: payload, wallet: result.wallet });
+    return res.json({ message: payload, wallet: result.wallet, pointsEarned: result.pointsEarned });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: error.issues[0]?.message || "参数错误" });
@@ -3820,6 +3879,20 @@ app.get("/users/:id/profile", async (req, res) => {
 
   const wealth = walletSnapshot(target);
 
+  const giftWall = await prisma.giftTransaction.findMany({
+    where: { toUserId: target.id },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: {
+      id: true,
+      giftName: true,
+      giftIcon: true,
+      coinCost: true,
+      createdAt: true,
+      fromUser: { select: { id: true, nickname: true, avatarUrl: true } }
+    }
+  });
+
   const safeProfile = {
     id: target.id,
     nickname: target.nickname,
@@ -3836,6 +3909,20 @@ app.get("/users/:id/profile", async (req, res) => {
     avatarUrl: target.avatarUrl,
     wealthLevel: wealth.wealthLevel,
     wealthLevelName: wealth.wealthLevelName,
+    contributionPoints: wealth.contributionPoints,
+    charmValue: wealth.charmValue,
+    giftWall: giftWall.map((row) => ({
+      id: row.id,
+      giftName: row.giftName,
+      giftIcon: row.giftIcon,
+      coinCost: row.coinCost,
+      createdAt: row.createdAt.toISOString(),
+      fromUser: {
+        id: row.fromUser.id,
+        nickname: row.fromUser.nickname,
+        avatarUrl: row.fromUser.avatarUrl
+      }
+    })),
     photoUrls,
     posts: momentRows.map((row) => ({
       id: row.id,

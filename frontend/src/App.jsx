@@ -313,6 +313,10 @@ const MEMBERSHIP_PAY_CHANNELS = [
   { id: "WECHAT", label: "微信支付", desc: "推荐，实时到账" },
   { id: "ALIPAY", label: "支付宝", desc: "支持花呗分期" }
 ];
+const POINT_MEMBERSHIP_REDEEM = [
+  { id: "redeem_7d", days: 7, costPoints: 500, label: "7天体验会员" },
+  { id: "redeem_30d", days: 30, costPoints: 2000, label: "30天会员" }
+];
 const PLANET_MATCH_REQUEST_TIMEOUT_MS = 15000;
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = PLANET_MATCH_REQUEST_TIMEOUT_MS) {
@@ -1055,6 +1059,7 @@ export default function App() {
   const [membershipPayChannel, setMembershipPayChannel] = useState("WECHAT");
   const [membershipPendingOrderId, setMembershipPendingOrderId] = useState("");
   const [membershipRenewPreview, setMembershipRenewPreview] = useState("");
+  const [pointsRedeemSubmitting, setPointsRedeemSubmitting] = useState(false);
   const [showPeerProfileModal, setShowPeerProfileModal] = useState(false);
   const [peerProfile, setPeerProfile] = useState(null);
   const [peerProfileLoading, setPeerProfileLoading] = useState(false);
@@ -2532,6 +2537,8 @@ export default function App() {
 
   const myWealthLabel = useMemo(() => wealthLevelLabel(user), [user]);
   const coinBalance = user?.coinBalance ?? 0;
+  const contributionPoints = user?.contributionPoints ?? 0;
+  const charmValue = user?.charmValue ?? 0;
 
   const planetMatchGalleryUrls = useMemo(
     () => getPlanetMatchGalleryUrls(planetMatchProfile),
@@ -3620,7 +3627,9 @@ export default function App() {
         setUser((prev) => (prev ? { ...prev, ...data.wallet } : prev));
       }
       setShowGiftPanel(false);
-      showToast("礼物已送出");
+      showToast(
+        data.pointsEarned ? `礼物已送出，+${data.pointsEarned} 贡献积分` : "礼物已送出"
+      );
     } catch (error) {
       const msg = error.message || "送礼失败";
       showToast(msg);
@@ -4828,9 +4837,47 @@ export default function App() {
   };
 
   const closeMembershipGate = async () => {
-    if (membershipSubmitting) return;
+    if (membershipSubmitting || pointsRedeemSubmitting) return;
     await cancelPendingMembershipOrder();
     setShowMembershipGate(false);
+  };
+
+  const redeemPointsMembership = async (redeemId) => {
+    if (!user?.id || pointsRedeemSubmitting || membershipSubmitting) return;
+    setPointsRedeemSubmitting(true);
+    try {
+      const res = await fetch(`${API}/membership/redeem`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ redeemId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "兑换失败");
+      if (data.wallet) {
+        setUser((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...data.wallet,
+                membershipType: data.user?.membershipType ?? prev.membershipType,
+                membershipExpireAt: data.membershipExpireAt ?? data.user?.membershipExpireAt ?? prev.membershipExpireAt
+              }
+            : prev
+        );
+      } else if (data.user) {
+        setUser(data.user);
+      }
+      setShowMembershipGate(false);
+      const expireText = formatMembershipDateText(data.membershipExpireAt || data.user?.membershipExpireAt);
+      setChatNotice(expireText ? `积分兑换成功，会员有效期至 ${expireText}` : "积分兑换成功");
+    } catch (error) {
+      setChatNotice(error.message || "积分兑换失败");
+    } finally {
+      setPointsRedeemSubmitting(false);
+    }
   };
 
   const onTacitAddFriend = async () => {
@@ -6165,6 +6212,7 @@ export default function App() {
                             🪙
                           </span>
                           <strong>{coinBalance}</strong>
+                          <span className="gift-panel-points">· 积分 {contributionPoints}</span>
                         </div>
                         <button type="button" className="gift-panel-recharge" onClick={openCoinRecharge}>
                           充值
@@ -6729,7 +6777,8 @@ export default function App() {
                     <p className="me-qq-info-line me-qq-info-line--muted">
                       {user.industry ? <span>{user.industry}</span> : null}
                       <span>盲盒币 {coinBalance}</span>
-                      {myWealthLabel ? <span>财富 {myWealthLabel}</span> : null}
+                      <span>积分 {contributionPoints}</span>
+                      <span>魅力 {charmValue}</span>
                     </p>
                   </div>
                   <span className="me-qq-chevron" aria-hidden="true">
@@ -6738,14 +6787,17 @@ export default function App() {
                 </button>
 
                 <div className="me-qq-badges" aria-label="等级与会员">
-                  <span className="me-qq-badge me-qq-badge--level">Lv.{user.wealthLevel ?? 0}</span>
+                  <span className="me-qq-badge me-qq-badge--level">
+                    {myWealthLabel || `Lv.${user.wealthLevel ?? 0}`}
+                  </span>
                   <span
                     className={`me-qq-badge me-qq-badge--vip${isMembershipValid ? "" : " me-qq-badge--muted"}`}
                   >
                     {membershipStatusText}
                   </span>
                   <span className="me-qq-badge me-qq-badge--coin">币 {coinBalance}</span>
-                  <span className="me-qq-badge me-qq-badge--online">在线</span>
+                  <span className="me-qq-badge me-qq-badge--points">积分 {contributionPoints}</span>
+                  <span className="me-qq-badge me-qq-badge--charm">魅力 {charmValue}</span>
                 </div>
 
                 <div className="me-qq-bio">
@@ -7874,6 +7926,7 @@ export default function App() {
                   <p className="peer-home-subline">
                     {peerProfile.currentCity || "同城"} · 在线
                     {wealthLevelLabel(peerProfile) ? ` · 财富 ${wealthLevelLabel(peerProfile)}` : ""}
+                    {peerProfile.charmValue ? ` · 魅力 ${peerProfile.charmValue}` : ""}
                   </p>
 
                   <div className="peer-home-tabs">
@@ -7921,6 +7974,22 @@ export default function App() {
                         <div className="peer-home-quote">
                           <strong>交友宣言</strong>
                           <p>{peerProfile.partnerExpectation}</p>
+                        </div>
+                      ) : null}
+                      {Array.isArray(peerProfile.giftWall) && peerProfile.giftWall.length > 0 ? (
+                        <div className="peer-home-gift-wall">
+                          <h3 className="peer-home-section-title">收到的礼物</h3>
+                          <div className="peer-home-gift-grid">
+                            {peerProfile.giftWall.map((item) => (
+                              <div className="peer-home-gift-item" key={item.id}>
+                                <span className="peer-home-gift-icon" aria-hidden>
+                                  {item.giftIcon}
+                                </span>
+                                <strong>{item.giftName}</strong>
+                                <small>{item.fromUser?.nickname || "好友"}</small>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       ) : null}
                     </>
@@ -7977,7 +8046,7 @@ export default function App() {
           <div className="profile-setup-card membership-gate-card coin-recharge-card" onClick={(e) => e.stopPropagation()}>
             <div className="membership-sheet-handle" aria-hidden="true" />
             <h3>盲盒币充值</h3>
-            <p>充值后自动提升财富等级，可在个人主页展示</p>
+            <p>充值后获得盲盒币；消费盲盒币可累计贡献积分，提升财富等级</p>
             {!coinSelectedPackage ? (
               <>
                 <div className="coin-package-grid">
@@ -7993,7 +8062,7 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                <p className="feed-tip">当前余额：{coinBalance} 盲盒币</p>
+                <p className="feed-tip">当前余额：{coinBalance} 盲盒币 · 贡献积分 {contributionPoints}</p>
                 <button type="button" onClick={closeCoinRecharge}>
                   关闭
                 </button>
@@ -8053,6 +8122,30 @@ export default function App() {
             <p>{membershipGateCopy.desc}</p>
             {!membershipCheckoutMeta ? (
               <>
+                <div className="membership-points-redeem">
+                  <p className="membership-points-title">
+                    贡献积分兑换 <strong>{contributionPoints}</strong>
+                  </p>
+                  <div className="membership-points-grid">
+                    {POINT_MEMBERSHIP_REDEEM.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className="membership-points-btn"
+                        disabled={
+                          pointsRedeemSubmitting ||
+                          membershipSubmitting ||
+                          contributionPoints < option.costPoints
+                        }
+                        onClick={() => redeemPointsMembership(option.id)}
+                      >
+                        <strong>{option.label}</strong>
+                        <span>{option.costPoints} 积分</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="membership-divider-label">或直接购买会员</p>
                 <div className="werewolf-menu">
                   <button type="button" disabled={membershipSubmitting} onClick={() => openMembershipCheckout("MONTH")}>
                     月卡 ¥29

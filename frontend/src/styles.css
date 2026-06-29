@@ -2246,6 +2246,16 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
   color: #0369a1;
 }
 
+.me-qq-badge--points {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.me-qq-badge--charm {
+  background: #fce7f3;
+  color: #9d174d;
+}
+
 .me-qq-badge--online {
   background: #ecfdf5;
   color: #047857;
@@ -5662,6 +5672,42 @@ button:hover {
   line-height: 1.55;
 }
 
+.peer-home-gift-wall {
+  margin-top: 14px;
+}
+
+.peer-home-gift-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.peer-home-gift-item {
+  border: 1px solid #eef1f7;
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px 6px;
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  text-align: center;
+}
+
+.peer-home-gift-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.peer-home-gift-item strong {
+  font-size: 12px;
+  color: #2a3558;
+}
+
+.peer-home-gift-item small {
+  font-size: 10px;
+  color: #9aa3bd;
+}
+
 .peer-home-posts {
   margin-top: 14px;
   display: grid;
@@ -5759,6 +5805,64 @@ button:hover {
   font-size: 14px;
   color: #747f99;
   margin-bottom: 8px;
+}
+
+.membership-points-redeem {
+  margin: 8px 0 12px;
+  padding: 12px;
+  border-radius: 14px;
+  background: #f8f9fd;
+  border: 1px solid #e8ecf7;
+}
+
+.membership-points-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: #4f5b7a;
+  text-align: center;
+}
+
+.membership-points-title strong {
+  color: #d97706;
+}
+
+.membership-points-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.membership-points-btn {
+  border: 1px solid #e2e8fb;
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px 8px;
+  display: grid;
+  gap: 4px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.membership-points-btn strong {
+  font-size: 13px;
+  color: #2a3558;
+}
+
+.membership-points-btn span {
+  font-size: 12px;
+  color: #8b93ab;
+}
+
+.membership-points-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.membership-divider-label {
+  margin: 4px 0 10px;
+  text-align: center;
+  font-size: 12px;
+  color: #9aa3bd;
 }
 
 .membership-gate-card .werewolf-menu {
@@ -6583,6 +6687,12 @@ button:hover {
 
 .gift-coin-ico {
   font-size: 18px;
+}
+
+.gift-panel-points {
+  font-size: 12px;
+  color: #8b93ab;
+  font-weight: 500;
 }
 
 .gift-panel-recharge {

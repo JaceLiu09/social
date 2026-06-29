@@ -9,6 +9,18 @@ export const MALE_UNLOCK_FEE = 1.9;
 export const FRIENDLINESS_PER_ROUND = 10;
 export const MIN_ROUNDS_FOR_UNLOCK = 5;
 
+/** 消费盲盒币 → 贡献积分比例 */
+export const POINTS_PER_COIN = 1;
+
+/** 收礼方魅力值 = 礼物盲盒币 × 该比例（向下取整） */
+export const CHARM_RATIO = 0.5;
+
+/** 积分兑换会员档位 */
+export const POINT_MEMBERSHIP_REDEEM = [
+  { id: "redeem_7d", days: 7, costPoints: 500, label: "7天体验会员" },
+  { id: "redeem_30d", days: 30, costPoints: 2000, label: "30天会员" }
+];
+
 /** 盲盒币充值档位：price 为人民币（元），coins 为到账盲盒币 */
 export const COIN_PACKAGES = [
   { id: "pkg_60", coins: 60, price: 6 },

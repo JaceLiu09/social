@@ -30,11 +30,14 @@ model User {
   fakeRobotLibrary   FakeRobotLibrary @default(NONE)
   membershipType     MembershipType @default(FREE)
   membershipExpireAt DateTime?
-  coinBalance        Int            @default(0)
-  totalCoinRecharged Float          @default(0)
-  wealthLevel        Int            @default(0)
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  coinBalance         Int            @default(0)
+  totalCoinRecharged  Float          @default(0)
+  totalCoinSpent      Int            @default(0)
+  contributionPoints  Int            @default(0)
+  charmValue          Int            @default(0)
+  wealthLevel         Int            @default(0)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
   maleUnlocks        MaleUnlock[]
   sentMessages       ChatMessage[]  @relation("ChatMessageSender")
   recvMessages       ChatMessage[]  @relation("ChatMessageReceiver")
@@ -52,6 +55,8 @@ model User {
   coinRechargeOrders CoinRechargeOrder[]
   giftsSent         GiftTransaction[] @relation("GiftSender")
   giftsReceived     GiftTransaction[] @relation("GiftReceiver")
+  coinLedgers       CoinLedger[]
+  pointLedgers      PointLedger[]
   following         UserFollow[]      @relation("UserFollowing")
   followers         UserFollow[]      @relation("UserFollowers")
   authSessions      AuthSession[]
@@ -65,6 +70,36 @@ model AuthSession {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+model CoinLedger {
+  id        String   @id @default(cuid())
+  userId    String
+  delta     Int
+  balance   Int
+  reason    String
+  refId     String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model PointLedger {
+  id        String   @id @default(cuid())
+  userId    String
+  pointType String
+  delta     Int
+  balance   Int
+  reason    String
+  refId     String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, pointType, createdAt])
 }
 
 model GiftCatalog {

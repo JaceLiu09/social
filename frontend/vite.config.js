@@ -11,6 +11,7 @@ const API_PROXY_PREFIXES = [
   "/game",
   "/membership",
   "/wallet",
+  "/points",
   "/gifts",
   "/coins",
   "/chat",

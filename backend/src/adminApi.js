@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { allocateUniqueFakeBotPhone } from "./fakeBotPhone.js";
 import * as oss from "./ossClient.js";
+import { normalizeIncomeRange } from "./incomeRanges.js";
 
 const DEFAULT_FAKE_PASSWORD = "123456";
 const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
@@ -309,7 +310,7 @@ export function createAdminRouter(deps) {
     weight: z.coerce.number().int().min(35).max(120).optional(),
     hometown: z.string().max(64).default(""),
     currentCity: z.string().max(64).default(""),
-    income: z.string().max(32).default("8k-15k"),
+    income: z.string().max(32).default("5000-1万"),
     industry: z.string().max(64).default("互联网"),
     hobbies: z.string().max(512).default(""),
     partnerExpectation: z.string().max(512).default("真诚沟通，彼此尊重"),
@@ -344,7 +345,7 @@ export function createAdminRouter(deps) {
           weight: data.weight ?? (male ? 70 : 52),
           hometown: data.hometown || "杭州",
           currentCity: data.currentCity?.trim() || "",
-          income: data.income,
+          income: normalizeIncomeRange(data.income),
           industry: data.industry,
           hobbies: data.hobbies || "旅行,摄影,美食",
           partnerExpectation: data.partnerExpectation || "真诚沟通，彼此尊重",
@@ -405,7 +406,7 @@ export function createAdminRouter(deps) {
       if (data.weight !== undefined) patch.weight = data.weight;
       if (data.hometown !== undefined) patch.hometown = data.hometown;
       if (data.currentCity !== undefined) patch.currentCity = data.currentCity;
-      if (data.income !== undefined) patch.income = data.income;
+      if (data.income !== undefined) patch.income = normalizeIncomeRange(data.income);
       if (data.industry !== undefined) patch.industry = data.industry;
       if (data.hobbies !== undefined) patch.hobbies = data.hobbies;
       if (data.partnerExpectation !== undefined) patch.partnerExpectation = data.partnerExpectation;

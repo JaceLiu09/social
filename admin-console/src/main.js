@@ -312,6 +312,22 @@ function escapeAttr(s) {
     .replace(/</g, "&lt;");
 }
 
+const INCOME_OPTIONS = ["3000以下", "3000-5000", "5000-1万", "1万-2万", "2万以上"];
+
+function incomeSelectHtml(name, selected = "") {
+  const sel = String(selected || "").trim();
+  let html = `<select name="${escapeAttr(name)}">`;
+  if (sel && !INCOME_OPTIONS.includes(sel)) {
+    html += `<option value="${escapeAttr(sel)}" selected>${escapeAttr(sel)}（旧值）</option>`;
+  }
+  for (const opt of INCOME_OPTIONS) {
+    const isSelected = sel === opt || (!sel && opt === "5000-1万");
+    html += `<option value="${escapeAttr(opt)}"${isSelected ? " selected" : ""}>${opt}</option>`;
+  }
+  html += "</select>";
+  return html;
+}
+
 function flash(text, kind) {
   const el = document.createElement("div");
   el.className = `msg ${kind}`;
@@ -443,7 +459,7 @@ async function openFakeBotProfileModal(ctx) {
         <label>体重 kg <input name="weight" type="number" value="${escapeAttr(String(u.weight ?? ""))}" /></label>
         <label>家乡 <input name="hometown" value="${escapeAttr(u.hometown || "")}" /></label>
         <label>现居 <input name="currentCity" value="${escapeAttr(u.currentCity || "")}" /></label>
-        <label>收入 <input name="income" value="${escapeAttr(u.income || "")}" /></label>
+        <label>收入 ${incomeSelectHtml("income", u.income || "5000-1万")}</label>
         <label>行业 <input name="industry" value="${escapeAttr(u.industry || "")}" /></label>
         <label class="form-full">爱好 <textarea name="hobbies">${escapeHtml(u.hobbies || "")}</textarea></label>
         <label class="form-full">交友宣言 <textarea name="partnerExpectation">${escapeHtml(u.partnerExpectation || "")}</textarea></label>
@@ -918,7 +934,7 @@ async function renderFakes(panel) {
       <label>身高 cm <input name="height" type="number" value="163" placeholder="默认按性别" /></label>
       <label>体重 kg <input name="weight" type="number" value="48" placeholder="默认按性别" /></label>
       <label>家乡 <input name="hometown" placeholder="杭州" /></label>
-      <label>收入 <input name="income" value="5-6k" /></label>
+      <label>收入 ${incomeSelectHtml("income", "5000-1万")}</label>
       <label>行业 <input name="industry" value="互联网" /></label>
       <label class="form-full">爱好（个性展示） <textarea name="hobbies" placeholder="羽毛球, 徒步, 美食"></textarea></label>
       <label class="form-full">对另一半期望（签名感文案） <textarea name="partnerExpectation" placeholder="真诚沟通，彼此尊重"></textarea></label>
