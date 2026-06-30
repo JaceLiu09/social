@@ -592,7 +592,12 @@ export function createAdminRouter(deps) {
         }
       });
 
-      res.status(201).json({ ok: true, moment: { id: row.id, createdAt: row.createdAt } });
+      const momentCount = await prisma.squareMoment.count({ where: { userId: user.id } });
+      res.status(201).json({
+        ok: true,
+        moment: { id: row.id, createdAt: row.createdAt },
+        momentCount
+      });
     } catch (e) {
       if (e instanceof z.ZodError) {
         return res.status(400).json({ message: e.issues[0]?.message || "参数错误" });

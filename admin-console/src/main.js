@@ -767,12 +767,13 @@ function openFakeMomentModal(ctx) {
         imageUrls.push(up.url);
       }
       publishBtn.textContent = "发布中…";
-      await api(`/admin/api/fake-bots/${encodeURIComponent(userId)}/square-moments`, {
+      const result = await api(`/admin/api/fake-bots/${encodeURIComponent(userId)}/square-moments`, {
         method: "POST",
         body: JSON.stringify({ text, imageUrls })
       });
       flash("动态已发布", "ok");
       closeModal();
+      await refreshFakeBotsMomentCount(userId, result.momentCount);
     } catch (e) {
       flash(e.message || "发布失败", "err");
     } finally {
@@ -914,6 +915,30 @@ async function renderOnline(panel) {
 
 function fakeBotMomentCount(u) {
   return Number(u?.momentCount ?? u?._count?.squareMoments ?? 0);
+}
+
+/** 发动态成功后刷新列表中的动态数量 */
+async function refreshFakeBotsMomentCount(userId, momentCount) {
+  const panel = document.getElementById("panel-fakes");
+  if (!panel || panel.classList.contains("hidden")) return;
+
+  if (fakeUserSort === "moments_desc" || fakeUserSort === "moments_asc") {
+    await renderFakes(panel);
+    return;
+  }
+
+  const esc =
+    typeof CSS !== "undefined" && typeof CSS.escape === "function"
+      ? CSS.escape(userId)
+      : String(userId).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const btn = panel.querySelector(`.fake-moment-open[data-user-id="${esc}"]`);
+  const cell = btn?.closest("tr")?.querySelector(".fake-bot-moment-count");
+  if (cell && momentCount != null) {
+    cell.textContent = String(momentCount);
+    return;
+  }
+
+  await renderFakes(panel);
 }
 
 function fakeBotTableRows(users, maxRows, opts) {
