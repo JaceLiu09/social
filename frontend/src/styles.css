@@ -2262,20 +2262,48 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
 }
 
 .me-qq-bio {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 4px 8px;
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid #f0f2f7;
 }
 
-.me-qq-bio p {
+.me-qq-field-label {
+  margin: 0;
+  color: #9ca3af;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.me-qq-field-value {
+  grid-column: 1;
+  margin: 0;
+  color: #374151;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.me-qq-bio .me-qq-field-label {
+  grid-column: 1 / -1;
+}
+
+.me-qq-bio p:not(.me-qq-field-label):not(.me-qq-field-value) {
   flex: 1;
   margin: 0;
   color: #374151;
   font-size: 14px;
   line-height: 1.5;
+}
+
+.me-qq-tags-block {
+  margin-top: 12px;
+}
+
+.me-qq-tags-block > .me-qq-field-label {
+  margin-bottom: 8px;
 }
 
 .me-qq-bio-empty {
@@ -2284,7 +2312,9 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
 }
 
 .me-qq-bio-edit {
-  flex-shrink: 0;
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
   width: 32px;
   height: 32px;
   border: none;

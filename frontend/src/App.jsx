@@ -6678,11 +6678,11 @@ export default function App() {
                 <div className="modern-edit-group">
                   <p className="group-title">个人信息</p>
                   <label className="modern-edit-row input-row">
-                    <span>对另一半期望</span>
+                    <span>对另一半期望（签名感文案）</span>
                     <input
                       value={profileForm.partnerExpectation}
                       onChange={(e) => setProfileForm((prev) => ({ ...prev, partnerExpectation: e.target.value }))}
-                      placeholder="与后台录入的「签名感文案」一致，展示在主页签名区"
+                      placeholder="展示在主页签名区"
                     />
                   </label>
                   <label className="modern-edit-row input-row">
@@ -6690,7 +6690,7 @@ export default function App() {
                     <input
                       value={profileForm.hobbies}
                       onChange={(e) => setProfileForm((prev) => ({ ...prev, hobbies: e.target.value }))}
-                      placeholder="多个爱好用逗号分隔，展示在主页标签"
+                      placeholder="多个爱好用逗号分隔，展示在主页标签区"
                     />
                   </label>
                   <div className="modern-edit-row">
@@ -6846,11 +6846,12 @@ export default function App() {
 
                 {mePartnerExpectation ? (
                   <div className="me-qq-bio">
-                    <p>{mePartnerExpectation}</p>
+                    <p className="me-qq-field-label">对另一半期望（签名感文案）</p>
+                    <p className="me-qq-field-value">{mePartnerExpectation}</p>
                     <button
                       type="button"
                       className="me-qq-bio-edit"
-                      aria-label="编辑签名"
+                      aria-label="编辑对另一半期望"
                       onClick={() => setMePage("profile-edit")}
                     >
                       ✎
@@ -6859,7 +6860,9 @@ export default function App() {
                 ) : null}
 
                 {meHobbyTags.length > 0 ? (
-                  <div className="me-qq-tags">
+                  <div className="me-qq-tags-block">
+                    <p className="me-qq-field-label">爱好（个性展示）</p>
+                    <div className="me-qq-tags">
                     {meHobbyTags.map((tag) => (
                       <span className="me-qq-tag" key={tag}>
                         {tag}
@@ -6916,6 +6919,7 @@ export default function App() {
                       添加标签 +
                     </button>
                   )}
+                    </div>
                 </div>
                 ) : null}
 
