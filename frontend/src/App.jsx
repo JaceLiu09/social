@@ -1161,11 +1161,15 @@ export default function App() {
         setNeedsProfileSetup(Boolean(data.needsProfile || !data.user?.profileCompleted));
         setProfileSetupPhotos(data.user?.avatarUrl ? [data.user.avatarUrl] : []);
         setMessage("");
-        navigate("/planet", { replace: true });
+        const stayOnMe =
+          location.pathname === "/me" || new URLSearchParams(location.search).get("tab") === "me";
+        navigate(stayOnMe ? "/me" : "/planet", { replace: true });
       } catch (error) {
         impersonateHandledRef.current = false;
         showToast(error.message || "自动登录失败");
-        navigate("/planet", { replace: true });
+        const stayOnMe =
+          location.pathname === "/me" || new URLSearchParams(location.search).get("tab") === "me";
+        navigate(stayOnMe ? "/me" : "/planet", { replace: true });
       } finally {
         setImpersonatePending(false);
       }

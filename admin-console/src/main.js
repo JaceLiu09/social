@@ -32,7 +32,7 @@ async function loginFakeBotToApp(userId) {
     method: "POST"
   });
   const loginUrl =
-    data.url || `${publicAppUrl()}/planet?asUser=${encodeURIComponent(String(data.code || ""))}`;
+    data.url || `${publicAppUrl()}/me?asUser=${encodeURIComponent(String(data.code || ""))}`;
   window.open(loginUrl, "_blank", "noopener,noreferrer");
 }
 
@@ -326,6 +326,22 @@ function incomeSelectHtml(name, selected = "") {
   }
   html += "</select>";
   return html;
+}
+
+function validateFakeBotMetrics(fd) {
+  const age = Number(fd.get("age"));
+  if (!Number.isFinite(age) || age < 18 || age > 80) {
+    return "年龄请填写 18–80 之间的整数";
+  }
+  const height = Number(fd.get("height"));
+  if (!Number.isFinite(height) || height < 140 || height > 210) {
+    return "身高请填写 140–210 之间的整数（单位 cm），请勿多输数字";
+  }
+  const weight = Number(fd.get("weight"));
+  if (!Number.isFinite(weight) || weight < 35 || weight > 120) {
+    return "体重请填写 35–120 之间的整数（单位 kg）";
+  }
+  return null;
 }
 
 function flash(text, kind) {
@@ -771,6 +787,8 @@ let msgPage = 1;
 let membershipOrderPage = 1;
 let membershipOrderStatus = "";
 let msgFilterTo = "";
+/** 用户机器人库列表排序：createdAt | moments_desc | moments_asc */
+let fakeUserSort = "createdAt";
 /** 来自 /auth/me，无「用户管理」权限时为 false */
 let sessionCanManageUsers = true;
 
@@ -894,18 +912,28 @@ async function renderOnline(panel) {
   `;
 }
 
+function fakeBotMomentCount(u) {
+  return Number(u?.momentCount ?? u?._count?.squareMoments ?? 0);
+}
+
 function fakeBotTableRows(users, maxRows, opts) {
   const withMoment = Boolean(opts?.withMomentButton);
-  const slice = users.slice(0, maxRows);
+  const withMomentCount = opts?.withMomentCount !== false;
+  const slice = maxRows > 0 ? users.slice(0, maxRows) : users;
   return slice
     .map(
       (u) => `
               <tr>
                 <td>${u.avatarUrl ? `<img class="thumb" src="${escapeAttr(mediaUrl(u.avatarUrl))}" alt="" />` : "—"}</td>
-                <td>${escapeHtml(u.nickname)}</td>
+                <td>
+                  <button type="button" class="link-btn fake-bot-login" data-user-id="${escapeAttr(u.id)}" title="以该账号打开盲盒 App">
+                    ${escapeHtml(u.nickname || "—")}
+                  </button>
+                </td>
                 <td class="muted">${escapeHtml(u.phone)}</td>
                 <td>${escapeHtml(u.currentCity || "")}</td>
                 <td class="muted">${escapeHtml((u.hobbies || "").slice(0, 40))}${(u.hobbies || "").length > 40 ? "…" : ""}</td>
+                ${withMomentCount ? `<td class="num fake-bot-moment-count">${fakeBotMomentCount(u)}</td>` : ""}
                 ${
                   withMoment
                     ? `<td><button type="button" class="btn secondary fake-moment-open" data-user-id="${escapeAttr(u.id)}" data-nickname="${escapeAttr(u.nickname || "")}" data-gender="${escapeAttr(u.gender === "MALE" ? "MALE" : "FEMALE")}">发动态</button></td>`
@@ -916,10 +944,26 @@ function fakeBotTableRows(users, maxRows, opts) {
     .join("");
 }
 
+function fakeBotSortSelectHtml(current) {
+  const options = [
+    { value: "createdAt", label: "添加时间（新→旧）" },
+    { value: "moments_desc", label: "动态数量（多→少）" },
+    { value: "moments_asc", label: "动态数量（少→多）" }
+  ];
+  return options
+    .map(
+      (opt) =>
+        `<option value="${escapeAttr(opt.value)}"${opt.value === current ? " selected" : ""}>${opt.label}</option>`
+    )
+    .join("");
+}
+
 async function renderFakes(panel) {
+  const sort = fakeUserSort || "createdAt";
+  const sortQuery = `&sort=${encodeURIComponent(sort)}`;
   const [systemData, userData] = await Promise.all([
-    api("/admin/api/fake-bots?pool=system"),
-    api("/admin/api/fake-bots?pool=user")
+    api(`/admin/api/fake-bots?pool=system${sortQuery}`),
+    api(`/admin/api/fake-bots?pool=user${sortQuery}`)
   ]);
   panel.innerHTML = `
     <h2>机器人库</h2>
@@ -930,9 +974,9 @@ async function renderFakes(panel) {
       <label>性别
         <select name="gender"><option value="FEMALE">女</option><option value="MALE">男</option></select>
       </label>
-      <label>年龄 <input name="age" type="number" value="21" min="18" max="80" /></label>
-      <label>身高 cm <input name="height" type="number" value="163" placeholder="默认按性别" /></label>
-      <label>体重 kg <input name="weight" type="number" value="48" placeholder="默认按性别" /></label>
+      <label>年龄 <input name="age" type="number" value="21" min="18" max="80" required /></label>
+      <label>身高 cm <input name="height" type="number" value="163" min="140" max="210" step="1" placeholder="140–210" required /></label>
+      <label>体重 kg <input name="weight" type="number" value="48" min="35" max="120" step="1" placeholder="35–120" required /></label>
       <label>家乡 <input name="hometown" placeholder="杭州" /></label>
       <label>收入 ${incomeSelectHtml("income", "5000-1万")}</label>
       <label>行业 <input name="industry" value="互联网" /></label>
@@ -959,31 +1003,36 @@ async function renderFakes(panel) {
       </div>
     </form>
     <div id="fake-list-wrap" style="margin-top:24px">
-      <h3 style="font-size:14px;margin-bottom:8px">用户机器人库（后台录入 / 匹配用）· 已有 ${userData.users.length} 个</h3>
+      <div class="toolbar fake-bot-list-toolbar">
+        <h3 style="font-size:14px;margin:0">用户机器人库（后台录入 / 匹配用）· 已有 ${userData.users.length} 个</h3>
+        <label class="fake-bot-sort-label">排序
+          <select id="fake-user-sort">${fakeBotSortSelectHtml(sort)}</select>
+        </label>
+      </div>
+      <p class="muted" style="margin:6px 0 10px">点击昵称将以该 Fake 账号打开盲盒 App，便于编辑主页。</p>
       <div style="overflow-x:auto;margin-bottom:20px">
         <table class="data">
           <thead>
-            <tr><th></th><th>昵称</th><th>手机</th><th>城市</th><th>爱好</th><th>操作</th></tr>
+            <tr><th></th><th>昵称</th><th>手机</th><th>城市</th><th>爱好</th><th>动态数量</th><th>操作</th></tr>
           </thead>
           <tbody>
-            ${fakeBotTableRows(userData.users, 80, { withMomentButton: true })}
+            ${fakeBotTableRows(userData.users, 0, { withMomentButton: true, withMomentCount: true })}
           </tbody>
         </table>
       </div>
-      ${userData.users.length > 80 ? `<p class="muted">用户库仅显示前 80 条。</p>` : ""}
 
       <h3 style="font-size:14px;margin-bottom:8px">系统机器人库（种子 / 展示用）· 已有 ${systemData.users.length} 个</h3>
       <div style="overflow-x:auto">
         <table class="data">
           <thead>
-            <tr><th></th><th>昵称</th><th>手机</th><th>城市</th><th>爱好</th></tr>
+            <tr><th></th><th>昵称</th><th>手机</th><th>城市</th><th>爱好</th><th>动态数量</th></tr>
           </thead>
           <tbody>
-            ${fakeBotTableRows(systemData.users, 80)}
+            ${fakeBotTableRows(systemData.users, 200, { withMomentCount: true })}
           </tbody>
         </table>
       </div>
-      ${systemData.users.length > 80 ? `<p class="muted">系统库仅显示前 80 条。</p>` : ""}
+      ${systemData.users.length > 200 ? `<p class="muted">系统库仅显示前 200 条。</p>` : ""}
     </div>
   `;
 
@@ -1127,10 +1176,34 @@ async function renderFakes(panel) {
   }
   bindFakeAlbumDropZone();
 
-  if (panel._fakeMomentClick) {
-    panel.removeEventListener("click", panel._fakeMomentClick);
+  panel.querySelector("#fake-user-sort")?.addEventListener("change", (e) => {
+    fakeUserSort = String(e.target.value || "createdAt");
+    renderFakes(panel);
+  });
+
+  if (panel._fakePanelClick) {
+    panel.removeEventListener("click", panel._fakePanelClick);
   }
-  panel._fakeMomentClick = (e) => {
+  panel._fakePanelClick = async (e) => {
+    const loginBtn = e.target.closest(".fake-bot-login");
+    if (loginBtn) {
+      e.preventDefault();
+      const userId = loginBtn.getAttribute("data-user-id") || "";
+      if (!userId) return;
+      const prev = loginBtn.textContent;
+      loginBtn.disabled = true;
+      loginBtn.textContent = "打开中…";
+      try {
+        await loginFakeBotToApp(userId);
+        flash(`已打开盲盒 App：${prev.trim()}`, "ok");
+      } catch (err) {
+        flash(err.message || "打开盲盒失败", "err");
+      } finally {
+        loginBtn.disabled = false;
+        loginBtn.textContent = prev;
+      }
+      return;
+    }
     const btn = e.target.closest(".fake-moment-open");
     if (!btn) return;
     e.preventDefault();
@@ -1140,7 +1213,7 @@ async function renderFakes(panel) {
       gender: btn.getAttribute("data-gender") === "MALE" ? "MALE" : "FEMALE"
     });
   };
-  panel.addEventListener("click", panel._fakeMomentClick);
+  panel.addEventListener("click", panel._fakePanelClick);
 
   document.getElementById("fake-form").onsubmit = async (ev) => {
     ev.preventDefault();
@@ -1153,6 +1226,11 @@ async function renderFakes(panel) {
 
     const submitBtn = document.getElementById("fake-submit-btn");
     const fd = new FormData(ev.target);
+    const metricError = validateFakeBotMetrics(fd);
+    if (metricError) {
+      flash(metricError, "err");
+      return;
+    }
     const albumFiles = [...albumDraftFiles];
 
     submitBtn.disabled = true;

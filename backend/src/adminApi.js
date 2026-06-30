@@ -11,6 +11,17 @@ import { normalizeIncomeRange } from "./incomeRanges.js";
 const DEFAULT_FAKE_PASSWORD = "123456";
 const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
 
+function formatZodMessage(error) {
+  if (!(error instanceof z.ZodError)) return error?.message || "参数错误";
+  const issue = error.issues[0];
+  if (!issue) return "参数错误";
+  const field = String(issue.path?.[0] || "");
+  if (field === "height") return "身高请填写 140–210 之间的整数（单位 cm）";
+  if (field === "weight") return "体重请填写 35–120 之间的整数（单位 kg）";
+  if (field === "age") return "年龄请填写 18–80 之间的整数";
+  return issue.message || "参数错误";
+}
+
 function isFakeBotPhone(phone) {
   if (!phone) return false;
   return phone.startsWith("fakem") || phone.startsWith("fakef");
@@ -258,12 +269,19 @@ export function createAdminRouter(deps) {
   r.get("/fake-bots", async (req, res) => {
     try {
       const pool = String(req.query.pool || "all").toLowerCase();
+      const sort = String(req.query.sort || "createdAt").trim();
       const libFilter =
         pool === "system"
           ? { fakeRobotLibrary: "SYSTEM" }
           : pool === "user"
             ? { fakeRobotLibrary: "USER" }
             : { fakeRobotLibrary: { in: ["SYSTEM", "USER"] } };
+      const orderBy =
+        sort === "moments_desc"
+          ? { squareMoments: { _count: "desc" } }
+          : sort === "moments_asc"
+            ? { squareMoments: { _count: "asc" } }
+            : { createdAt: "desc" };
       const users = await prisma.user.findMany({
         where: {
           AND: [
@@ -271,7 +289,7 @@ export function createAdminRouter(deps) {
             libFilter
           ]
         },
-        orderBy: { createdAt: "desc" },
+        orderBy,
         select: {
           id: true,
           phone: true,
@@ -288,12 +306,14 @@ export function createAdminRouter(deps) {
           photoUrls: true,
           profileCompleted: true,
           fakeRobotLibrary: true,
-          createdAt: true
+          createdAt: true,
+          _count: { select: { squareMoments: true } }
         }
       });
       res.json({
         users: users.map((u) => ({
           ...u,
+          momentCount: u._count?.squareMoments ?? 0,
           photoUrls: parsePhotoUrls(u.photoUrls)
         }))
       });
@@ -364,7 +384,7 @@ export function createAdminRouter(deps) {
       });
     } catch (e) {
       if (e instanceof z.ZodError) {
-        return res.status(400).json({ message: e.issues.map((x) => x.message).join("; ") });
+        return res.status(400).json({ message: formatZodMessage(e) });
       }
       console.error("[admin/fake-bots POST]", e);
       const code = e?.code;
@@ -451,7 +471,7 @@ export function createAdminRouter(deps) {
       });
     } catch (e) {
       if (e instanceof z.ZodError) {
-        return res.status(400).json({ message: e.issues.map((x) => x.message).join("; ") });
+        return res.status(400).json({ message: formatZodMessage(e) });
       }
       res.status(500).json({ message: e.message || "更新失败" });
     }
@@ -476,7 +496,7 @@ export function createAdminRouter(deps) {
 
       const code = createImpersonationCode(user.id);
       const site = getPublicSiteUrl?.() || "";
-      const url = site ? `${site}/planet?asUser=${encodeURIComponent(code)}` : null;
+      const url = site ? `${site}/me?asUser=${encodeURIComponent(code)}` : null;
       res.json({
         code,
         url,
