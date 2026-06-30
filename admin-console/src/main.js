@@ -421,8 +421,8 @@ async function openFakeBotProfileModal(ctx) {
         <div><dt>现居</dt><dd>${escapeHtml(u.currentCity || "—")}</dd></div>
         <div><dt>收入</dt><dd>${escapeHtml(u.income || "—")}</dd></div>
         <div><dt>行业</dt><dd>${escapeHtml(u.industry || "—")}</dd></div>
-        <div class="fake-bot-profile-span"><dt>爱好</dt><dd>${escapeHtml(u.hobbies || "—")}</dd></div>
-        <div class="fake-bot-profile-span"><dt>交友宣言</dt><dd>${escapeHtml(u.partnerExpectation || "—")}</dd></div>
+        <div class="fake-bot-profile-span"><dt>爱好（个性展示）</dt><dd>${escapeHtml(u.hobbies || "—")}</dd></div>
+        <div class="fake-bot-profile-span"><dt>对另一半期望</dt><dd>${escapeHtml(u.partnerExpectation || "—")}</dd></div>
       </dl>
       ${gallery ? `<div class="fake-moment-previews">${gallery}</div>` : ""}
       <div class="modal-actions">
@@ -477,8 +477,8 @@ async function openFakeBotProfileModal(ctx) {
         <label>现居 <input name="currentCity" value="${escapeAttr(u.currentCity || "")}" /></label>
         <label>收入 ${incomeSelectHtml("income", u.income || "5000-1万")}</label>
         <label>行业 <input name="industry" value="${escapeAttr(u.industry || "")}" /></label>
-        <label class="form-full">爱好 <textarea name="hobbies">${escapeHtml(u.hobbies || "")}</textarea></label>
-        <label class="form-full">交友宣言 <textarea name="partnerExpectation">${escapeHtml(u.partnerExpectation || "")}</textarea></label>
+        <label class="form-full">爱好（个性展示） <textarea name="hobbies">${escapeHtml(u.hobbies || "")}</textarea></label>
+        <label class="form-full">对另一半期望 <textarea name="partnerExpectation">${escapeHtml(u.partnerExpectation || "")}</textarea></label>
         <div class="modal-actions form-full">
           <button type="button" class="btn secondary" id="fake-bot-profile-cancel-edit">取消</button>
           <button type="submit" class="btn" id="fake-bot-profile-save">保存</button>

@@ -2278,6 +2278,11 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
   line-height: 1.5;
 }
 
+.me-qq-bio-empty {
+  color: #9ca3af;
+  font-style: normal;
+}
+
 .me-qq-bio-edit {
   flex-shrink: 0;
   width: 32px;

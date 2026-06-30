@@ -364,11 +364,11 @@ export function createAdminRouter(deps) {
           height: data.height ?? (male ? 178 : 165),
           weight: data.weight ?? (male ? 70 : 52),
           hometown: data.hometown || "杭州",
-          currentCity: data.currentCity?.trim() || "",
+          currentCity: data.currentCity?.trim() || data.hometown?.trim() || "",
           income: normalizeIncomeRange(data.income),
           industry: data.industry,
-          hobbies: data.hobbies || "旅行,摄影,美食",
-          partnerExpectation: data.partnerExpectation || "真诚沟通，彼此尊重",
+          hobbies: String(data.hobbies || "").trim(),
+          partnerExpectation: String(data.partnerExpectation || "").trim() || "真诚沟通，彼此尊重",
           profileCompleted: true,
           avatarUrl: avatar || null,
           photoUrls: JSON.stringify(photos),
@@ -411,7 +411,7 @@ export function createAdminRouter(deps) {
 
       const existing = await prisma.user.findUnique({
         where: { id: userId },
-        select: { id: true, phone: true, fakeRobotLibrary: true }
+        select: { id: true, phone: true, fakeRobotLibrary: true, currentCity: true }
       });
       if (!existing) return res.status(404).json({ message: "用户不存在" });
       if (!isFakeBotUser(existing)) {
@@ -426,10 +426,15 @@ export function createAdminRouter(deps) {
       if (data.weight !== undefined) patch.weight = data.weight;
       if (data.hometown !== undefined) patch.hometown = data.hometown;
       if (data.currentCity !== undefined) patch.currentCity = data.currentCity;
+      else if (data.hometown !== undefined && !String(existing.currentCity || "").trim()) {
+        patch.currentCity = data.hometown;
+      }
       if (data.income !== undefined) patch.income = normalizeIncomeRange(data.income);
       if (data.industry !== undefined) patch.industry = data.industry;
-      if (data.hobbies !== undefined) patch.hobbies = data.hobbies;
-      if (data.partnerExpectation !== undefined) patch.partnerExpectation = data.partnerExpectation;
+      if (data.hobbies !== undefined) patch.hobbies = String(data.hobbies || "").trim();
+      if (data.partnerExpectation !== undefined) {
+        patch.partnerExpectation = String(data.partnerExpectation || "").trim();
+      }
       if (data.avatarUrl !== undefined) patch.avatarUrl = data.avatarUrl.trim() || null;
       if (data.photoUrls !== undefined) patch.photoUrls = JSON.stringify(data.photoUrls);
       if (Object.keys(patch).length === 0) {

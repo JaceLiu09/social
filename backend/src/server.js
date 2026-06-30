@@ -1602,6 +1602,9 @@ app.patch("/auth/profile", async (req, res) => {
     if (body.currentCity !== undefined) {
       data.currentCity = String(body.currentCity || "");
     }
+    if (body.hometown !== undefined) {
+      data.hometown = String(body.hometown || "");
+    }
     if (body.hobbies !== undefined) {
       data.hobbies = String(body.hobbies || "");
     }

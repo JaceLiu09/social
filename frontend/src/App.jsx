@@ -1187,6 +1187,7 @@ export default function App() {
   const [profileForm, setProfileForm] = useState({
     nickname: "",
     currentCity: "",
+    hometown: "",
     hobbies: "",
     partnerExpectation: "",
     avatarUrl: ""
@@ -1254,6 +1255,32 @@ export default function App() {
       .filter(Boolean)
       .slice(0, 8);
   }, [user?.hobbies, profileForm.hobbies]);
+  const mePartnerExpectation = useMemo(
+    () => String(user?.partnerExpectation || profileForm.partnerExpectation || "").trim(),
+    [user?.partnerExpectation, profileForm.partnerExpectation]
+  );
+  const meProfileInfoPrimary = useMemo(() => {
+    if (!user) return [];
+    const items = [];
+    if (user.gender === "MALE") items.push("♂ 男");
+    else if (user.gender === "FEMALE") items.push("♀ 女");
+    if (user.age != null && user.age !== "") items.push(`${user.age}岁`);
+    if (user.height) items.push(`${user.height}cm`);
+    if (user.weight) items.push(`${user.weight}kg`);
+    const hometown = String(user.hometown || "").trim();
+    if (hometown) items.push(`来自 ${hometown}`);
+    return items;
+  }, [user]);
+  const meProfileInfoSecondary = useMemo(() => {
+    if (!user) return [];
+    const items = [];
+    const industry = String(user.industry || "").trim();
+    if (industry) items.push(industry);
+    const income = String(user.income || "").trim();
+    if (income) items.push(income);
+    return items;
+  }, [user]);
+  const hasMeProfileInfo = meProfileInfoPrimary.length > 0 || meProfileInfoSecondary.length > 0;
   const filteredConversations = useMemo(
     () =>
       conversations.filter((item) => {
@@ -2135,6 +2162,7 @@ export default function App() {
     setProfileForm({
       nickname: user.nickname || "",
       currentCity: user.currentCity || "",
+      hometown: user.hometown || "",
       hobbies: user.hobbies || "",
       partnerExpectation: user.partnerExpectation || "",
       avatarUrl: user.avatarUrl || ""
@@ -3266,6 +3294,7 @@ export default function App() {
           nickname: profileForm.nickname,
           avatarUrl: finalAvatar || null,
           photoUrls: JSON.stringify(photoUrlsPayload.slice(0, 10)),
+          hometown: profileForm.hometown,
           currentCity: profileForm.currentCity,
           hobbies: profileForm.hobbies,
           partnerExpectation: profileForm.partnerExpectation
@@ -6642,29 +6671,49 @@ export default function App() {
                   </div>
                   <div className="modern-edit-row">
                     <span>正在使用的设备</span>
-                    <em>iPhone 17 Pro Max</em>
+                    <em>未设置</em>
                   </div>
                 </div>
 
                 <div className="modern-edit-group">
                   <p className="group-title">个人信息</p>
                   <label className="modern-edit-row input-row">
-                    <span>个人签名</span>
+                    <span>对另一半期望</span>
                     <input
                       value={profileForm.partnerExpectation}
                       onChange={(e) => setProfileForm((prev) => ({ ...prev, partnerExpectation: e.target.value }))}
+                      placeholder="与后台录入的「签名感文案」一致，展示在主页签名区"
+                    />
+                  </label>
+                  <label className="modern-edit-row input-row">
+                    <span>爱好（个性展示）</span>
+                    <input
+                      value={profileForm.hobbies}
+                      onChange={(e) => setProfileForm((prev) => ({ ...prev, hobbies: e.target.value }))}
+                      placeholder="多个爱好用逗号分隔，展示在主页标签"
                     />
                   </label>
                   <div className="modern-edit-row">
                     <span>月收入</span>
-                    <em>{user.income || "5万以上"}</em>
+                    <em>{user.income || "未设置"}</em>
                   </div>
                   <div className="modern-edit-row">
                     <span>身高</span>
-                    <em>{user.height || 176}</em>
+                    <em>{user.height ? `${user.height} cm` : "未设置"}</em>
+                  </div>
+                  <div className="modern-edit-row">
+                    <span>体重</span>
+                    <em>{user.weight ? `${user.weight} kg` : "未设置"}</em>
                   </div>
                   <label className="modern-edit-row input-row">
                     <span>家乡</span>
+                    <input
+                      value={profileForm.hometown}
+                      onChange={(e) => setProfileForm((prev) => ({ ...prev, hometown: e.target.value }))}
+                    />
+                  </label>
+                  <label className="modern-edit-row input-row">
+                    <span>现居城市</span>
                     <input
                       value={profileForm.currentCity}
                       onChange={(e) => setProfileForm((prev) => ({ ...prev, currentCity: e.target.value }))}
@@ -6672,15 +6721,8 @@ export default function App() {
                   </label>
                   <div className="modern-edit-row">
                     <span>职业</span>
-                    <em>{user.industry || "IT/互联网"}</em>
+                    <em>{user.industry || "未设置"}</em>
                   </div>
-                  <label className="modern-edit-row input-row">
-                    <span>盲盒宣言</span>
-                    <input
-                      value={profileForm.hobbies}
-                      onChange={(e) => setProfileForm((prev) => ({ ...prev, hobbies: e.target.value }))}
-                    />
-                  </label>
                 </div>
               </div>
             </div>
@@ -6764,31 +6806,29 @@ export default function App() {
                   </button>
                 </div>
 
-                <button type="button" className="me-qq-info-strip" onClick={() => setMePage("profile-edit")}>
-                  <div className="me-qq-info-lines">
-                    <p className="me-qq-info-line">
-                      <span>{user.gender === "MALE" ? "♂ 男" : "♀ 女"}</span>
-                      <span>{user.age ?? "-"}岁</span>
-                      {formatBirthdayShort(user.birthDate) ? (
-                        <span>
-                          {formatBirthdayShort(user.birthDate)}
-                          {getZodiacLabel(user.birthDate) ? ` ${getZodiacLabel(user.birthDate)}` : ""}
-                        </span>
+                {hasMeProfileInfo ? (
+                  <button type="button" className="me-qq-info-strip" onClick={() => setMePage("profile-edit")}>
+                    <div className="me-qq-info-lines">
+                      {meProfileInfoPrimary.length > 0 ? (
+                        <p className="me-qq-info-line">
+                          {meProfileInfoPrimary.map((item) => (
+                            <span key={item}>{item}</span>
+                          ))}
+                        </p>
                       ) : null}
-                      {user.currentCity ? <span>{user.currentCity}</span> : null}
-                      {user.hometown ? <span>{user.hometown}</span> : null}
-                    </p>
-                    <p className="me-qq-info-line me-qq-info-line--muted">
-                      {user.industry ? <span>{user.industry}</span> : null}
-                      <span>盲盒币 {coinBalance}</span>
-                      <span>积分 {contributionPoints}</span>
-                      <span>魅力 {charmValue}</span>
-                    </p>
-                  </div>
-                  <span className="me-qq-chevron" aria-hidden="true">
-                    ›
-                  </span>
-                </button>
+                      {meProfileInfoSecondary.length > 0 ? (
+                        <p className="me-qq-info-line me-qq-info-line--muted">
+                          {meProfileInfoSecondary.map((item) => (
+                            <span key={item}>{item}</span>
+                          ))}
+                        </p>
+                      ) : null}
+                    </div>
+                    <span className="me-qq-chevron" aria-hidden="true">
+                      ›
+                    </span>
+                  </button>
+                ) : null}
 
                 <div className="me-qq-badges" aria-label="等级与会员">
                   <span className="me-qq-badge me-qq-badge--level">
@@ -6804,25 +6844,28 @@ export default function App() {
                   <span className="me-qq-badge me-qq-badge--charm">魅力 {charmValue}</span>
                 </div>
 
-                <div className="me-qq-bio">
-                  <p>{user.partnerExpectation || profileForm.partnerExpectation || "做一个有趣的人"}</p>
-                  <button
-                    type="button"
-                    className="me-qq-bio-edit"
-                    aria-label="编辑签名"
-                    onClick={() => setMePage("profile-edit")}
-                  >
-                    ✎
-                  </button>
-                </div>
+                {mePartnerExpectation ? (
+                  <div className="me-qq-bio">
+                    <p>{mePartnerExpectation}</p>
+                    <button
+                      type="button"
+                      className="me-qq-bio-edit"
+                      aria-label="编辑签名"
+                      onClick={() => setMePage("profile-edit")}
+                    >
+                      ✎
+                    </button>
+                  </div>
+                ) : null}
 
-                <div className="me-qq-tags">
-                  {meHobbyTags.map((tag) => (
-                    <span className="me-qq-tag" key={tag}>
-                      {tag}
-                    </span>
-                  ))}
-                  {showMeTagInput ? (
+                {meHobbyTags.length > 0 ? (
+                  <div className="me-qq-tags">
+                    {meHobbyTags.map((tag) => (
+                      <span className="me-qq-tag" key={tag}>
+                        {tag}
+                      </span>
+                    ))}
+                    {showMeTagInput ? (
                     <div className="me-qq-tag-input-row">
                       <input
                         type="text"
@@ -6874,6 +6917,7 @@ export default function App() {
                     </button>
                   )}
                 </div>
+                ) : null}
 
                 <section className="me-qq-section me-qq-section--feed">
                   <div className="me-qq-section-head my-dynamics-head">
