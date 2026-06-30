@@ -2315,6 +2315,7 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
   grid-column: 2;
   grid-row: 2;
   align-self: start;
+  flex-shrink: 0;
   width: 32px;
   height: 32px;
   border: none;
@@ -2328,7 +2329,7 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 0;
 }
 
 .me-qq-tag {

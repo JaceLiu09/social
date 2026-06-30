@@ -6682,7 +6682,7 @@ export default function App() {
                     <input
                       value={profileForm.partnerExpectation}
                       onChange={(e) => setProfileForm((prev) => ({ ...prev, partnerExpectation: e.target.value }))}
-                      placeholder="展示在主页签名区"
+                      placeholder="展示在主页「对另一半期望」区域"
                     />
                   </label>
                   <label className="modern-edit-row input-row">
@@ -6920,7 +6920,7 @@ export default function App() {
                     </button>
                   )}
                     </div>
-                </div>
+                  </div>
                 ) : null}
 
                 <section className="me-qq-section me-qq-section--feed">
@@ -8018,13 +8018,13 @@ export default function App() {
                       </div>
                       {peerProfile.hobbies ? (
                         <div className="peer-home-quote">
-                          <strong>爱好</strong>
+                          <strong>爱好（个性展示）</strong>
                           <p>{peerProfile.hobbies}</p>
                         </div>
                       ) : null}
                       {peerProfile.partnerExpectation ? (
                         <div className="peer-home-quote">
-                          <strong>交友宣言</strong>
+                          <strong>对另一半期望（签名感文案）</strong>
                           <p>{peerProfile.partnerExpectation}</p>
                         </div>
                       ) : null}
@@ -8734,13 +8734,13 @@ export default function App() {
                     </dl>
                     {planetMatchManifesto ? (
                       <div className="planet-match-cyber-manifesto">
-                        <span className="planet-match-cyber-manifesto-label">交友宣言</span>
+                        <span className="planet-match-cyber-manifesto-label">对另一半期望（签名感文案）</span>
                         <p className="planet-match-manifesto-text">{planetMatchManifesto}</p>
                       </div>
                     ) : null}
                     {String(planetMatchProfile.hobbies || "").trim() ? (
                       <div className="planet-match-cyber-hobbies-block">
-                        <span className="planet-match-cyber-manifesto-label">爱好</span>
+                        <span className="planet-match-cyber-manifesto-label">爱好（个性展示）</span>
                         <p className="planet-match-manifesto-text">{String(planetMatchProfile.hobbies).trim()}</p>
                       </div>
                     ) : null}
