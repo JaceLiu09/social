@@ -15,6 +15,7 @@ import * as oss from "./ossClient.js";
 import { sampleTacitQuestionsForRound, normalizeTacitTopic, getTacitTopicLabel } from "./tacitQuestionBank.js";
 import {
   COIN_PACKAGES,
+  COIN_YUAN_RATE,
   DEFAULT_GIFTS,
   FRIENDLINESS_PER_ROUND,
   MALE_UNLOCK_FEE,
@@ -1037,17 +1038,46 @@ async function backfillFakeRobotLibraryFlags() {
 
 async function ensureGiftCatalog() {
   const count = await prisma.giftCatalog.count();
-  if (count > 0) return;
-  await prisma.giftCatalog.createMany({
-    data: DEFAULT_GIFTS.map((g) => ({
+  if (count === 0) {
+    await prisma.giftCatalog.createMany({
+      data: DEFAULT_GIFTS.map((g) => ({
+        name: g.name,
+        icon: g.icon,
+        coinPrice: g.coinPrice,
+        sortOrder: g.sortOrder,
+        badge: g.badge || null,
+        enabled: true
+      }))
+    });
+    return;
+  }
+  await syncGiftCatalogFromDefaults();
+}
+
+async function syncGiftCatalogFromDefaults() {
+  const rows = await prisma.giftCatalog.findMany({ orderBy: { sortOrder: "asc" } });
+  for (let i = 0; i < DEFAULT_GIFTS.length; i++) {
+    const g = DEFAULT_GIFTS[i];
+    const data = {
       name: g.name,
       icon: g.icon,
       coinPrice: g.coinPrice,
       sortOrder: g.sortOrder,
       badge: g.badge || null,
       enabled: true
-    }))
-  });
+    };
+    if (rows[i]) {
+      await prisma.giftCatalog.update({ where: { id: rows[i].id }, data });
+    } else {
+      await prisma.giftCatalog.create({ data });
+    }
+  }
+  if (rows.length > DEFAULT_GIFTS.length) {
+    await prisma.giftCatalog.updateMany({
+      where: { id: { in: rows.slice(DEFAULT_GIFTS.length).map((r) => r.id) } },
+      data: { enabled: false }
+    });
+  }
 }
 
 async function normalizeFakeBotIncomes() {
@@ -2566,7 +2596,19 @@ app.post("/gifts/send", async (req, res) => {
 });
 
 app.get("/coins/packages", (_req, res) => {
-  return res.json({ packages: COIN_PACKAGES });
+  return res.json({ packages: COIN_PACKAGES, yuanRate: COIN_YUAN_RATE });
+});
+
+app.get("/coins/ledger", async (req, res) => {
+  const userId = getAuthUserId(req);
+  if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+  const take = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+  const rows = await prisma.coinLedger.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    take
+  });
+  return res.json({ ledger: rows });
 });
 
 const coinOrderCreateSchema = z.object({

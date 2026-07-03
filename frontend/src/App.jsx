@@ -203,7 +203,7 @@ const settingItems = [
   "达人荣誉",
   "安全中心",
   "社交礼仪分",
-  "盲盒币充值"
+  "货币中心"
 ];
 const maleAvatarPool = (avatarManifest.male || []).map((src, idx) => ({
   src,
@@ -236,6 +236,15 @@ const COIN_PAY_CHANNELS = [
   { id: "WECHAT", label: "微信支付" },
   { id: "ALIPAY", label: "支付宝" }
 ];
+
+const COIN_LEDGER_LABELS = {
+  RECHARGE: "充值到账",
+  GIFT_SEND: "送礼物"
+};
+
+function formatCoinLedgerLabel(reason) {
+  return COIN_LEDGER_LABELS[String(reason || "")] || String(reason || "变动");
+}
 
 function parseGiftPayload(text) {
   try {
@@ -929,6 +938,8 @@ export default function App() {
   const [coinPayChannel, setCoinPayChannel] = useState("WECHAT");
   const [coinPendingOrderId, setCoinPendingOrderId] = useState("");
   const [coinSelectedPackage, setCoinSelectedPackage] = useState(null);
+  const [coinLedger, setCoinLedger] = useState([]);
+  const [coinYuanRate, setCoinYuanRate] = useState(5);
   const chatAttachPhotoInputRef = useRef(null);
   const chatDetailListRef = useRef(null);
   const chatInputRef = useRef(null);
@@ -2569,6 +2580,8 @@ export default function App() {
 
   const myWealthLabel = useMemo(() => wealthLevelLabel(user), [user]);
   const coinBalance = user?.coinBalance ?? 0;
+  const totalCoinRecharged = user?.totalCoinRecharged ?? 0;
+  const totalCoinSpent = user?.totalCoinSpent ?? 0;
   const contributionPoints = user?.contributionPoints ?? 0;
   const charmValue = user?.charmValue ?? 0;
 
@@ -3680,9 +3693,34 @@ export default function App() {
       const res = await fetch(`${API}/coins/packages`);
       const data = await res.json();
       setCoinPackages(Array.isArray(data.packages) ? data.packages : []);
+      setCoinYuanRate(Number(data.yuanRate) || 5);
       await refreshWallet();
     } catch (_e) {
       showToast("加载充值档位失败");
+    }
+  };
+
+  const openWalletCenter = async (openRecharge = false) => {
+    setMePage("wallet");
+    setMeDetailPage("");
+    try {
+      await refreshWallet();
+      const [ledgerRes, pkgRes] = await Promise.all([
+        fetch(`${API}/coins/ledger?limit=30`, { headers: authHeaders }),
+        fetch(`${API}/coins/packages`)
+      ]);
+      const ledgerData = await ledgerRes.json();
+      const pkgData = await pkgRes.json();
+      if (ledgerRes.ok) {
+        setCoinLedger(Array.isArray(ledgerData.ledger) ? ledgerData.ledger : []);
+      }
+      setCoinPackages(Array.isArray(pkgData.packages) ? pkgData.packages : []);
+      setCoinYuanRate(Number(pkgData.yuanRate) || 5);
+      if (openRecharge) {
+        setShowCoinRecharge(true);
+      }
+    } catch (_e) {
+      showToast("加载货币中心失败");
     }
   };
 
@@ -3739,6 +3777,17 @@ export default function App() {
       setCoinPendingOrderId("");
       setCoinSelectedPackage(null);
       showToast("充值成功，盲盒币已到账");
+      if (mePage === "wallet") {
+        try {
+          const ledgerRes = await fetch(`${API}/coins/ledger?limit=30`, { headers: authHeaders });
+          const ledgerData = await ledgerRes.json();
+          if (ledgerRes.ok) {
+            setCoinLedger(Array.isArray(ledgerData.ledger) ? ledgerData.ledger : []);
+          }
+        } catch (_e) {
+          /* ignore */
+        }
+      }
     } catch (error) {
       showToast(error.message || "支付失败");
     } finally {
@@ -5707,11 +5756,15 @@ export default function App() {
               </>
             ) : (
               <>
-                {mePage === "settings" || mePage === "profile-edit" ? (
+                {mePage === "settings" || mePage === "profile-edit" || mePage === "wallet" ? (
                   <button
                     className="header-btn"
                     onClick={() => {
                       if (mePage === "profile-edit") {
+                        setMePage("home");
+                        return;
+                      }
+                      if (mePage === "wallet") {
                         setMePage("home");
                         return;
                       }
@@ -5741,9 +5794,11 @@ export default function App() {
                       : "设置"
                     : mePage === "profile-edit"
                       ? "编辑资料"
-                      : "自己"}
+                      : mePage === "wallet"
+                        ? "货币中心"
+                        : "自己"}
                 </h1>
-                {mePage === "settings" || mePage === "profile-edit" ? (
+                {mePage === "settings" || mePage === "profile-edit" || mePage === "wallet" ? (
                   <div className="header-placeholder" />
                 ) : (
                   <button className="header-btn icon-btn" onClick={() => setMePage("settings")} aria-label="设置">
@@ -6245,10 +6300,11 @@ export default function App() {
                             🪙
                           </span>
                           <strong>{coinBalance}</strong>
+                          <span className="gift-panel-coin-label">盲盒币</span>
                           <span className="gift-panel-points">· 积分 {contributionPoints}</span>
                         </div>
                         <button type="button" className="gift-panel-recharge" onClick={openCoinRecharge}>
-                          充值
+                          马上充值 ›
                         </button>
                       </div>
                     </div>
@@ -6560,8 +6616,8 @@ export default function App() {
                         setMeDetailPage("account-security");
                         return;
                       }
-                      if (item === "盲盒币充值") {
-                        openCoinRecharge();
+                      if (item === "货币中心") {
+                        openWalletCenter();
                         return;
                       }
                       if (item === "隐私") {
@@ -6577,6 +6633,63 @@ export default function App() {
                 ))}
               </div>
             )
+          ) : mePage === "wallet" ? (
+            <div className="wallet-center-page">
+              <div className="wallet-center-hero">
+                <p className="wallet-center-hero-label">总资产 · 盲盒币</p>
+                <strong className="wallet-center-hero-balance">{coinBalance}</strong>
+                <p className="wallet-center-hero-sub">
+                  1 元 = {coinYuanRate} 盲盒币 · 积分 {contributionPoints} · 魅力 {charmValue}
+                </p>
+                <button type="button" className="wallet-center-recharge-btn" onClick={openCoinRecharge}>
+                  去充值
+                </button>
+              </div>
+
+              <div className="wallet-center-grid">
+                <div className="wallet-center-stat">
+                  <span>个人充值</span>
+                  <em>{totalCoinRecharged}</em>
+                </div>
+                <div className="wallet-center-stat">
+                  <span>累计消费</span>
+                  <em>{totalCoinSpent}</em>
+                </div>
+                <div className="wallet-center-stat">
+                  <span>贡献积分</span>
+                  <em>{contributionPoints}</em>
+                </div>
+                <div className="wallet-center-stat">
+                  <span>魅力值</span>
+                  <em>{charmValue}</em>
+                </div>
+              </div>
+
+              <section className="wallet-center-section">
+                <div className="wallet-center-section-head">
+                  <h3>资产明细</h3>
+                  <span className="muted">最近 30 条</span>
+                </div>
+                {coinLedger.length > 0 ? (
+                  <ul className="wallet-ledger-list">
+                    {coinLedger.map((row) => (
+                      <li className="wallet-ledger-item" key={row.id}>
+                        <div>
+                          <strong>{formatCoinLedgerLabel(row.reason)}</strong>
+                          <small>{formatChatTime(row.createdAt)}</small>
+                        </div>
+                        <em className={row.delta >= 0 ? "wallet-ledger-plus" : "wallet-ledger-minus"}>
+                          {row.delta >= 0 ? "+" : ""}
+                          {row.delta}
+                        </em>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="feed-tip">暂无盲盒币流水，充值或送礼物后会显示在这里。</p>
+                )}
+              </section>
+            </div>
           ) : mePage === "profile-edit" ? (
             <div className="profile-edit-page">
               <div className="status-card profile-editor-page modern-edit-page">
@@ -6839,7 +6952,20 @@ export default function App() {
                   >
                     {membershipStatusText}
                   </span>
-                  <span className="me-qq-badge me-qq-badge--coin">币 {coinBalance}</span>
+                  <span
+                    className="me-qq-badge me-qq-badge--coin me-qq-badge--link"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openWalletCenter()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openWalletCenter();
+                      }
+                    }}
+                  >
+                    币 {coinBalance}
+                  </span>
                   <span className="me-qq-badge me-qq-badge--points">积分 {contributionPoints}</span>
                   <span className="me-qq-badge me-qq-badge--charm">魅力 {charmValue}</span>
                 </div>
@@ -8095,29 +8221,38 @@ export default function App() {
 
       {showCoinRecharge && (
         <div className="profile-setup-overlay membership-gate-overlay" onClick={closeCoinRecharge}>
-          <div className="profile-setup-card membership-gate-card coin-recharge-card" onClick={(e) => e.stopPropagation()}>
+          <div className="profile-setup-card membership-gate-card coin-recharge-card soul-coin-sheet" onClick={(e) => e.stopPropagation()}>
             <div className="membership-sheet-handle" aria-hidden="true" />
-            <h3>盲盒币充值</h3>
-            <p>充值后获得盲盒币；消费盲盒币可累计贡献积分，提升财富等级</p>
+            <div className="soul-coin-sheet-head">
+              <h3>盲盒币充值</h3>
+              <button type="button" className="soul-coin-sheet-close" onClick={closeCoinRecharge} aria-label="关闭">
+                ×
+              </button>
+            </div>
+            <p className="soul-coin-balance-line">
+              余额：<strong>{coinBalance}</strong> 盲盒币
+              <span className="muted"> · 1元={coinYuanRate}币</span>
+            </p>
             {!coinSelectedPackage ? (
               <>
-                <div className="coin-package-grid">
+                <div className="coin-package-grid soul-coin-grid">
                   {coinPackages.map((pkg) => (
                     <button
                       key={pkg.id}
                       type="button"
+                      className="soul-coin-pack"
                       disabled={coinRechargeSubmitting}
                       onClick={() => startCoinRecharge(pkg)}
                     >
+                      {pkg.bonus > 0 ? (
+                        <em className="soul-coin-pack-bonus">限时赠{pkg.bonus}</em>
+                      ) : null}
                       <strong>{pkg.coins} 盲盒币</strong>
                       <span>¥{pkg.price}</span>
                     </button>
                   ))}
                 </div>
-                <p className="feed-tip">当前余额：{coinBalance} 盲盒币 · 贡献积分 {contributionPoints}</p>
-                <button type="button" onClick={closeCoinRecharge}>
-                  关闭
-                </button>
+                <p className="feed-tip soul-coin-tip">充值后可用于送礼物；消费盲盒币累计贡献积分</p>
               </>
             ) : (
               <div className="membership-checkout">
@@ -8125,7 +8260,11 @@ export default function App() {
                   <strong>
                     {coinSelectedPackage.coins} 盲盒币 ¥{coinSelectedPackage.price}
                   </strong>
-                  <span>支付成功后立即到账</span>
+                  {coinSelectedPackage.bonus > 0 ? (
+                    <span>含限时赠送 {coinSelectedPackage.bonus} 盲盒币</span>
+                  ) : (
+                    <span>支付成功后立即到账</span>
+                  )}
                 </div>
                 <div className="membership-channel-list">
                   {COIN_PAY_CHANNELS.map((channel) => (
@@ -8142,16 +8281,17 @@ export default function App() {
                 </div>
                 <button
                   type="button"
-                  className="membership-pay-btn"
+                  className="membership-pay-btn soul-coin-pay-btn"
                   disabled={coinRechargeSubmitting || !coinPendingOrderId}
                   onClick={payCoinRecharge}
                 >
                   {coinRechargeSubmitting
                     ? "支付处理中..."
-                    : `确认支付 ¥${coinSelectedPackage.price}`}
+                    : `立即支付${coinSelectedPackage.price}元`}
                 </button>
                 <button
                   type="button"
+                  className="soul-coin-back-btn"
                   onClick={() => {
                     setCoinSelectedPackage(null);
                     setCoinPendingOrderId("");

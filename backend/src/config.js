@@ -21,28 +21,36 @@ export const POINT_MEMBERSHIP_REDEEM = [
   { id: "redeem_30d", days: 30, costPoints: 2000, label: "30天会员" }
 ];
 
-/** 盲盒币充值档位：price 为人民币（元），coins 为到账盲盒币 */
+/** 基础兑换：1 元 = 5 盲盒币（参考 Soul 币比例） */
+export const COIN_YUAN_RATE = 5;
+
+/**
+ * 盲盒币充值档位：price 为人民币（元），coins 为到账盲盒币，bonus 为赠送币（展示用）
+ */
 export const COIN_PACKAGES = [
-  { id: "pkg_60", coins: 60, price: 6 },
-  { id: "pkg_300", coins: 300, price: 30 },
-  { id: "pkg_980", coins: 980, price: 98 },
-  { id: "pkg_2980", coins: 2980, price: 298 },
-  { id: "pkg_6480", coins: 6480, price: 648 },
-  { id: "pkg_12980", coins: 12980, price: 1298 }
+  { id: "pkg_5", coins: 5, price: 1, bonus: 0 },
+  { id: "pkg_60", coins: 60, price: 12, bonus: 0 },
+  { id: "pkg_169", coins: 169, price: 30, bonus: 19 },
+  { id: "pkg_273", coins: 273, price: 48, bonus: 33 },
+  { id: "pkg_585", coins: 585, price: 98, bonus: 95 },
+  { id: "pkg_1070", coins: 1070, price: 178, bonus: 180 },
+  { id: "pkg_2421", coins: 2421, price: 388, bonus: 481 },
+  { id: "pkg_3658", coins: 3658, price: 588, bonus: 718 },
+  { id: "pkg_5322", coins: 5322, price: 798, bonus: 1332 }
 ];
 
-/** 默认礼物库（首次启动写入数据库） */
+/** 默认礼物库（首次启动写入；启动时按 sortOrder 同步价格） */
 export const DEFAULT_GIFTS = [
-  { name: "向日葵", icon: "🌻", coinPrice: 99, badge: null, sortOrder: 1 },
-  { name: "比心", icon: "💖", coinPrice: 199, badge: "NEW", sortOrder: 2 },
-  { name: "雪兔", icon: "🐰", coinPrice: 520, badge: null, sortOrder: 3 },
-  { name: "浪漫玫瑰", icon: "🌹", coinPrice: 666, badge: null, sortOrder: 4 },
-  { name: "梦幻飞行", icon: "✈️", coinPrice: 1499, badge: "HOT", sortOrder: 5 },
-  { name: "全城告白", icon: "💌", coinPrice: 1500, badge: null, sortOrder: 6 },
-  { name: "真爱之戒", icon: "💍", coinPrice: 1999, badge: null, sortOrder: 7 },
-  { name: "童星传递", icon: "⭐", coinPrice: 2999, badge: "HOT", sortOrder: 8 },
-  { name: "海洋之心", icon: "💎", coinPrice: 5200, badge: null, sortOrder: 9 },
-  { name: "独角兽", icon: "🦄", coinPrice: 8888, badge: null, sortOrder: 10 },
-  { name: "超级跑车", icon: "🏎️", coinPrice: 9999, badge: null, sortOrder: 11 },
-  { name: "梦幻城堡", icon: "🏰", coinPrice: 19999, badge: null, sortOrder: 12 }
+  { name: "向日葵", icon: "🌻", coinPrice: 6, badge: null, sortOrder: 1 },
+  { name: "比心", icon: "💖", coinPrice: 6, badge: "NEW", sortOrder: 2 },
+  { name: "小雪兔", icon: "🐰", coinPrice: 18, badge: null, sortOrder: 3 },
+  { name: "浪漫玫瑰", icon: "🌹", coinPrice: 21, badge: null, sortOrder: 4 },
+  { name: "心动信号", icon: "💫", coinPrice: 52, badge: "520", sortOrder: 5 },
+  { name: "好柿花生", icon: "🥜", coinPrice: 55, badge: null, sortOrder: 6 },
+  { name: "全城告白", icon: "💌", coinPrice: 52, badge: "告白", sortOrder: 7 },
+  { name: "甜蜜奶茶", icon: "🧋", coinPrice: 18, badge: null, sortOrder: 8 },
+  { name: "雪兔礼盒", icon: "🎁", coinPrice: 520, badge: "HOT", sortOrder: 9 },
+  { name: "梦幻飞行", icon: "✈️", coinPrice: 999, badge: null, sortOrder: 10 },
+  { name: "真爱之戒", icon: "💍", coinPrice: 1999, badge: null, sortOrder: 11 },
+  { name: "梦幻城堡", icon: "🏰", coinPrice: 5200, badge: null, sortOrder: 12 }
 ];
