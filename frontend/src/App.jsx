@@ -57,8 +57,11 @@ import { resolveRuntimeApiBaseUrl } from "./runtimeApi.js";
 
 const API = resolveRuntimeApiBaseUrl();
 const AUTH_STORAGE_KEY = "social_auth_v1";
-const GAME_MATCH_COUNTDOWN_START = 3;
-const GAME_MATCH_BOT_DELAY_MS = 3200;
+const GAME_MATCH_ELAPSED_MAX = 15;
+
+function randomGameMatchDelayMs() {
+  return 3000 + Math.floor(Math.random() * 12001);
+}
 
 function loadStoredAuth() {
   try {
@@ -1051,7 +1054,7 @@ export default function App() {
   const [commonGroundResolving, setCommonGroundResolving] = useState(false);
   const [commonGroundIntroCountdown, setCommonGroundIntroCountdown] = useState(0);
   const [commonGroundFxText, setCommonGroundFxText] = useState("");
-  const [gameMatchCountdown, setGameMatchCountdown] = useState(0);
+  const [gameMatchElapsed, setGameMatchElapsed] = useState(0);
   const [tacitMode, setTacitMode] = useState("menu");
   const [tacitTopic, setTacitTopic] = useState("social");
   const [tacitRoomId, setTacitRoomId] = useState("");
@@ -1210,6 +1213,7 @@ export default function App() {
   const UPLOAD_TIMEOUT_MOMENT_IMAGE_MS = 90000;
   const tacitPollingRef = useRef(null);
   const tacitAutoSubmitRef = useRef("");
+  const tacitRoomIdRef = useRef("");
   const sentenceMatchTimerRef = useRef(null);
   const sentenceResolveTimerRef = useRef(null);
   const sentenceResolveLockRef = useRef(false);
@@ -1968,13 +1972,13 @@ export default function App() {
 
   useEffect(() => {
     if (!isGameMatching) {
-      setGameMatchCountdown(0);
+      setGameMatchElapsed(0);
       return undefined;
     }
-    setGameMatchCountdown(GAME_MATCH_COUNTDOWN_START);
+    setGameMatchElapsed(0);
     playGameSfx("countdown");
     const timer = window.setInterval(() => {
-      setGameMatchCountdown((prev) => (prev <= 1 ? GAME_MATCH_COUNTDOWN_START : prev - 1));
+      setGameMatchElapsed((prev) => Math.min(GAME_MATCH_ELAPSED_MAX, prev + 1));
     }, 1000);
     return () => clearInterval(timer);
   }, [isGameMatching]);
@@ -3937,7 +3941,7 @@ export default function App() {
       const target = source[Math.floor(Math.random() * source.length)];
       setIsCommonGroundMatching(false);
       startCommonGroundGame(mapRobotToGameOpponent(target, true));
-    }, GAME_MATCH_BOT_DELAY_MS);
+    }, randomGameMatchDelayMs());
   };
 
   const startCommonGroundInviteGame = (friend) => {
@@ -4086,7 +4090,7 @@ export default function App() {
       const target = source[Math.floor(Math.random() * source.length)];
       setIsSentenceMatching(false);
       startSentenceGame(mapRobotToGameOpponent(target, true));
-    }, GAME_MATCH_BOT_DELAY_MS);
+    }, randomGameMatchDelayMs());
   };
 
   const startSentenceInviteGame = (friend) => {
@@ -4550,7 +4554,7 @@ export default function App() {
       const target = source[Math.floor(Math.random() * source.length)];
       setIsTruthMatching(false);
       startTruthChallenge(mapRobotToGameOpponent(target, true));
-    }, GAME_MATCH_BOT_DELAY_MS);
+    }, randomGameMatchDelayMs());
   };
 
   const startTruthInvite = (friend) => {
@@ -4668,7 +4672,15 @@ export default function App() {
 
   const applyTacitRoom = (room) => {
     if (!room) return;
-    setTacitRoomId(room.id || "");
+    const nextId = room.id || "";
+    if (tacitRoomIdRef.current !== nextId) {
+      tacitRoomIdRef.current = nextId;
+      setTacitDraftChoice("");
+      setTacitSubmittedQuestionId("");
+      setTacitConfirming(false);
+      tacitAutoSubmitRef.current = "";
+    }
+    setTacitRoomId(nextId);
     setTacitRoom(room);
     if (room.topicCategory) setTacitTopic(room.topicCategory);
     if (room.status === "WAITING") setTacitMode("room");
@@ -4709,6 +4721,7 @@ export default function App() {
     if (isTacitMatching || tacitPollingRef.current) return;
     await resetTacitSessionRemote();
     setTacitRoom(null);
+    tacitRoomIdRef.current = "";
     setTacitRoomId("");
     setIsTacitMatching(true);
     try {
@@ -4735,7 +4748,7 @@ export default function App() {
             applyTacitRoom(statusData.room);
           }
         } catch (_error) {}
-      }, 2000);
+      }, 1000);
     } catch (error) {
       setChatNotice(error.message || "匹配失败");
       setIsTacitMatching(false);
@@ -4998,7 +5011,11 @@ export default function App() {
     setTacitMode("menu");
     setTacitTopic("social");
     setTacitRoom(null);
+    tacitRoomIdRef.current = "";
     setTacitRoomId("");
+    setTacitDraftChoice("");
+    setTacitSubmittedQuestionId("");
+    setTacitConfirming(false);
     setIsTacitMatching(false);
     if (tacitPollingRef.current) {
       clearInterval(tacitPollingRef.current);
@@ -7254,7 +7271,7 @@ export default function App() {
           <div className="game-page-panel common-ground-card game-menu-panel">
             <GameMatchOverlay
               open={isCommonGroundMatching}
-              countdown={gameMatchCountdown}
+              elapsedSec={gameMatchElapsed}
               tip="正在为你匹配同频玩家"
             />
             {commonGroundMode === "menu" && (
@@ -7528,7 +7545,7 @@ export default function App() {
           headerLayout="stacked"
         >
           <div className="game-page-panel werewolf-card tacit-card game-menu-panel">
-            <GameMatchOverlay open={isTacitMatching} countdown={gameMatchCountdown} tip="正在为你匹配默契对手" />
+            <GameMatchOverlay open={isTacitMatching} elapsedSec={gameMatchElapsed} tip="正在为你匹配默契对手" />
             {tacitMode === "menu" && (
               <div className="game-menu">
                 <p className="game-menu-intro">
@@ -7795,7 +7812,7 @@ export default function App() {
           headerLayout="stacked"
         >
           <div className="game-page-panel game-page-panel--sentence sentence-menu-panel">
-            <GameMatchOverlay open={isSentenceMatching} countdown={gameMatchCountdown} tip="正在为你匹配同频玩家" />
+            <GameMatchOverlay open={isSentenceMatching} elapsedSec={gameMatchElapsed} tip="正在为你匹配同频玩家" />
             {sentenceMode === "menu" && (
               <div className="sentence-menu">
                 <p className="sentence-menu-intro">
@@ -8413,7 +8430,7 @@ export default function App() {
           headerLayout="stacked"
         >
           <div className="game-page-panel truth-modal-card game-menu-panel">
-            <GameMatchOverlay open={isTruthMatching} countdown={gameMatchCountdown} tip="正在为你匹配异性用户" />
+            <GameMatchOverlay open={isTruthMatching} elapsedSec={gameMatchElapsed} tip="正在为你匹配异性用户" />
             {truthMode === "menu" && (
               <div className="game-menu">
                 <p className="game-menu-intro">

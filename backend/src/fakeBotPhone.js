@@ -13,6 +13,11 @@ export function randomFakeBotPhoneDigits(prefix) {
   return `${prefix}${suffix}`;
 }
 
+export function isFakeBotPhone(phone) {
+  const p = String(phone || "");
+  return p.startsWith("fakem") || p.startsWith("fakef");
+}
+
 /**
  * 后台录入机器人：逐条查库直到唯一（系统库与用户库共用命名空间，不会与种子号冲突）
  * @param {import("@prisma/client").PrismaClient} prisma

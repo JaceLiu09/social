@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import { prisma } from "./prisma.js";
-import { randomInt, randomFakeBotPhoneDigits } from "./fakeBotPhone.js";
+import { randomInt, randomFakeBotPhoneDigits, isFakeBotPhone } from "./fakeBotPhone.js";
 import { createAdminRouter } from "./adminApi.js";
 import * as oss from "./ossClient.js";
 import { sampleTacitQuestionsForRound, normalizeTacitTopic, getTacitTopicLabel } from "./tacitQuestionBank.js";
@@ -676,16 +676,17 @@ async function seedTacitQuestionsIfMissing(roomId) {
   });
 }
 
-function getTacitBotDelayMs(userId) {
-  const seed = Array.from(String(userId || "")).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-  return 2000 + (seed % 5) * 1000; // 2s~6s
+function getTacitBotDelayMs(userId, createdAt) {
+  const seed = String(userId || "") + String(new Date(createdAt).getTime());
+  const hash = [...seed].reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
+  return 3000 + (hash % 12001);
 }
 
 async function completeTacitMatchWithBotIfNeeded(userId) {
   const queueEntry = await prisma.tacitMatchQueue.findUnique({ where: { userId } });
   if (!queueEntry) return null;
-  const waitedMs = Date.now() - new Date(queueEntry.createdAt).getTime();
-  if (waitedMs < getTacitBotDelayMs(userId)) return null;
+  const matchAtMs = new Date(queueEntry.createdAt).getTime() + getTacitBotDelayMs(userId, queueEntry.createdAt);
+  if (Date.now() < matchAtMs) return null;
 
   const matchRoomMember = await prisma.tacitRoomMember.findFirst({
     where: {
@@ -849,10 +850,11 @@ async function scheduleTacitBotAnswer(roomId) {
     return answeredCount < 2;
   });
   if (!currentQuestion) return;
-  const unansweredMember = activeMembers.find((m) => !currentQuestion.answers.some((a) => a.userId === m.userId));
-  if (!unansweredMember) return;
+  const botMember = activeMembers.find(
+    (m) => isFakeBotPhone(m.user?.phone) && !currentQuestion.answers.some((a) => a.userId === m.userId)
+  );
+  if (!botMember) return;
 
-  const botMember = room.members.find((m) => m.id === unansweredMember.id) || unansweredMember;
   const botUserId = String(botMember.userId);
 
   const timerKey = `${roomId}:${currentQuestion.id}:${botUserId}`;

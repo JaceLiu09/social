@@ -7693,10 +7693,58 @@ button:hover {
 }
 
 .game-match-label {
-  margin: 0 0 10px;
+  margin: 0 0 14px;
   font-size: 16px;
   font-weight: 700;
   color: #2a3142;
+}
+
+.game-match-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  margin: 0 auto 10px;
+}
+
+.game-match-spinner span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3b5ccc;
+  animation: gameMatchDotPulse 1.2s ease-in-out infinite;
+}
+
+.game-page--commonground .game-match-spinner span {
+  background: #1f7a4f;
+}
+
+.game-page--truth .game-match-spinner span {
+  background: #d44b7d;
+}
+
+.game-page--tacit .game-match-spinner span {
+  background: #d4622a;
+}
+
+.game-page--sentence .game-match-spinner span {
+  background: #2f6fd8;
+}
+
+.game-match-spinner span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.game-match-spinner span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.game-match-elapsed {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #5a6478;
 }
 
 .game-match-count {
@@ -7748,6 +7796,19 @@ button:hover {
     opacity: 0;
   }
   to {
+    opacity: 1;
+  }
+}
+
+@keyframes gameMatchDotPulse {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.72);
+    opacity: 0.45;
+  }
+  40% {
+    transform: scale(1);
     opacity: 1;
   }
 }
