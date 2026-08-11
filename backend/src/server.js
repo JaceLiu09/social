@@ -4144,6 +4144,10 @@ function mountFrontendStatic() {
     return res.sendFile(indexPath, (err) => (err ? next(err) : undefined));
   });
   app.use((req, res) => {
+    const p = req.path || "";
+    if (p.startsWith("/uploads/") || p.startsWith("/oss-media/")) {
+      return res.status(404).send("Not Found");
+    }
     if ((req.method === "GET" || req.method === "HEAD") && req.accepts("html")) {
       return res.redirect(302, "/planet");
     }
