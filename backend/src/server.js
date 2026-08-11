@@ -36,6 +36,14 @@ import { normalizeIncomeRange } from "./incomeRanges.js";
 
 const app = express();
 app.use(cors());
+/** CDN 勿缓存 JSON API，避免头像 URL 等更新后仍返回旧内容 */
+app.use((req, res, next) => {
+  if (req.path.startsWith("/assets/") || req.path === "/" || /\.[a-z0-9]+$/i.test(req.path)) {
+    return next();
+  }
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
 app.use(express.json({ limit: "20mb" }));
 app.use(async (req, _res, next) => {
   try {
@@ -368,7 +376,7 @@ async function getWerewolfRoomPayload(roomId, viewerUserId = "") {
       id: m.id,
       userId: m.userId,
       name: m.user.nickname,
-      avatar: m.user.avatarUrl || "",
+      avatar: normalizeAvatarUrl(m.user.avatarUrl),
       status: m.status,
       invitedByUserId: m.invitedByUserId
     })),
@@ -807,7 +815,7 @@ async function getTacitRoomPayload(roomId) {
       id: m.id,
       userId: m.userId,
       name: m.user.nickname,
-      avatar: m.user.avatarUrl || "",
+      avatar: normalizeAvatarUrl(m.user.avatarUrl),
       status: m.status,
       invitedByUserId: m.invitedByUserId
     })),
@@ -1572,7 +1580,7 @@ app.post("/auth/register-basic", async (req, res) => {
       }
     });
     const token = await issueAuthTokenPersisted(user.id);
-    return res.json({ user, token, needsProfile: true });
+    return res.json({ user: sanitizeUserMediaFields(user), token, needsProfile: true });
   } catch (error) {
     if (error?.name?.includes("PrismaClient")) {
       return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
@@ -1612,7 +1620,7 @@ app.post("/auth/complete-profile", async (req, res) => {
         profileCompleted: true
       }
     });
-    return res.json({ user });
+    return res.json({ user: sanitizeUserMediaFields(user) });
   } catch (error) {
     if (error?.name?.includes("PrismaClient")) {
       return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
@@ -1668,7 +1676,7 @@ app.patch("/auth/profile", async (req, res) => {
       where: { id: userId },
       data
     });
-    return res.json({ user });
+    return res.json({ user: sanitizeUserMediaFields(user) });
   } catch (error) {
     if (error?.name?.includes("PrismaClient")) {
       return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
@@ -1683,7 +1691,7 @@ app.post("/auth/login", async (req, res) => {
     const user = await prisma.user.findFirst({ where: { phone, password } });
     if (!user) return res.status(401).json({ message: "手机号或密码错误" });
     const token = await issueAuthTokenPersisted(user.id);
-    return res.json({ user, token, needsProfile: !user.profileCompleted });
+    return res.json({ user: sanitizeUserMediaFields(user), token, needsProfile: !user.profileCompleted });
   } catch (error) {
     if (error?.name?.includes("PrismaClient")) {
       return res.status(503).json({ message: "数据库暂时不可用，请稍后重试" });
@@ -1701,7 +1709,7 @@ app.get("/auth/impersonate", async (req, res) => {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return res.status(404).json({ message: "用户不存在" });
     const token = await issueAuthTokenPersisted(user.id);
-    return res.json({ user, token, needsProfile: !user.profileCompleted });
+    return res.json({ user: sanitizeUserMediaFields(user), token, needsProfile: !user.profileCompleted });
   } catch (error) {
     return res.status(500).json({ message: "自动登录失败" });
   }
@@ -1770,10 +1778,10 @@ app.get("/square/posts", async (_req, res) => {
       userId: row.userId,
       nickname: row.user.nickname,
       gender: row.user.gender,
-      avatarUrl: row.user.avatarUrl || "",
+      avatarUrl: normalizeAvatarUrl(row.user.avatarUrl),
       text: row.text,
       likes: row.likes,
-      imageUrls: safeParseMomentImageUrls(row.imageUrls),
+      imageUrls: normalizeMediaUrlList(safeParseMomentImageUrls(row.imageUrls)),
       createdAt: formatSquareMomentTime(row.createdAt),
       distanceKm: squareDistanceKmForUser(row.userId, viewerLat, viewerLng, distanceCache),
       feedSource: "user"
@@ -1872,7 +1880,7 @@ app.get("/square/posts/mine", async (req, res) => {
         id: row.id,
         text: row.text,
         likes: row.likes,
-        imageUrls: safeParseMomentImageUrls(row.imageUrls),
+        imageUrls: normalizeMediaUrlList(safeParseMomentImageUrls(row.imageUrls)),
         createdAt: formatSquareMomentTime(row.createdAt)
       }))
     });
@@ -1921,10 +1929,10 @@ app.post("/square/posts", async (req, res) => {
         userId: row.userId,
         nickname: row.user.nickname,
         gender: row.user.gender,
-        avatarUrl: row.user.avatarUrl || "",
+        avatarUrl: normalizeAvatarUrl(row.user.avatarUrl),
         text: row.text,
         likes: row.likes,
-        imageUrls: safeParseMomentImageUrls(row.imageUrls),
+        imageUrls: normalizeMediaUrlList(safeParseMomentImageUrls(row.imageUrls)),
         createdAt: formatSquareMomentTime(row.createdAt),
         distanceKm: 0,
         feedSource: "user"
@@ -1993,7 +2001,7 @@ app.get("/public/robot-library/system", async (_req, res) => {
     const shuffled = await pickBalancedSystemRobotAvatars(10);
     return res.json({
       items: shuffled.map((u) => ({
-        avatar: u.avatarUrl || "",
+        avatar: normalizeSeedAvatarUrl(u.avatarUrl || ""),
         nickname: u.nickname,
         gender: u.gender
       }))
@@ -2002,6 +2010,53 @@ app.get("/public/robot-library/system", async (_req, res) => {
     return res.json({ items: [] });
   }
 });
+
+/** 将 localhost /avatars 或 OSS 路径转为 img CDN 直链（加速加载） */
+function getImageCdnBase() {
+  return String(process.env.ALIYUN_OSS_PUBLIC_BASE_URL || process.env.IMAGE_CDN_BASE || "https://img.manghe.me")
+    .trim()
+    .replace(/\/$/, "");
+}
+
+function normalizeSeedAvatarUrl(url) {
+  const s = String(url ?? "").trim();
+  if (!s) return "";
+  const base = getImageCdnBase();
+  let path = s;
+  try {
+    if (/^https?:\/\//i.test(s)) {
+      const u = new URL(s);
+      if (/^(localhost|127\.0\.0\.1)$/i.test(u.hostname)) {
+        path = u.pathname;
+      } else {
+        const markers = ["/fake-pictures/", "/chat-history-pictures/", "/zhenren-pictures/"];
+        for (const m of markers) {
+          const i = u.pathname.indexOf(m);
+          if (i !== -1) {
+            return `${base}${u.pathname.slice(i)}${u.search || ""}`;
+          }
+        }
+        return s;
+      }
+    }
+  } catch (_e) {
+    /* ignore */
+  }
+  const avatarMatch = path.match(/\/avatars\/(male|female)\/([^/?#]+)$/i);
+  if (avatarMatch) {
+    return `${base}/fake-pictures/seed-avatars/${avatarMatch[1]}/${avatarMatch[2]}`;
+  }
+  if (path.startsWith("/oss-media/")) {
+    const key = path.slice("/oss-media/".length);
+    if (oss.isAllowedOssProxyKey(key)) {
+      return `${base}/${key}`;
+    }
+  }
+  if (path.startsWith("/fake-pictures/") || path.startsWith("/chat-history-pictures/") || path.startsWith("/zhenren-pictures/")) {
+    return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  }
+  return s;
+}
 
 function buildRobotGalleryUrls(avatarUrl, photoUrlsJson) {
   const primary = String(avatarUrl ?? "").trim();
@@ -2037,10 +2092,10 @@ function mapPlanetRobotProfile(item) {
     income: item.income != null ? String(item.income) : "",
     industry: item.industry || "",
     hobbies: item.hobbies || "",
-    avatar: item.avatarUrl || "",
+    avatar: normalizeSeedAvatarUrl(item.avatarUrl || ""),
     gender: item.gender,
     partnerExpectation: String(item.partnerExpectation ?? "").trim(),
-    galleryUrls: buildRobotGalleryUrls(item.avatarUrl, item.photoUrls)
+    galleryUrls: buildRobotGalleryUrls(item.avatarUrl, item.photoUrls).map((u) => normalizeSeedAvatarUrl(u))
   };
 }
 
@@ -2715,7 +2770,7 @@ app.get("/chat/contacts", async (req, res) => {
       contacts: contacts.map((item) => ({
         id: item.id,
         name: item.nickname,
-        avatar: item.avatarUrl || "https://picsum.photos/80/80?chat",
+        avatar: normalizeAvatarUrl(item.avatarUrl) || "https://picsum.photos/80/80?chat",
         status: `${item.currentCity} · 在线`
       }))
     });
@@ -2761,7 +2816,7 @@ app.get("/friends/search", async (req, res) => {
           uid10: toTenDigitId(u.id),
           phone: u.phone,
           name: u.nickname,
-          avatar: u.avatarUrl || "",
+          avatar: normalizeAvatarUrl(u.avatarUrl),
           hometown: u.hometown,
           currentCity: u.currentCity,
           hobbies: u.hobbies,
@@ -2828,7 +2883,7 @@ app.get("/friends/requests/incoming", async (req, res) => {
         fromUserId: r.fromUserId,
         name: r.fromUser.nickname,
         uid10: toTenDigitId(r.fromUser.id),
-        avatar: r.fromUser.avatarUrl || "",
+        avatar: normalizeAvatarUrl(r.fromUser.avatarUrl),
         currentCity: r.fromUser.currentCity
       }))
     });
@@ -3167,7 +3222,7 @@ app.get("/werewolf/invitations", async (req, res) => {
         roomId: item.roomId,
         ownerUserId: item.room.ownerUserId,
         ownerName: item.room.owner.nickname,
-        ownerAvatar: item.room.owner.avatarUrl || "",
+        ownerAvatar: normalizeAvatarUrl(item.room.owner.avatarUrl),
         status: item.status,
         createdAt: item.createdAt.toISOString()
       }))
@@ -3209,7 +3264,7 @@ app.post("/werewolf/rooms/:id/invite", async (req, res) => {
         io.to(socketId).emit("werewolf:invite", {
           roomId,
           ownerName: inviter?.nickname || "好友",
-          ownerAvatar: inviter?.avatarUrl || ""
+          ownerAvatar: normalizeAvatarUrl(inviter?.avatarUrl)
         });
       });
     }
@@ -3563,7 +3618,7 @@ app.get("/tacit/invitations", async (req, res) => {
         roomId: item.roomId,
         ownerUserId: item.room.ownerUserId,
         ownerName: item.room.owner.nickname,
-        ownerAvatar: item.room.owner.avatarUrl || "",
+        ownerAvatar: normalizeAvatarUrl(item.room.owner.avatarUrl),
         status: item.status,
         createdAt: item.createdAt.toISOString()
       }))
@@ -3602,7 +3657,7 @@ app.post("/tacit/rooms/:id/invite", async (req, res) => {
         io.to(socketId).emit("tacit:invite", {
           roomId,
           ownerName: inviter?.nickname || "好友",
-          ownerAvatar: inviter?.avatarUrl || ""
+          ownerAvatar: normalizeAvatarUrl(inviter?.avatarUrl)
         });
       });
     }
@@ -3691,6 +3746,38 @@ app.post("/tacit/rooms/:id/answer", async (req, res) => {
   }
 });
 
+function normalizeAvatarUrl(url) {
+  const normalized = normalizeChatMediaUrl(url);
+  const raw = String(normalized ?? url ?? "").trim();
+  if (!raw) return "";
+  return normalizeSeedAvatarUrl(raw) || raw;
+}
+
+function normalizeMediaUrlList(urls) {
+  if (!Array.isArray(urls)) return [];
+  return urls.map((u) => normalizeAvatarUrl(u)).filter(Boolean);
+}
+
+function sanitizeUserMediaFields(user) {
+  if (!user || typeof user !== "object") return user;
+  const out = { ...user };
+  if (out.avatarUrl != null && String(out.avatarUrl).trim()) {
+    out.avatarUrl = normalizeAvatarUrl(out.avatarUrl);
+  }
+  if (out.photoUrls != null) {
+    try {
+      const parsed =
+        typeof out.photoUrls === "string" ? JSON.parse(out.photoUrls || "[]") : out.photoUrls;
+      if (Array.isArray(parsed)) {
+        out.photoUrls = JSON.stringify(normalizeMediaUrlList(parsed));
+      }
+    } catch (_e) {
+      /* keep original */
+    }
+  }
+  return out;
+}
+
 /** 聊天媒体统一存相对路径，避免库里留下 localhost/127.0.0.1 等仅本机可访问的绝对 URL */
 function normalizeChatMediaUrl(url) {
   if (url == null) return null;
@@ -3770,12 +3857,12 @@ app.get("/chat/conversations", async (req, res) => {
         });
         const previewThumbUrl =
           last.kind === "IMAGE" && (last.thumbMediaUrl || last.mediaUrl)
-            ? normalizeChatMediaUrl(last.thumbMediaUrl || last.mediaUrl)
+            ? normalizeAvatarUrl(normalizeChatMediaUrl(last.thumbMediaUrl || last.mediaUrl))
             : null;
         return {
           id: peer.id,
           name: peer.nickname,
-          avatar: peer.avatarUrl || "https://picsum.photos/80/80?chat",
+          avatar: normalizeAvatarUrl(peer.avatarUrl) || "https://picsum.photos/80/80?chat",
           preview: previewText(last),
           previewThumbUrl,
           time: last.createdAt.toISOString(),
@@ -3807,8 +3894,8 @@ app.get("/chat/messages", async (req, res) => {
         toUserId: item.toUserId,
         kind: item.kind,
         text: item.text,
-        mediaUrl: item.mediaUrl ? normalizeChatMediaUrl(item.mediaUrl) : null,
-        thumbMediaUrl: item.thumbMediaUrl ? normalizeChatMediaUrl(item.thumbMediaUrl) : null,
+        mediaUrl: item.mediaUrl ? normalizeAvatarUrl(item.mediaUrl) : null,
+        thumbMediaUrl: item.thumbMediaUrl ? normalizeAvatarUrl(item.thumbMediaUrl) : null,
         audioDurationSec: item.audioDurationSec,
         createdAt: item.createdAt.toISOString()
       }))
@@ -3887,8 +3974,8 @@ app.post("/chat/messages", async (req, res) => {
       toUserId: String(toUserId),
       kind: message.kind,
       text: message.text,
-      mediaUrl: message.mediaUrl,
-      thumbMediaUrl: message.thumbMediaUrl,
+      mediaUrl: message.mediaUrl ? normalizeAvatarUrl(message.mediaUrl) : null,
+      thumbMediaUrl: message.thumbMediaUrl ? normalizeAvatarUrl(message.thumbMediaUrl) : null,
       audioDurationSec: message.audioDurationSec,
       createdAt: message.createdAt.toISOString(),
       sensitiveFiltered
@@ -3964,7 +4051,7 @@ app.get("/users/:id/profile", async (req, res) => {
     partnerExpectation: target.partnerExpectation,
     industry: target.industry,
     income: target.income,
-    avatarUrl: target.avatarUrl,
+    avatarUrl: normalizeAvatarUrl(target.avatarUrl),
     wealthLevel: wealth.wealthLevel,
     wealthLevelName: wealth.wealthLevelName,
     contributionPoints: wealth.contributionPoints,
@@ -3978,15 +4065,15 @@ app.get("/users/:id/profile", async (req, res) => {
       fromUser: {
         id: row.fromUser.id,
         nickname: row.fromUser.nickname,
-        avatarUrl: row.fromUser.avatarUrl
+        avatarUrl: normalizeAvatarUrl(row.fromUser.avatarUrl)
       }
     })),
-    photoUrls,
+    photoUrls: normalizeMediaUrlList(photoUrls),
     posts: momentRows.map((row) => ({
       id: row.id,
       text: row.text,
       likes: row.likes,
-      imageUrls: safeParseMomentImageUrls(row.imageUrls),
+      imageUrls: normalizeMediaUrlList(safeParseMomentImageUrls(row.imageUrls)),
       createdAt: formatSquareMomentTime(row.createdAt)
     }))
   };
@@ -4020,7 +4107,18 @@ const SPA_API_PREFIXES = [
   "/socket.io"
 ];
 
+/** 与 API 前缀同名、但由前端 React 接管的路径（刷新须返回 index.html） */
+const SPA_PAGE_EXACT = new Set(["/planet", "/square", "/chat", "/me", "/match"]);
+
+function isSpaPagePath(pathname) {
+  if (SPA_PAGE_EXACT.has(pathname)) return true;
+  if (pathname.startsWith("/planet/games/")) return true;
+  if (pathname.startsWith("/legal/")) return true;
+  return false;
+}
+
 function isBackendApiPath(pathname) {
+  if (isSpaPagePath(pathname)) return false;
   return SPA_API_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
@@ -4044,6 +4142,12 @@ function mountFrontendStatic() {
     if (req.method !== "GET" && req.method !== "HEAD") return next();
     if (isBackendApiPath(req.path)) return next();
     return res.sendFile(indexPath, (err) => (err ? next(err) : undefined));
+  });
+  app.use((req, res) => {
+    if ((req.method === "GET" || req.method === "HEAD") && req.accepts("html")) {
+      return res.redirect(302, "/planet");
+    }
+    res.status(404).send("Not Found");
   });
   console.log(`[frontend] 静态托管: ${frontendDistDir}`);
 }
@@ -4099,8 +4203,8 @@ io.on("connection", (socket) => {
         toUserId: message.toUserId,
         kind: message.kind,
         text: message.text,
-        mediaUrl: message.mediaUrl,
-        thumbMediaUrl: message.thumbMediaUrl,
+        mediaUrl: message.mediaUrl ? normalizeAvatarUrl(message.mediaUrl) : null,
+        thumbMediaUrl: message.thumbMediaUrl ? normalizeAvatarUrl(message.thumbMediaUrl) : null,
         audioDurationSec: message.audioDurationSec,
         createdAt: message.createdAt.toISOString(),
         sensitiveFiltered

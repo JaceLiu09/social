@@ -14,6 +14,12 @@ import {
   shouldPreferLocalSeedAvatars
 } from "./localStaticAssets";
 import {
+  ossObjectPathFromUrlPathname,
+  ossObjectToCdnUrl,
+  resolveOssMediaToCdnUrl,
+  resolveSeedAvatarCdnUrl
+} from "./imageCdn.js";
+import {
   formatSquareDistanceLabel,
   getViewerLocation,
   normalizeSquarePostDistances
@@ -452,41 +458,11 @@ function getZodiacLabel(value) {
   return "射手座";
 }
 
-/** manifest / 库里相对路径 /avatars/... → 前端 public 静态资源（本地 Vite / 线上 nginx） */
+/** manifest / 库里 seed 头像 → 原生 App 用内置图，Web 走 img CDN */
 function resolveSeedAvatarUrl(raw) {
   const local = mapSeedAssetToLocal(raw);
   if (local) return local;
-  const s = String(raw ?? "").trim();
-  if (!s) return null;
-  if (s.startsWith("/avatars/")) return s.split("#")[0];
-  try {
-    if (/^https?:\/\//i.test(s) || s.startsWith("//")) {
-      const u = new URL(s.startsWith("//") ? `https:${s}` : s);
-      if (u.pathname.startsWith("/avatars/")) {
-        return `${u.pathname}${u.search || ""}`.split("#")[0];
-      }
-      const ossInPath = u.pathname.match(/seed-avatars\/(male|female)\/([^/?#]+)/i);
-      if (ossInPath) return `/avatars/${ossInPath[1]}/${ossInPath[2]}`;
-    }
-  } catch (_e) {
-    return null;
-  }
-  if (s.startsWith("/oss-media/fake-pictures/seed-avatars/")) {
-    const tail = s.replace(/^\/oss-media\/fake-pictures\/seed-avatars\//, "").split("#")[0];
-    return tail ? `/avatars/${tail}` : null;
-  }
-  return null;
-}
-
-/** 虚拟主机或路径样式 OSS URL：只要 pathname 中含对象前缀，一律走 API 代理 */
-function ossObjectPathFromUrlPathname(pathname) {
-  const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
-  const markers = ["/fake-pictures/", "/chat-history-pictures/", "/zhenren-pictures/"];
-  for (const m of markers) {
-    const i = path.indexOf(m);
-    if (i !== -1) return path.slice(i);
-  }
-  return null;
+  return resolveSeedAvatarCdnUrl(raw);
 }
 
 function resolveAssetUrl(url) {
@@ -497,6 +473,8 @@ function resolveAssetUrl(url) {
   if (localSeed) return localSeed;
   const seedHit = resolveSeedAvatarUrl(raw);
   if (seedHit) return seedHit;
+  const ossCdn = resolveOssMediaToCdnUrl(raw);
+  if (ossCdn) return ossCdn;
 
   const toApiMediaUrl = (pathname, search = "") => {
     const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
@@ -505,7 +483,10 @@ function resolveAssetUrl(url) {
     }
     const ossRest = ossObjectPathFromUrlPathname(path);
     if (ossRest) {
-      return `${API}/oss-media${ossRest}${search}`;
+      if (shouldPreferLocalSeedAvatars()) {
+        return `${API}/oss-media${ossRest}${search}`;
+      }
+      return ossObjectToCdnUrl(ossRest, search);
     }
     return null;
   };
@@ -520,7 +501,11 @@ function resolveAssetUrl(url) {
   }
 
   if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("//")) return raw;
-  if (raw.startsWith("/avatars/")) return raw.split("#")[0];
+  if (raw.startsWith("/avatars/")) {
+    const cdn = resolveSeedAvatarCdnUrl(raw);
+    if (cdn) return cdn;
+    return raw.split("#")[0];
+  }
   if (raw.startsWith("/")) return `${API}${raw}`;
   return raw;
 }
@@ -601,12 +586,20 @@ function resolveMediaUrl(url) {
   if (localSeed) return localSeed;
   const seedHit = resolveSeedAvatarUrl(raw);
   if (seedHit) return seedHit;
+  const ossCdn = resolveOssMediaToCdnUrl(raw);
+  if (ossCdn) return ossCdn;
   // 与 resolveAssetUrl 一致：/uploads、OSS 路径都接到当前 API（含换机、换端口）
   let pathish = raw;
   if (/^uploads\//i.test(pathish)) pathish = `/${pathish}`;
   if (pathish.startsWith("/uploads/")) return `${API}${pathish}`;
   if (/^oss-media\//i.test(pathish)) pathish = `/${pathish}`;
-  if (pathish.startsWith("/oss-media/")) return `${API}${pathish}`;
+  if (pathish.startsWith("/oss-media/")) {
+    const ossRest = ossObjectPathFromUrlPathname(pathish);
+    if (ossRest && !shouldPreferLocalSeedAvatars()) {
+      return ossObjectToCdnUrl(ossRest);
+    }
+    return `${API}${pathish}`;
+  }
   try {
     const u = new URL(raw);
     const path = u.pathname.startsWith("/") ? u.pathname : `/${u.pathname}`;
@@ -615,7 +608,10 @@ function resolveMediaUrl(url) {
     }
     const ossRest = ossObjectPathFromUrlPathname(path);
     if (ossRest) {
-      return `${API}/oss-media${ossRest}${u.search || ""}`;
+      if (shouldPreferLocalSeedAvatars()) {
+        return `${API}/oss-media${ossRest}${u.search || ""}`;
+      }
+      return ossObjectToCdnUrl(ossRest, u.search || "");
     }
   } catch (_e) {
     /* 非绝对 URL */
@@ -1862,7 +1858,7 @@ export default function App() {
         if (!items.length) return;
         setLoginHeroOverride(
           items.slice(0, 8).map((x, i) => {
-            const src = resolveSeedAvatarUrl(x.avatar) || String(x.avatar || "").trim();
+            const src = resolveAssetUrl(x.avatar) || String(x.avatar || "").trim();
             return {
               src,
               gender: x.gender,

@@ -29,6 +29,7 @@ if [ "${USE_LEGACY_IP_API:-0}" = "1" ]; then
 else
   export VITE_API_BASE_URL="${VITE_API_BASE_URL:-${PUBLIC_SITE_URL}}"
   export VITE_ADMIN_API_BASE_URL="${VITE_ADMIN_API_BASE_URL:-${PUBLIC_SITE_URL}}"
+  export VITE_IMAGE_CDN_BASE="${VITE_IMAGE_CDN_BASE:-https://img.manghe.me}"
 fi
 # 本地开发管理后台并指向远端 API：admin-console 目录 npm run dev:remote（见 admin-console/dev-remote.sh）
 
@@ -189,7 +190,7 @@ echo "用户端（backend 合一）:  http://${SERVER_IP}:${BACKEND_PORT}/  （S
 echo "Admin 控制台（直连）:    http://${SERVER_IP}:${ADMIN_CONSOLE_PORT}/"
 echo "Backend（本机）:         http://127.0.0.1:${BACKEND_PORT}/"
 echo "构建 API 基址:           ${VITE_API_BASE_URL}"
-echo "图片走同源 /oss-media（CDN 已回源 :4000，勿设 ALIYUN_OSS_PUBLIC_BASE_URL=https://manghe.me）"
+echo "图片 CDN:                ${VITE_IMAGE_CDN_BASE:-https://img.manghe.me}（.env: ALIYUN_OSS_PUBLIC_BASE_URL）"
 echo ""
 echo "说明: 管理后台已注入 API（VITE_ADMIN_API_BASE_URL）；默认 admin / 123456（seed）。"
 echo "若浏览器仍请求旧域名而你是 IP 直连：请重新 deploy（前端已按访问地址自动选 API）。"
