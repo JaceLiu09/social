@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
@@ -23,6 +24,7 @@ import {
   MIN_ROUNDS_FOR_UNLOCK,
   POINT_MEMBERSHIP_REDEEM
 } from "./config.js";
+import { prepareChatTextContent } from "./sensitiveWords.js";
 import { walletSnapshot } from "./wealthLevel.js";
 import {
   applyCharmGain,
@@ -3857,12 +3859,20 @@ app.post("/chat/messages", async (req, res) => {
     if ((messageKind === "IMAGE" || messageKind === "AUDIO") && !normalizedMediaUrl) {
       return res.status(400).json({ message: "媒体消息缺少地址" });
     }
+    let textToSave = content;
+    let sensitiveFiltered = false;
+    if (messageKind === "TEXT") {
+      const prepared = prepareChatTextContent(content);
+      if (!prepared.ok) return res.status(prepared.status).json({ message: prepared.message });
+      textToSave = prepared.text;
+      sensitiveFiltered = prepared.sensitiveFiltered;
+    }
     const message = await prisma.chatMessage.create({
       data: {
         fromUserId: authUserId,
         toUserId: String(toUserId),
         kind: messageKind,
-        text: messageKind === "TEXT" ? content : "",
+        text: messageKind === "TEXT" ? textToSave : "",
         mediaUrl: normalizedMediaUrl,
         thumbMediaUrl: messageKind === "IMAGE" ? normalizedThumbUrl || normalizedMediaUrl : null,
         audioDurationSec:
@@ -3880,7 +3890,8 @@ app.post("/chat/messages", async (req, res) => {
       mediaUrl: message.mediaUrl,
       thumbMediaUrl: message.thumbMediaUrl,
       audioDurationSec: message.audioDurationSec,
-      createdAt: message.createdAt.toISOString()
+      createdAt: message.createdAt.toISOString(),
+      sensitiveFiltered
     };
     const targetSockets = userSockets.get(String(toUserId));
     if (targetSockets?.size) {
@@ -3888,7 +3899,7 @@ app.post("/chat/messages", async (req, res) => {
         io.to(socketId).emit("chat:message", payload);
       });
     }
-    return res.json({ message: payload });
+    return res.json({ message: payload, sensitiveFiltered });
   } catch (error) {
     return res.status(500).json({ message: "发送消息失败" });
   }
@@ -3982,6 +3993,63 @@ app.get("/users/:id/profile", async (req, res) => {
   return res.json({ profile: safeProfile });
 });
 
+/** 生产环境由 backend 统一托管前端 dist，CDN 只需回源 :4000（可通过 SERVE_FRONTEND=0 关闭） */
+const backendRoot = path.dirname(fileURLToPath(import.meta.url));
+const frontendDistDir = path.resolve(backendRoot, "../../frontend/dist");
+const SPA_API_PREFIXES = [
+  "/admin/api",
+  "/auth",
+  "/square",
+  "/match",
+  "/game",
+  "/membership",
+  "/wallet",
+  "/points",
+  "/gifts",
+  "/coins",
+  "/chat",
+  "/friends",
+  "/users",
+  "/werewolf",
+  "/tacit",
+  "/planet",
+  "/public",
+  "/uploads",
+  "/oss-media",
+  "/health",
+  "/socket.io"
+];
+
+function isBackendApiPath(pathname) {
+  return SPA_API_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+  );
+}
+
+function mountFrontendStatic() {
+  if (process.env.SERVE_FRONTEND === "0") return;
+  const indexPath = path.join(frontendDistDir, "index.html");
+  if (!fsSync.existsSync(indexPath)) {
+    console.warn(`[frontend] dist 不存在，跳过静态托管: ${frontendDistDir}`);
+    return;
+  }
+  app.use(
+    express.static(frontendDistDir, {
+      index: false,
+      fallthrough: true,
+      maxAge: process.env.NODE_ENV === "production" ? "1h" : 0
+    })
+  );
+  app.get("*", (req, res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
+    if (isBackendApiPath(req.path)) return next();
+    return res.sendFile(indexPath, (err) => (err ? next(err) : undefined));
+  });
+  console.log(`[frontend] 静态托管: ${frontendDistDir}`);
+}
+
+mountFrontendStatic();
+
 io.on("connection", (socket) => {
   const userId = String(socket.handshake.query.userId || "");
   if (!userId) {
@@ -4002,13 +4070,21 @@ io.on("connection", (socket) => {
     if (!toUserId) return;
     if (messageKind === "TEXT" && !content) return;
     if ((messageKind === "IMAGE" || messageKind === "AUDIO") && !normalizedMediaUrl) return;
+    let textToSave = content;
+    let sensitiveFiltered = false;
+    if (messageKind === "TEXT") {
+      const prepared = prepareChatTextContent(content);
+      if (!prepared.ok) return;
+      textToSave = prepared.text;
+      sensitiveFiltered = prepared.sensitiveFiltered;
+    }
     try {
       const message = await prisma.chatMessage.create({
         data: {
           fromUserId: userId,
           toUserId: String(toUserId),
           kind: messageKind,
-          text: messageKind === "TEXT" ? content : "",
+          text: messageKind === "TEXT" ? textToSave : "",
           mediaUrl: normalizedMediaUrl,
           thumbMediaUrl: messageKind === "IMAGE" ? normalizedThumbUrl || normalizedMediaUrl : null,
           audioDurationSec:
@@ -4026,7 +4102,8 @@ io.on("connection", (socket) => {
         mediaUrl: message.mediaUrl,
         thumbMediaUrl: message.thumbMediaUrl,
         audioDurationSec: message.audioDurationSec,
-        createdAt: message.createdAt.toISOString()
+        createdAt: message.createdAt.toISOString(),
+        sensitiveFiltered
       };
 
       socket.emit("chat:message", payload);

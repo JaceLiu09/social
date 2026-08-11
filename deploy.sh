@@ -11,14 +11,14 @@ GIT_REPO_SSH="${GIT_REPO_SSH:-ssh://git@ssh.github.com:443/JaceLiu09/social.git}
 BASE_DIR="${BASE_DIR:-/root/social-deploy}"
 APP_DIR="${APP_DIR:-${BASE_DIR}/app}"
 
-SERVER_IP="${SERVER_IP:-112.124.51.207}"
+SERVER_IP="${SERVER_IP:-47.110.254.176}"
 FRONTEND_PORT="${FRONTEND_PORT:-4175}"
 ADMIN_CONSOLE_PORT="${ADMIN_CONSOLE_PORT:-4176}"
 BACKEND_PORT="${BACKEND_PORT:-4000}"
 
 # 浏览器实际访问的 HTTPS 域名（与 Nginx server_name 一致，勿末尾斜杠）。
 # Nginx 机反代 /oss-media、/match 等到本机 BACKEND_PORT 时，前端应走同源域名，避免跨域与混合内容。
-PUBLIC_SITE_URL="${PUBLIC_SITE_URL:-https://test.manghe.click}"
+PUBLIC_SITE_URL="${PUBLIC_SITE_URL:-https://manghe.me}"
 
 # 前端 / 管理后台构建时注入的 API 基址（默认 = PUBLIC_SITE_URL）。
 # 仅内网直连调试时手动指定，例如：VITE_API_BASE_URL=http://127.0.0.1:4000
@@ -37,14 +37,23 @@ export GIT_TERMINAL_PROMPT=0
 export GIT_SSH_COMMAND="ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2"
 
 echo "==> [1/12] Load nvm & node（CentOS7 等旧系统 glibc 低，勿用 Node 20；使用 Node 16 LTS + sharp@0.32）"
-export NVM_DIR="/root/.nvm"
-. "$NVM_DIR/nvm.sh"
-if ! nvm use 16 >/dev/null 2>&1; then
-  echo "Node 16 未安装，正在 nvm install 16 …"
-  nvm install 16
-  nvm use 16 >/dev/null
+if [ -x /usr/local/node16/bin/node ]; then
+  export PATH="/usr/local/node16/bin:${PATH}"
+  echo "使用系统 Node: $(node -v)"
+elif [ -s /root/.nvm/nvm.sh ]; then
+  export NVM_DIR="/root/.nvm"
+  # shellcheck source=/dev/null
+  . "$NVM_DIR/nvm.sh"
+  if ! nvm use 16 >/dev/null 2>&1; then
+    echo "Node 16 未安装，正在 nvm install 16 …"
+    nvm install 16
+    nvm use 16 >/dev/null
+  fi
+  node -v
+else
+  echo "ERROR: 未找到 Node 16（/usr/local/node16/bin 或 nvm）"
+  exit 1
 fi
-node -v
 
 echo "==> [2/12] Preflight GitHub SSH:443 (retry)"
 # 认证提示这句是正常的，不影响
@@ -174,12 +183,14 @@ pm2 save
 pm2 ls
 
 echo "Deploy done."
-echo "用户端（Nginx 反代后）:  ${PUBLIC_SITE_URL}/"
-echo "用户端（应用机直连）:    http://${SERVER_IP}:${FRONTEND_PORT}/"
+echo "用户端（CDN/域名）:      ${PUBLIC_SITE_URL}/"
+echo "用户端（应用机直连）:    http://${SERVER_IP}:${FRONTEND_PORT}/  （preview，可选）"
+echo "用户端（backend 合一）:  http://${SERVER_IP}:${BACKEND_PORT}/  （SERVE_FRONTEND 默认开启）"
 echo "Admin 控制台（直连）:    http://${SERVER_IP}:${ADMIN_CONSOLE_PORT}/"
 echo "Backend（本机）:         http://127.0.0.1:${BACKEND_PORT}/"
 echo "构建 API 基址:           ${VITE_API_BASE_URL}"
+echo "图片走同源 /oss-media（CDN 已回源 :4000，勿设 ALIYUN_OSS_PUBLIC_BASE_URL=https://manghe.me）"
 echo ""
 echo "说明: 管理后台已注入 API（VITE_ADMIN_API_BASE_URL）；默认 admin / 123456（seed）。"
-echo "若浏览器仍请求 https://test.manghe.click 而你是 IP 直连：请重新 deploy（前端已按访问地址自动选 API）。"
+echo "若浏览器仍请求旧域名而你是 IP 直连：请重新 deploy（前端已按访问地址自动选 API）。"
 echo "若 ERR_CONNECTION_REFUSED: 1) 安全组放行 ${BACKEND_PORT}  2) pm2 logs social-backend  3) curl -sS http://127.0.0.1:${BACKEND_PORT}/health"

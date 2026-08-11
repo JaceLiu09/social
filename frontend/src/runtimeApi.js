@@ -1,4 +1,4 @@
-/** 构建时注入的 API（deploy 默认 https://test.manghe.click） */
+/** 构建时注入的 API（deploy 默认 https://manghe.me） */
 export function getConfiguredApiBaseUrl() {
   return String(import.meta.env.VITE_API_BASE_URL || "")
     .trim()

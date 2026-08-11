@@ -39,7 +39,7 @@ xcodebuild -version
 
 echo "==> [3/6] 安装依赖并同步 Capacitor（内置前端包 + 本地静态资源）"
 npm install
-export VITE_API_BASE_URL="${VITE_API_BASE_URL:-https://test.manghe.click}"
+export VITE_API_BASE_URL="${VITE_API_BASE_URL:-https://manghe.me}"
 node scripts/cap-server-url.mjs bundled
 npm run build:ios
 npx cap sync ios

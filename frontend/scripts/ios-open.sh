@@ -4,7 +4,7 @@ set -euo pipefail
 # 在 Mac 上打开 Xcode 并同步 Capacitor iOS 工程。
 # 用法：
 #   ./scripts/ios-open.sh
-#   CAPACITOR_SERVER_URL=https://test.manghe.click ./scripts/ios-open.sh
+#   CAPACITOR_SERVER_URL=https://manghe.me ./scripts/ios-open.sh
 #   IOS_MODE=bundled ./scripts/ios-open.sh
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

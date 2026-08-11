@@ -2,7 +2,7 @@
  * 切换 Capacitor 远程 URL 或内置 dist 包。
  *
  * 用法：
- *   node scripts/cap-server-url.mjs remote https://test.manghe.click
+ *   node scripts/cap-server-url.mjs remote https://manghe.me
  *   node scripts/cap-server-url.mjs bundled   # iOS 真机推荐：JS/CSS/头像走 App 本地包
  */
 import fs from "node:fs";
@@ -13,7 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.join(__dirname, "..", "capacitor.config.json");
 
 const mode = process.argv[2] || "remote";
-const url = (process.argv[3] || "https://test.manghe.click").replace(/\/$/, "");
+const url = (process.argv[3] || "https://manghe.me").replace(/\/$/, "");
 
 const base = {
   appId: "com.manghe.social",

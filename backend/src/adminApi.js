@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { allocateUniqueFakeBotPhone } from "./fakeBotPhone.js";
 import * as oss from "./ossClient.js";
+import { prepareChatTextContent } from "./sensitiveWords.js";
 import { normalizeIncomeRange } from "./incomeRanges.js";
 
 const DEFAULT_FAKE_PASSWORD = "123456";
@@ -850,12 +851,15 @@ export function createAdminRouter(deps) {
       if (!peer) return res.status(404).json({ message: "接收用户不存在" });
       if (peer.id === bot.id) return res.status(400).json({ message: "不能回复给自己" });
 
+      const prepared = prepareChatTextContent(parsed.text);
+      if (!prepared.ok) return res.status(prepared.status).json({ message: prepared.message });
+
       const message = await prisma.chatMessage.create({
         data: {
           fromUserId: bot.id,
           toUserId: peer.id,
           kind: "TEXT",
-          text: parsed.text.trim()
+          text: prepared.text
         }
       });
 
@@ -867,6 +871,7 @@ export function createAdminRouter(deps) {
         text: message.text,
         mediaUrl: null,
         thumbMediaUrl: null,
+        sensitiveFiltered: prepared.sensitiveFiltered,
         audioDurationSec: null,
         createdAt: message.createdAt.toISOString()
       };

@@ -2383,6 +2383,9 @@ export default function App() {
       const toId = String(message.toUserId);
       const peerId = fromId === uid ? toId : fromId;
       const isActive = peerId === activeConversationIdRef.current;
+      if (fromId === uid && message.sensitiveFiltered) {
+        setChatNotice("消息含敏感词，已自动屏蔽");
+      }
       setHiddenConversationIds((prev) => prev.filter((id) => id !== peerId));
       if (isActive) {
         setChatMessages((prev) => {
@@ -3516,6 +3519,7 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "发送失败");
+      if (data.sensitiveFiltered) setChatNotice("消息含敏感词，已自动屏蔽");
       appendOwnMessage(data.message);
       if (payload.kind === "TEXT") setChatInput("");
     } catch (error) {
