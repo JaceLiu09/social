@@ -13,7 +13,7 @@ git checkout -B "${BRANCH}" "origin/${BRANCH}"
 git reset --hard "origin/${BRANCH}"
 
 cd taro-app
-npm ci
+if [ -f package-lock.json ]; then npm ci; else npm install; fi
 npm run build:weapp
 
 pm2 restart social-miniprogram-artifact 2>/dev/null || true

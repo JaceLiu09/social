@@ -28,7 +28,11 @@ fi
 
 echo "==> 安装依赖并构建 weapp"
 cd "${REPO_DIR}/taro-app"
-npm ci
+if [ -f package-lock.json ]; then
+  npm ci
+else
+  npm install
+fi
 npm run build:weapp
 
 ln -sfn "${REPO_DIR}/taro-app/dist" "${MP_ROOT}/dist"
