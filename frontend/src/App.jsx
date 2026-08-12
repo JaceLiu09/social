@@ -8784,9 +8784,7 @@ export default function App() {
                     <button
                       key={planId}
                       type="button"
-                      className={`qs-vip-plan-card ${membershipPlanPick === planId ? "is-selected" : ""} ${
-                        plan.featured ? "is-featured" : ""
-                      }`}
+                      className={`qs-vip-plan-card ${membershipPlanPick === planId ? "is-selected" : "is-muted"}`}
                       disabled={membershipSubmitting}
                       onClick={() => setMembershipPlanPick(planId)}
                     >
