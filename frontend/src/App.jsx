@@ -16,9 +16,13 @@ import {
 import {
   ossObjectPathFromUrlPathname,
   ossObjectToCdnUrl,
+  resolveOssMediaDisplayUrl,
   resolveOssMediaToCdnUrl,
-  resolveSeedAvatarCdnUrl
+  resolveSeedAvatarDisplayUrl,
+  resolveSeedAvatarCdnUrl,
+  seedAvatarUrlToBundledPath
 } from "./imageCdn.js";
+import { isWechatMiniProgramWebView, shouldPreferSameOriginMedia } from "./wechatEnv.js";
 import {
   formatSquareDistanceLabel,
   getViewerLocation,
@@ -489,10 +493,11 @@ function getZodiacLabel(value) {
   return "射手座";
 }
 
-/** manifest / 库里 seed 头像 → 原生 App 用内置图，Web 走 img CDN */
+/** manifest / 库里 seed 头像 → 原生 App 用内置图，Web 走 img CDN；小程序 web-view 走同源 */
 function resolveSeedAvatarUrl(raw) {
   const local = mapSeedAssetToLocal(raw);
   if (local) return local;
+  if (shouldPreferSameOriginMedia()) return resolveSeedAvatarDisplayUrl(raw, API);
   return resolveSeedAvatarCdnUrl(raw);
 }
 
@@ -504,7 +509,9 @@ function resolveAssetUrl(url) {
   if (localSeed) return localSeed;
   const seedHit = resolveSeedAvatarUrl(raw);
   if (seedHit) return seedHit;
-  const ossCdn = resolveOssMediaToCdnUrl(raw);
+  const ossCdn = shouldPreferSameOriginMedia()
+    ? resolveOssMediaDisplayUrl(raw, API)
+    : resolveOssMediaToCdnUrl(raw);
   if (ossCdn) return ossCdn;
 
   const toApiMediaUrl = (pathname, search = "") => {
@@ -514,7 +521,7 @@ function resolveAssetUrl(url) {
     }
     const ossRest = ossObjectPathFromUrlPathname(path);
     if (ossRest) {
-      if (shouldPreferLocalSeedAvatars()) {
+      if (shouldPreferLocalSeedAvatars() || shouldPreferSameOriginMedia()) {
         return `${API}/oss-media${ossRest}${search}`;
       }
       return ossObjectToCdnUrl(ossRest, search);
@@ -525,6 +532,12 @@ function resolveAssetUrl(url) {
   // 上传文件挂在 API 的 /uploads；OSS 私有桶走 API 的 /oss-media；历史绝对 URL 也统一到当前 API
   try {
     const u = new URL(raw.startsWith("//") ? `https:${raw}` : raw);
+    if (shouldPreferSameOriginMedia() && /img\.manghe\.me/i.test(u.hostname)) {
+      const bundled = seedAvatarUrlToBundledPath(raw);
+      if (bundled) return bundled;
+      const ossRest = ossObjectPathFromUrlPathname(u.pathname);
+      if (ossRest) return `${API}/oss-media${ossRest}${u.search || ""}`;
+    }
     const hit = toApiMediaUrl(u.pathname, u.search || "");
     if (hit) return hit;
   } catch (_e) {
@@ -533,6 +546,7 @@ function resolveAssetUrl(url) {
 
   if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("//")) return raw;
   if (raw.startsWith("/avatars/")) {
+    if (shouldPreferSameOriginMedia()) return raw.split("#")[0];
     const cdn = resolveSeedAvatarCdnUrl(raw);
     if (cdn) return cdn;
     return raw.split("#")[0];
@@ -989,7 +1003,9 @@ export default function App() {
   const fallbackLoginHero = useMemo(() => createHeroAvatars(), []);
   const [loginHeroOverride, setLoginHeroOverride] = useState(null);
   const loginHeroDisplay = useMemo(() => {
-    if (shouldPreferLocalSeedAvatars()) return getLocalLoginHeroAvatars(8);
+    if (shouldPreferLocalSeedAvatars() || isWechatMiniProgramWebView()) {
+      return getLocalLoginHeroAvatars(8);
+    }
     const list = loginHeroOverride?.length ? loginHeroOverride : fallbackLoginHero;
     return list.filter((item) => String(item.src || "").trim());
   }, [loginHeroOverride, fallbackLoginHero]);
@@ -1946,7 +1962,7 @@ export default function App() {
 
   useEffect(() => {
     if (user) return;
-    if (shouldPreferLocalSeedAvatars()) return;
+    if (shouldPreferLocalSeedAvatars() || isWechatMiniProgramWebView()) return;
     fetch(`${API}/public/robot-library/system`)
       .then((res) => res.json())
       .then((data) => {
@@ -1983,7 +1999,6 @@ export default function App() {
       return;
     }
     let cancelled = false;
-    setSystemRobotsReady(false);
     const applySystemRobotFallback = () => {
       const local = getSystemRobotProfilesFallback(user?.gender || "MALE", 12);
       if (local.length) {
@@ -1993,6 +2008,13 @@ export default function App() {
         setSystemRobotProfiles([]);
       }
     };
+    const inMiniProgram = isWechatMiniProgramWebView();
+    if (inMiniProgram) {
+      applySystemRobotFallback();
+      setSystemRobotsReady(true);
+    } else {
+      setSystemRobotsReady(false);
+    }
     const loadRobots = async () => {
       try {
         const sysRes = await fetch(`${API}/planet/robot-library/system`, { headers: authHeaders });
@@ -2035,6 +2057,7 @@ export default function App() {
 
   useEffect(() => {
     if (systemRobotProfiles.length <= 1) return undefined;
+    if (isWechatMiniProgramWebView()) return undefined;
     const timer = window.setInterval(() => {
       setHeroRotationIndex((prev) => (prev + 1) % Math.min(systemRobotProfiles.length, 6));
     }, 5000);
@@ -2282,6 +2305,7 @@ export default function App() {
 
   useEffect(() => {
     if (!user?.id || !authToken) return;
+    if (isWechatMiniProgramWebView()) return;
     let cancelled = false;
     const deferTimer = window.setTimeout(() => {
       (async () => {
@@ -2299,6 +2323,7 @@ export default function App() {
 
   useEffect(() => {
     if (!visibleSystemRobotProfiles.length) return;
+    if (isWechatMiniProgramWebView()) return;
     preloadSquarePostsAssets(
       visibleSystemRobotProfiles.slice(0, 6).map((p) => ({
         avatarUrl: p.avatar,
@@ -2467,98 +2492,112 @@ export default function App() {
 
   useEffect(() => {
     if (!user?.id) return undefined;
-    const socket = io(API, {
-      transports: ["polling", "websocket"],
-      timeout: 8000,
-      reconnectionDelay: 2000,
-      reconnectionDelayMax: 8000,
-      query: { userId: user.id }
-    });
-    socketRef.current = socket;
+    let socket = null;
+    let deferTimer = null;
 
-    socket.on("chat:message", (message) => {
-      if (!message?.fromUserId || !message?.toUserId) return;
-      const uid = String(user.id);
-      const fromId = String(message.fromUserId);
-      const toId = String(message.toUserId);
-      const peerId = fromId === uid ? toId : fromId;
-      const isActive = peerId === activeConversationIdRef.current;
-      if (fromId === uid && message.sensitiveFiltered) {
-        setChatNotice("消息含敏感词，已自动屏蔽");
-      }
-      setHiddenConversationIds((prev) => prev.filter((id) => id !== peerId));
-      if (isActive) {
-        setChatMessages((prev) => {
-          if (prev.some((item) => item.id === message.id)) return prev;
-          return [...prev, message];
-        });
-        fetch(`${API}/chat/read`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders },
-          body: JSON.stringify({ peerId })
-        }).catch(() => null);
-      }
-      setConversations((prev) => {
-        const exists = prev.some((item) => item.id === peerId);
-        const nextUnread = fromId === uid || isActive ? 0 : 1;
-        if (fromId !== uid && !isActive) {
-          const peerName = prev.find((item) => item.id === peerId)?.name || "新朋友";
-          setChatNotice(`${peerName} 发来新消息`);
-        }
-        const previewLine =
-          message.kind === "IMAGE"
-            ? "[图片]"
-            : message.kind === "AUDIO"
-              ? "[语音]"
-              : message.text || "";
-        const previewThumbUrl =
-          message.kind === "IMAGE" && (message.thumbMediaUrl || message.mediaUrl)
-            ? message.thumbMediaUrl || message.mediaUrl
-            : null;
-        const next = exists
-          ? prev.map((item) =>
-              item.id === peerId
-                ? {
-                    ...item,
-                    preview: previewLine,
-                    previewThumbUrl,
-                    time: message.createdAt,
-                    unread: fromId === uid || isActive ? 0 : (item.unread || 0) + 1
-                  }
-                : item
-            )
-          : [
-              {
-                id: peerId,
-                name: "新朋友",
-                avatar: "https://picsum.photos/80/80?chat",
-                preview: previewLine,
-                previewThumbUrl,
-                time: message.createdAt,
-                unread: nextUnread
-              },
-              ...prev
-            ];
-        return sortConversations(next);
+    const attachSocket = () => {
+      socket = io(API, {
+        transports: ["polling", "websocket"],
+        timeout: 8000,
+        reconnectionDelay: 2000,
+        reconnectionDelayMax: 8000,
+        query: { userId: user.id }
       });
-    });
+      socketRef.current = socket;
 
-    socket.on("tacit:room:update", (room) => {
-      if (!room?.id) return;
-      setTacitRoomId(room.id);
-      setTacitRoom(room);
-      if (room.status === "WAITING") setTacitMode("room");
-      if (room.status === "IN_PROGRESS") setTacitMode("playing");
-      if (room.status === "FINISHED") setTacitMode("result");
-    });
-    socket.on("tacit:invite", (invite) => {
-      if (invite?.ownerName) setChatNotice(`${invite.ownerName} 邀请你加入二选一默契挑战`);
-      loadTacitInvitations().catch(() => null);
-    });
+      socket.on("chat:message", (message) => {
+        if (!message?.fromUserId || !message?.toUserId) return;
+        const uid = String(user.id);
+        const fromId = String(message.fromUserId);
+        const toId = String(message.toUserId);
+        const peerId = fromId === uid ? toId : fromId;
+        const isActive = peerId === activeConversationIdRef.current;
+        if (fromId === uid && message.sensitiveFiltered) {
+          setChatNotice("消息含敏感词，已自动屏蔽");
+        }
+        setHiddenConversationIds((prev) => prev.filter((id) => id !== peerId));
+        if (isActive) {
+          setChatMessages((prev) => {
+            if (prev.some((item) => item.id === message.id)) return prev;
+            return [...prev, message];
+          });
+          fetch(`${API}/chat/read`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders },
+            body: JSON.stringify({ peerId })
+          }).catch(() => null);
+        }
+        setConversations((prev) => {
+          const exists = prev.some((item) => item.id === peerId);
+          const nextUnread = fromId === uid || isActive ? 0 : 1;
+          if (fromId !== uid && !isActive) {
+            const peerName = prev.find((item) => item.id === peerId)?.name || "新朋友";
+            setChatNotice(`${peerName} 发来新消息`);
+          }
+          const previewLine =
+            message.kind === "IMAGE"
+              ? "[图片]"
+              : message.kind === "AUDIO"
+                ? "[语音]"
+                : message.text || "";
+          const previewThumbUrl =
+            message.kind === "IMAGE" && (message.thumbMediaUrl || message.mediaUrl)
+              ? message.thumbMediaUrl || message.mediaUrl
+              : null;
+          const next = exists
+            ? prev.map((item) =>
+                item.id === peerId
+                  ? {
+                      ...item,
+                      preview: previewLine,
+                      previewThumbUrl,
+                      time: message.createdAt,
+                      unread: fromId === uid || isActive ? 0 : (item.unread || 0) + 1
+                    }
+                  : item
+              )
+            : [
+                {
+                  id: peerId,
+                  name: "新朋友",
+                  avatar: "https://picsum.photos/80/80?chat",
+                  preview: previewLine,
+                  previewThumbUrl,
+                  time: message.createdAt,
+                  unread: nextUnread
+                },
+                ...prev
+              ];
+          return sortConversations(next);
+        });
+      });
+
+      socket.on("tacit:room:update", (room) => {
+        if (!room?.id) return;
+        setTacitRoomId(room.id);
+        setTacitRoom(room);
+        if (room.status === "WAITING") setTacitMode("room");
+        if (room.status === "IN_PROGRESS") setTacitMode("playing");
+        if (room.status === "FINISHED") setTacitMode("result");
+      });
+      socket.on("tacit:invite", (invite) => {
+        if (invite?.ownerName) setChatNotice(`${invite.ownerName} 邀请你加入二选一默契挑战`);
+        loadTacitInvitations().catch(() => null);
+      });
+    };
+
+    if (isWechatMiniProgramWebView()) {
+      deferTimer = window.setTimeout(attachSocket, 2500);
+    } else {
+      attachSocket();
+    }
 
     return () => {
-      socket.disconnect();
-      if (socketRef.current === socket) socketRef.current = null;
+      if (deferTimer) window.clearTimeout(deferTimer);
+      if (socket) {
+        socket.disconnect();
+        if (socketRef.current === socket) socketRef.current = null;
+      }
     };
   }, [authHeaders, user]);
 
@@ -5535,9 +5574,11 @@ export default function App() {
               key={avatar.key || avatar.src}
               src={resolveAssetUrl(avatar.src)}
               alt=""
+              decoding="async"
+              fetchPriority="high"
               onError={(e) => {
                 e.currentTarget.onerror = null;
-                e.currentTarget.src = MALE_SYMBOL_AVATAR;
+                e.currentTarget.src = getGenderFallbackAvatar(avatar.gender);
               }}
             />
           ))}
@@ -6064,14 +6105,14 @@ export default function App() {
                   <p className="feed-tip">正在加载隐藏款资料...</p>
                 </div>
               ) : visibleSystemRobotProfiles.length ? (
-                visibleSystemRobotProfiles.map((item) => (
+                visibleSystemRobotProfiles.slice(0, 6).map((item) => (
                   <div key={item.id} className="hero-profile-card">
                     <img
                       className="hero-profile-cover"
                       src={resolveAssetUrl(item.avatar || "")}
                       alt={item.nickname || "隐藏款"}
-                      decoding="sync"
-                      fetchPriority="high"
+                      decoding="async"
+                      loading="lazy"
                       onError={(e) => {
                         e.currentTarget.onerror = null;
                         e.currentTarget.src = item.gender === "MALE" ? MALE_SYMBOL_AVATAR : FEMALE_SYMBOL_AVATAR;

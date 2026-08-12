@@ -1,7 +1,30 @@
+import { shouldPreferSameOriginMedia } from "./wechatEnv.js";
+
 /** OSS 图片 CDN（img.manghe.me 回源 manghe-social 桶，边缘缓存 30 天） */
 export const IMAGE_CDN_BASE = String(import.meta.env.VITE_IMAGE_CDN_BASE || "https://img.manghe.me")
   .trim()
   .replace(/\/$/, "");
+
+export function ossPathToSameOriginApiUrl(apiBase, ossPath, search = "") {
+  const base = String(apiBase || "")
+    .trim()
+    .replace(/\/$/, "");
+  if (!base) return null;
+  const p = ossPath.startsWith("/") ? ossPath : `/${ossPath}`;
+  return `${base}/oss-media${p}${search}`;
+}
+
+function rewriteCdnUrlToSameOrigin(apiBase, cdnUrl) {
+  if (!cdnUrl || !shouldPreferSameOriginMedia()) return null;
+  try {
+    const u = new URL(cdnUrl);
+    const ossRest = ossObjectPathFromUrlPathname(u.pathname);
+    if (ossRest) return ossPathToSameOriginApiUrl(apiBase, ossRest, u.search || "");
+  } catch (_error) {
+    /* ignore */
+  }
+  return null;
+}
 
 const OSS_MARKERS = ["/fake-pictures/", "/chat-history-pictures/", "/zhenren-pictures/"];
 
@@ -44,6 +67,37 @@ export function resolveOssMediaToCdnUrl(raw) {
   return null;
 }
 
+/** seed-avatars OSS/CDN 路径 → 站点内置 /avatars（随前端 dist 部署，小程序同源加载） */
+export function seedAvatarUrlToBundledPath(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  if (s.startsWith("/avatars/")) return s.split("#")[0];
+  const ossMatch = s.match(/seed-avatars\/(male|female)\/([^/?#]+)/i);
+  if (ossMatch) return `/avatars/${ossMatch[1]}/${ossMatch[2]}`;
+  try {
+    if (/^https?:\/\//i.test(s) || s.startsWith("//")) {
+      const u = new URL(s.startsWith("//") ? `https:${s}` : s);
+      if (u.pathname.startsWith("/avatars/")) return u.pathname.split("#")[0];
+      const inPath = u.pathname.match(/seed-avatars\/(male|female)\/([^/?#]+)/i);
+      if (inPath) return `/avatars/${inPath[1]}/${inPath[2]}`;
+    }
+  } catch (_error) {
+    /* ignore */
+  }
+  return null;
+}
+
+/** 展示用：小程序 web-view 走同源 /oss-media，其余走 img CDN */
+export function resolveSeedAvatarDisplayUrl(raw, apiBase) {
+  if (shouldPreferSameOriginMedia()) {
+    const bundled = seedAvatarUrlToBundledPath(raw);
+    if (bundled) return bundled;
+  }
+  const sameOrigin = rewriteCdnUrlToSameOrigin(apiBase, resolveSeedAvatarCdnUrl(raw));
+  if (sameOrigin) return sameOrigin;
+  return resolveSeedAvatarCdnUrl(raw);
+}
+
 /** localhost /avatars、/oss-media 等 → img CDN */
 export function resolveSeedAvatarCdnUrl(raw) {
   const s = String(raw ?? "").trim();
@@ -79,4 +133,18 @@ export function resolveSeedAvatarCdnUrl(raw) {
     /* ignore */
   }
   return null;
+}
+
+/** 展示用：小程序 web-view 走同源 /oss-media，其余走 img CDN */
+export function resolveOssMediaDisplayUrl(raw, apiBase) {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  if (shouldPreferSameOriginMedia() && apiBase) {
+    if (s.startsWith("/oss-media/")) {
+      return `${String(apiBase).replace(/\/$/, "")}${s.split("#")[0]}`;
+    }
+    const sameOrigin = rewriteCdnUrlToSameOrigin(apiBase, resolveOssMediaToCdnUrl(raw));
+    if (sameOrigin) return sameOrigin;
+  }
+  return resolveOssMediaToCdnUrl(raw);
 }

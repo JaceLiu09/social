@@ -17,6 +17,7 @@
     "disableUseStrict": false,
     "useCompilerPlugins": false,
     "condition": false,
+    "urlCheck": false,
     "swc": false,
     "disableSWC": true,
     "babelSetting": {

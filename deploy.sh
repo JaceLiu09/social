@@ -158,7 +158,14 @@ echo "==> [11/12] Admin console build"
 echo "VITE_ADMIN_API_BASE_URL=${VITE_ADMIN_API_BASE_URL}"
 npm run build
 
-echo "==> [12/12] Restart services (PM2)"
+if [ "${BUILD_TARO:-0}" = "1" ] && [ -f "${APP_DIR}/taro-app/build-on-server.sh" ]; then
+  echo "==> [12/13] Taro 小程序 build（输出 taro-app/dist/）"
+  bash "${APP_DIR}/taro-app/build-on-server.sh"
+else
+  echo "==> [12/13] 跳过 Taro build（BUILD_TARO=1 时启用）"
+fi
+
+echo "==> [13/13] Restart services (PM2)"
 # 与 backend server.js 中 PORT 一致；勿在 Node 16 环境上升 sharp≥0.33（需 Node≥18.17）
 export PORT="${BACKEND_PORT}"
 export PUBLIC_SITE_URL="${PUBLIC_SITE_URL}"
@@ -184,6 +191,9 @@ pm2 save
 pm2 ls
 
 echo "Deploy done."
+if [ "${BUILD_TARO:-0}" = "1" ]; then
+  echo "Taro 小程序 dist: ${APP_DIR}/taro-app/dist/ （微信开发者工具打开 taro-app/）"
+fi
 echo "用户端（CDN/域名）:      ${PUBLIC_SITE_URL}/"
 echo "用户端（应用机直连）:    http://${SERVER_IP}:${FRONTEND_PORT}/  （preview，可选）"
 echo "用户端（backend 合一）:  http://${SERVER_IP}:${BACKEND_PORT}/  （SERVE_FRONTEND 默认开启）"

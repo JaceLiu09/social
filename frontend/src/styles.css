@@ -1075,6 +1075,59 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
   letter-spacing: 0.03em;
 }
 
+/* 微信小程序 web-view：dvh/flex 网格兼容性差，固定高度避免白屏与卡片重叠 */
+html.wechat-miniprogram,
+html.wechat-miniprogram body,
+html.wechat-miniprogram #root {
+  height: 100%;
+  min-height: 100%;
+}
+
+html.wechat-miniprogram .main-app {
+  height: 100vh;
+  height: -webkit-fill-available;
+  max-height: 100vh;
+  max-height: -webkit-fill-available;
+}
+
+html.wechat-miniprogram .main-app.planet-match-route {
+  min-height: 100vh;
+  max-height: 100vh;
+}
+
+html.wechat-miniprogram .main-content.planet-home {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+html.wechat-miniprogram .planet-home .hero-match-card {
+  flex: 0 0 auto;
+  min-height: auto;
+}
+
+html.wechat-miniprogram .planet-home .hero-profile-list {
+  flex: 0 0 auto;
+  min-height: 0;
+  grid-template-rows: repeat(2, auto);
+  max-height: none;
+}
+
+html.wechat-miniprogram .planet-home .hero-profile-card {
+  grid-template-rows: 72px auto;
+  height: auto;
+  min-height: 0;
+  animation: none;
+}
+
+html.wechat-miniprogram .planet-home .hero-profile-cover {
+  height: 72px;
+  min-height: 72px;
+}
+
+html.wechat-miniprogram .hero-profile-card {
+  animation: none;
+}
+
 .planet-online-strip em {
   font-style: normal;
   font-weight: 600;

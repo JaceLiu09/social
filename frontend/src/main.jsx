@@ -14,6 +14,18 @@ if (Capacitor.isNativePlatform()) {
   }
 }
 
+if (/miniprogram/i.test(navigator.userAgent || "")) {
+  document.documentElement.classList.add("wechat-miniprogram");
+} else {
+  try {
+    if (new URLSearchParams(window.location.search).get("mp") === "1") {
+      document.documentElement.classList.add("wechat-miniprogram");
+    }
+  } catch (_error) {
+    /* ignore */
+  }
+}
+
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <BrowserRouter>

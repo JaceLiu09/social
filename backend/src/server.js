@@ -4133,6 +4133,20 @@ function isBackendApiPath(pathname) {
   );
 }
 
+function mountWechatMpVerify() {
+  const filename = String(process.env.WECHAT_MP_VERIFY_FILENAME || "").trim();
+  const content = String(process.env.WECHAT_MP_VERIFY_CONTENT || "").trim();
+  if (!filename || !content) return;
+  if (!/^MP_verify_[A-Za-z0-9]+\.txt$/.test(filename)) {
+    console.warn("[wechat] WECHAT_MP_VERIFY_FILENAME 格式无效，已跳过业务域名校验路由");
+    return;
+  }
+  app.get(`/${filename}`, (_req, res) => {
+    res.type("text/plain").send(content);
+  });
+  console.log(`[wechat] 业务域名校验文件: GET /${filename}`);
+}
+
 function mountFrontendStatic() {
   if (process.env.SERVE_FRONTEND === "0") return;
   const indexPath = path.join(frontendDistDir, "index.html");
@@ -4165,6 +4179,7 @@ function mountFrontendStatic() {
   console.log(`[frontend] 静态托管: ${frontendDistDir}`);
 }
 
+mountWechatMpVerify();
 mountFrontendStatic();
 
 io.on("connection", (socket) => {

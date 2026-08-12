@@ -1,0 +1,17 @@
+{
+  "miniprogramRoot": "dist/",
+  "projectname": "blindbox-taro",
+  "description": "盲盒星球 Taro 原生小程序",
+  "appid": "wx6034b7140872c716",
+  "setting": {
+    "urlCheck": true,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "compileWorklet": false
+  },
+  "compileType": "miniprogram",
+  "libVersion": "3.5.5",
+  "packOptions": { "ignore": [], "include": [] }
+}

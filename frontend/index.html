@@ -10,6 +10,19 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="format-detection" content="telephone=no" />
     <title>盲盒星球</title>
+    <script>
+      (function () {
+        try {
+          if (/miniprogram/i.test(navigator.userAgent || "")) {
+            document.documentElement.classList.add("wechat-miniprogram");
+            return;
+          }
+          if (new URLSearchParams(location.search).get("mp") === "1") {
+            document.documentElement.classList.add("wechat-miniprogram");
+          }
+        } catch (_e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root">

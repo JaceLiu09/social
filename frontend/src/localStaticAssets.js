@@ -52,12 +52,23 @@ function buildProfileFromAvatar(src, index, gender) {
   };
 }
 
+/** 登录页固定 8 张（均为 frontend/public 内置图，避免 OSS/CDN 偶发 404） */
+const LOGIN_HERO_AVATAR_PATHS = [
+  "/avatars/male/male-002.jpg",
+  "/avatars/male/male-005.jpg",
+  "/avatars/male/male-007.jpg",
+  "/avatars/male/male-008.jpeg",
+  "/avatars/female/female-001.jpg",
+  "/avatars/female/female-002.jpg",
+  "/avatars/female/female-003.jpg",
+  "/avatars/female/female-004.jpg"
+];
+
 export function getLocalLoginHeroAvatars(count = 8) {
-  const males = (avatarManifest.male || []).slice(0, Math.ceil(count / 2));
-  const females = (avatarManifest.female || []).slice(0, Math.floor(count / 2));
-  return [...males, ...females].slice(0, count).map((src, i) => ({
+  const picked = LOGIN_HERO_AVATAR_PATHS.slice(0, count);
+  return picked.map((src, i) => ({
     src,
-    gender: i < males.length ? "MALE" : "FEMALE",
+    gender: src.includes("/male/") ? "MALE" : "FEMALE",
     alt: "",
     key: `local-hero-${i}-${src}`
   }));
