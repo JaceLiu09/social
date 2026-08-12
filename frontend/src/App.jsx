@@ -601,7 +601,10 @@ function collectUserMediaRawUrls(profile) {
   } catch (_error) {
     /* ignore */
   }
-  return urls.map((u) => String(u ?? "").trim()).filter(Boolean);
+  return urls
+    .map((u) => String(u ?? "").trim())
+    .filter(Boolean)
+    .filter((u) => !u.startsWith("/uploads/"));
 }
 
 function resolveMediaUrl(url) {
@@ -869,8 +872,8 @@ export default function App() {
   const [meHeaderAvatarFailed, setMeHeaderAvatarFailed] = useState(false);
   const [authMode, setAuthMode] = useState("login");
   const [agreed, setAgreed] = useState(false);
-  const [user, setUser] = useState(null);
-  const [authToken, setAuthToken] = useState("");
+  const [user, setUser] = useState(() => loadStoredAuth()?.user ?? null);
+  const [authToken, setAuthToken] = useState(() => loadStoredAuth()?.token ?? "");
   const [session, setSession] = useState(null);
   const [blindBoxTarget, setBlindBoxTarget] = useState(null);
   const [onlineCount, setOnlineCount] = useState(200000);
@@ -919,34 +922,35 @@ export default function App() {
 
   useEffect(() => {
     const saved = loadStoredAuth();
-    if (!saved) return;
-    setUser(saved.user);
-    setAuthToken(saved.token);
-    setNeedsProfileSetup(!saved.user.profileCompleted);
+    if (!saved?.token) return;
 
     let cancelled = false;
-    (async () => {
-      try {
-        const controller = new AbortController();
-        const timer = window.setTimeout(() => controller.abort(), 8000);
-        const res = await fetch(`${API}/wallet`, {
-          headers: { Authorization: `Bearer ${saved.token}` },
-          signal: controller.signal
-        });
-        window.clearTimeout(timer);
-        if (cancelled) return;
-        if (res.status === 401) {
-          clearStoredAuth();
-          setUser(null);
-          setAuthToken("");
-          setNeedsProfileSetup(false);
+    const timer = window.setTimeout(() => {
+      (async () => {
+        try {
+          const controller = new AbortController();
+          const abortTimer = window.setTimeout(() => controller.abort(), 3000);
+          const res = await fetch(buildApiUrl("/wallet"), {
+            headers: { Authorization: `Bearer ${saved.token}` },
+            signal: controller.signal
+          });
+          window.clearTimeout(abortTimer);
+          if (cancelled) return;
+          if (res.status === 401) {
+            clearStoredAuth();
+            setUser(null);
+            setAuthToken("");
+            setNeedsProfileSetup(false);
+          }
+        } catch (_error) {
+          /* 网络抖动时保留本地登录态 */
         }
-      } catch (_error) {
-        /* 网络抖动时保留本地登录态，避免误踢 */
-      }
-    })();
+      })();
+    }, 600);
+
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, []);
 
@@ -958,7 +962,10 @@ export default function App() {
   const [registerForm, setRegisterForm] = useState(registerBasicInitial);
   const [profileSetupForm, setProfileSetupForm] = useState(profileSetupInitial);
   const [profileSetupPhotos, setProfileSetupPhotos] = useState([]);
-  const [needsProfileSetup, setNeedsProfileSetup] = useState(false);
+  const [needsProfileSetup, setNeedsProfileSetup] = useState(() => {
+    const saved = loadStoredAuth();
+    return saved ? !saved.user?.profileCompleted : false;
+  });
   const [impersonatePending, setImpersonatePending] = useState(
     () => Boolean(new URLSearchParams(window.location.search).get("asUser"))
   );
@@ -2238,18 +2245,17 @@ export default function App() {
   useEffect(() => {
     if (!user?.id || !authToken) return;
     let cancelled = false;
-    (async () => {
-      await preloadLocalDisplayAssets(user.gender || "MALE");
-      if (cancelled) return;
-      await preloadAssetUrls(collectUserMediaRawUrls(user).map((raw) => resolveAssetUrl(raw)));
-      if (cancelled) return;
-      const robots = getLocalSystemRobotProfiles(user.gender || "MALE", 12);
-      await preloadSquarePostsAssets(
-        robots.map((p) => ({ avatarUrl: p.avatar, imageUrls: p.galleryUrls || [p.avatar] }))
-      );
-    })();
+    const deferTimer = window.setTimeout(() => {
+      (async () => {
+        await preloadLocalDisplayAssets(user.gender || "MALE");
+        if (cancelled) return;
+        const mediaUrls = collectUserMediaRawUrls(user).map((raw) => resolveAssetUrl(raw));
+        if (mediaUrls.length) await preloadAssetUrls(mediaUrls);
+      })();
+    }, 800);
     return () => {
       cancelled = true;
+      window.clearTimeout(deferTimer);
     };
   }, [user?.id, user?.gender, user?.avatarUrl, user?.photoUrls, authToken]);
 
@@ -2418,7 +2424,10 @@ export default function App() {
   useEffect(() => {
     if (!user?.id) return undefined;
     const socket = io(API, {
-      transports: ["websocket"],
+      transports: ["polling", "websocket"],
+      timeout: 8000,
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 8000,
       query: { userId: user.id }
     });
     socketRef.current = socket;
