@@ -44,3 +44,16 @@ export function resolveRuntimeApiBaseUrl() {
 
   return `${protocol}//${hostname}:4000`;
 }
+
+/** 安全拼接 API 地址，避免 Safari fetch 因非法 URL 报 pattern 错误 */
+export function buildApiUrl(path, base = resolveRuntimeApiBaseUrl()) {
+  const rel = String(path ?? "").trim();
+  if (!rel) throw new Error("invalid api path");
+  const root = String(base ?? "")
+    .trim()
+    .replace(/\/$/, "");
+  const origin =
+    root ||
+    (typeof window !== "undefined" ? String(window.location.origin || "").trim() : "http://localhost:4000");
+  return new URL(rel.startsWith("/") ? rel : `/${rel}`, `${origin}/`).href;
+}

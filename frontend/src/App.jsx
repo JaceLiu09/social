@@ -59,9 +59,27 @@ import {
   PlanetGameTacitIcon,
   PlanetGameTruthIcon
 } from "./planetGameCards.jsx";
-import { resolveRuntimeApiBaseUrl } from "./runtimeApi.js";
+import { buildApiUrl, resolveRuntimeApiBaseUrl } from "./runtimeApi.js";
 
 const API = resolveRuntimeApiBaseUrl();
+
+function normalizeAuthToken(token) {
+  return String(token ?? "")
+    .trim()
+    .replace(/[^\w-]/g, "");
+}
+
+function mapFetchErrorMessage(error, fallback = "请求失败，请稍后重试") {
+  const msg = String(error?.message || error || "").trim();
+  if (!msg) return fallback;
+  if (/did not match the expected pattern/i.test(msg)) {
+    return "网络请求异常，请刷新页面后重试";
+  }
+  if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) {
+    return "无法连接服务器，请检查网络后重试";
+  }
+  return msg;
+}
 const AUTH_STORAGE_KEY = "social_auth_v1";
 const GAME_MATCH_ELAPSED_MAX = 15;
 
@@ -75,7 +93,7 @@ function loadStoredAuth() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed?.token || !parsed?.user?.id) return null;
-    return parsed;
+    return { ...parsed, token: normalizeAuthToken(parsed.token) };
   } catch {
     return null;
   }
@@ -3420,39 +3438,49 @@ export default function App() {
   };
 
   const uploadMedia = async (file, kind, uploadCategory = "chat", options = {}) => {
+    const token = normalizeAuthToken(authToken);
+    if (!token) throw new Error("登录已失效，请重新登录");
     const timeoutMs = typeof options.timeoutMs === "number" ? options.timeoutMs : UPLOAD_TIMEOUT_MS;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
+      reader.onerror = () => reject(new Error("读取图片失败"));
       reader.readAsDataURL(file);
     });
     try {
-      const res = await fetch(`${API}/chat/upload`, {
+      const uploadUrl = buildApiUrl("/chat/upload");
+      const res = await fetch(uploadUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          fileName: file.name,
+          fileName: String(file.name || "photo.jpg").replace(/[^\w.\-()+]/g, "_"),
           dataUrl,
           kind,
           uploadCategory
         }),
         signal: controller.signal
       });
-      const data = await res.json();
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (_jsonError) {
+        throw new Error(res.ok ? "上传响应异常" : `上传失败（${res.status}）`);
+      }
       if (!res.ok) throw new Error(data.message || "上传失败");
-      if (kind === "AUDIO") return { url: data.url, thumbUrl: null };
-      return { url: data.url, thumbUrl: data.thumbUrl ?? data.url };
+      const url = String(data.url ?? "").trim();
+      if (!url) throw new Error("上传成功但未返回图片地址");
+      if (kind === "AUDIO") return { url, thumbUrl: null };
+      return { url, thumbUrl: String(data.thumbUrl ?? url).trim() || url };
     } catch (error) {
       if (error.name === "AbortError") {
         throw new Error("上传超时，请检查网络后重试");
       }
-      throw error;
+      throw new Error(mapFetchErrorMessage(error, "上传失败，请稍后重试"));
     } finally {
       clearTimeout(timeoutId);
     }
@@ -3611,7 +3639,7 @@ export default function App() {
         return next;
       });
     } catch (error) {
-      setMessage(error.message || "头像上传失败");
+      setMessage(mapFetchErrorMessage(error, "头像上传失败"));
     }
   };
 
