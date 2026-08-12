@@ -335,10 +335,23 @@ function getGenderFallbackAvatar(gender) {
 
 const TRUTH_ROUNDS_PER_GAME = 5;
 const MEMBERSHIP_PLAN_META = {
-  MONTH: { label: "月卡", price: 29, months: 1 },
-  QUARTER: { label: "季卡", price: 79, months: 3 },
-  YEAR: { label: "年卡", price: 269, months: 12 }
+  MONTH: { label: "1个月", price: 49, months: 1, perWeek: "12.3", tag: "受欢迎" },
+  QUARTER: { label: "3个月", price: 129, months: 3, perWeek: "10.7", tag: "立省42元", featured: true },
+  YEAR: { label: "12个月", price: 359, months: 12, perWeek: "7.5", tag: "最划算" }
 };
+const MEMBERSHIP_PRIVILEGES = [
+  { icon: "♾️", title: "无限查看资料", desc: "查看详细资料、动态与礼物墙" },
+  { icon: "💬", title: "直接联系对方", desc: "发起聊天，消息优先展示" },
+  { icon: "👑", title: "尊贵 VIP 标识", desc: "个人页 VIP 标识，也可选择隐藏" },
+  { icon: "🎁", title: "送礼物加魅力", desc: "送礼提升双方魅力与曝光" },
+  { icon: "🔍", title: "查看谁喜欢我", desc: "会员专属，发现对你心动的人" }
+];
+const COIN_RECHARGE_BENEFITS = [
+  "增加曝光：送礼后个人页优先展示",
+  "表达心意：送花/玫瑰让她第一时间看到你",
+  "恢复配对：消耗盲盒币可挽回错过的人"
+];
+const PROFILE_GIFT_HIGHLIGHT = { icon: "🌹", name: "浪漫玫瑰", coinPrice: 21 };
 const MEMBERSHIP_TYPE_LABEL = {
   MONTH: "月卡会员",
   QUARTER: "季卡会员",
@@ -987,9 +1000,13 @@ export default function App() {
   const [chatInput, setChatInput] = useState("");
   const [chatComposerPanel, setChatComposerPanel] = useState("none");
   const [showGiftPanel, setShowGiftPanel] = useState(false);
+  const [showProfileGiftSheet, setShowProfileGiftSheet] = useState(false);
   const [giftCatalog, setGiftCatalog] = useState([]);
   const [giftSending, setGiftSending] = useState(false);
   const [showCoinRecharge, setShowCoinRecharge] = useState(false);
+  const [coinRechargePeer, setCoinRechargePeer] = useState(null);
+  const [membershipGateTab, setMembershipGateTab] = useState("vip");
+  const [membershipPlanPick, setMembershipPlanPick] = useState("QUARTER");
   const [coinPackages, setCoinPackages] = useState([]);
   const [coinRechargeSubmitting, setCoinRechargeSubmitting] = useState(false);
   const [coinPayChannel, setCoinPayChannel] = useState("WECHAT");
@@ -1140,6 +1157,7 @@ export default function App() {
     mutualFollow: false
   });
   const [peerProfileAddContactBusy, setPeerProfileAddContactBusy] = useState(false);
+  const [peerProfileFollowBusy, setPeerProfileFollowBusy] = useState(false);
   const [peerProfileGateContext, setPeerProfileGateContext] = useState("planet");
   const [planetMatchLoading, setPlanetMatchLoading] = useState(false);
   const [planetMatchProfile, setPlanetMatchProfile] = useState(null);
@@ -1771,6 +1789,29 @@ export default function App() {
     if (peerProfileFollow.isFriend || peerProfileFollow.mutualFollow) return "已是好友";
     return "加通讯录";
   }, [peerProfileFollow]);
+
+  const peerProfileLikeLabel = useMemo(() => {
+    if (peerProfileFollowBusy) return "…";
+    if (peerProfileFollow.mutualFollow || peerProfileFollow.isFriend) return "已互关";
+    if (peerProfileFollow.iFollow) return "已喜欢";
+    return "喜欢";
+  }, [peerProfileFollow, peerProfileFollowBusy]);
+
+  const coinRechargeFeaturedPackages = useMemo(() => {
+    const preferred = ["pkg_60", "pkg_169", "pkg_585"];
+    const picked = preferred
+      .map((id) => coinPackages.find((p) => p.id === id))
+      .filter(Boolean);
+    if (picked.length >= 3) return picked;
+    return coinPackages.slice(0, 3);
+  }, [coinPackages]);
+
+  const profileGiftCost = useMemo(() => {
+    const rose =
+      giftCatalog.find((g) => g.name === PROFILE_GIFT_HIGHLIGHT.name) ||
+      giftCatalog.find((g) => String(g.icon || "").includes("🌹"));
+    return rose?.coinPrice ?? PROFILE_GIFT_HIGHLIGHT.coinPrice;
+  }, [giftCatalog]);
 
   useEffect(() => {
     if (!authToken) return;
@@ -2720,6 +2761,8 @@ export default function App() {
     setMembershipPayChannel("WECHAT");
     setMembershipPendingOrderId("");
     setMembershipRenewPreview("");
+    setMembershipGateTab("vip");
+    setMembershipPlanPick("QUARTER");
   }, [showMembershipGate]);
 
   useEffect(() => {
@@ -3769,47 +3812,43 @@ export default function App() {
     chatInputRef.current?.blur();
     setShowGiftPanel(true);
     try {
-      const [giftRes, walletRes] = await Promise.all([
-        fetch(`${API}/gifts/catalog`),
-        fetch(`${API}/wallet`, { headers: authHeaders })
-      ]);
-      const giftData = await giftRes.json();
-      const walletData = await walletRes.json();
-      setGiftCatalog(Array.isArray(giftData.gifts) ? giftData.gifts : []);
-      if (walletRes.ok && walletData.wallet) {
-        setUser((prev) => (prev ? { ...prev, ...walletData.wallet } : prev));
-      }
+      await loadGiftCatalogAndWallet();
     } catch (_e) {
       showToast("加载礼物失败");
     }
   };
 
-  const sendGift = async (giftId) => {
-    if (!activeConversation || !user || giftSending) return;
+  const sendGift = async (giftId, toUserIdArg) => {
+    const toUserId = toUserIdArg || activeConversation?.id;
+    if (!toUserId || !user || giftSending) return;
     setGiftSending(true);
     try {
-      const res = await fetch(`${API}/gifts/send`, {
+      const res = await fetch(buildApiUrl("/gifts/send"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`
+          Authorization: `Bearer ${normalizeAuthToken(authToken)}`
         },
-        body: JSON.stringify({ toUserId: activeConversation.id, giftId })
+        body: JSON.stringify({ toUserId, giftId })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "送礼失败");
-      appendOwnMessage(data.message);
+      if (activeConversation?.id === toUserId) {
+        appendOwnMessage(data.message);
+      }
       if (data.wallet) {
         setUser((prev) => (prev ? { ...prev, ...data.wallet } : prev));
       }
       setShowGiftPanel(false);
+      setShowProfileGiftSheet(false);
       showToast(
         data.pointsEarned ? `礼物已送出，+${data.pointsEarned} 贡献积分` : "礼物已送出"
       );
     } catch (error) {
-      const msg = error.message || "送礼失败";
+      const msg = mapFetchErrorMessage(error, "送礼失败");
       showToast(msg);
       if (msg.includes("不足")) {
+        setCoinRechargePeer(peerProfile || null);
         setShowCoinRecharge(true);
       }
     } finally {
@@ -3817,10 +3856,56 @@ export default function App() {
     }
   };
 
-  const openCoinRecharge = async () => {
+  const loadGiftCatalogAndWallet = async () => {
+    const [giftRes, walletRes] = await Promise.all([
+      fetch(buildApiUrl("/gifts/catalog")),
+      fetch(buildApiUrl("/wallet"), { headers: authHeaders })
+    ]);
+    const giftData = await giftRes.json();
+    const walletData = await walletRes.json();
+    setGiftCatalog(Array.isArray(giftData.gifts) ? giftData.gifts : []);
+    if (walletRes.ok && walletData.wallet) {
+      setUser((prev) => (prev ? { ...prev, ...walletData.wallet } : prev));
+    }
+  };
+
+  const openProfileGiftSheet = async () => {
+    if (!peerProfile?.id) return;
+    setShowProfileGiftSheet(true);
+    try {
+      await loadGiftCatalogAndWallet();
+      const pkgRes = await fetch(buildApiUrl("/coins/packages"));
+      const pkgData = await pkgRes.json();
+      setCoinPackages(Array.isArray(pkgData.packages) ? pkgData.packages : []);
+      setCoinYuanRate(Number(pkgData.yuanRate) || 5);
+    } catch (_e) {
+      showToast("加载礼物失败");
+    }
+  };
+
+  const handlePeerLike = async () => {
+    if (!peerProfile?.id) return;
+    await toggleFollowForPeer(peerProfile.id, peerProfileFollow, setPeerProfileFollowBusy);
+  };
+
+  const sendProfileHighlightGift = async () => {
+    if (!peerProfile?.id) return;
+    const rose =
+      giftCatalog.find((g) => g.name === PROFILE_GIFT_HIGHLIGHT.name) ||
+      giftCatalog.find((g) => String(g.icon || "").includes("🌹")) ||
+      giftCatalog[0];
+    if (!rose?.id) {
+      showToast("礼物加载中，请稍候");
+      return;
+    }
+    await sendGift(rose.id, peerProfile.id);
+  };
+
+  const openCoinRecharge = async (peerContext = null) => {
+    setCoinRechargePeer(peerContext);
     setShowCoinRecharge(true);
     try {
-      const res = await fetch(`${API}/coins/packages`);
+      const res = await fetch(buildApiUrl("/coins/packages"));
       const data = await res.json();
       setCoinPackages(Array.isArray(data.packages) ? data.packages : []);
       setCoinYuanRate(Number(data.yuanRate) || 5);
@@ -3940,6 +4025,7 @@ export default function App() {
     setShowCoinRecharge(false);
     setCoinPendingOrderId("");
     setCoinSelectedPackage(null);
+    setCoinRechargePeer(null);
   };
 
   const onConversationTouchStart = (e, conversationId) => {
@@ -6446,7 +6532,7 @@ export default function App() {
                           <span className="gift-panel-coin-label">盲盒币</span>
                           <span className="gift-panel-points">· 积分 {contributionPoints}</span>
                         </div>
-                        <button type="button" className="gift-panel-recharge" onClick={openCoinRecharge}>
+                        <button type="button" className="gift-panel-recharge" onClick={() => openCoinRecharge()}>
                           马上充值 ›
                         </button>
                       </div>
@@ -8337,10 +8423,38 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="peer-home-actionbar">
-                <button type="button" className="peer-home-sayhi-btn" onClick={handlePeerSayHi}>
-                  发起聊天
+              <div className="peer-home-actionbar peer-home-actionbar--qs">
+                <button
+                  type="button"
+                  className={`peer-home-act-btn peer-home-act-btn--like ${
+                    peerProfileFollow.iFollow ? "is-active" : ""
+                  }`}
+                  disabled={peerProfileFollowBusy}
+                  onClick={handlePeerLike}
+                >
+                  <span className="peer-home-act-icon" aria-hidden>
+                    {peerProfileFollow.iFollow ? "💖" : "🤍"}
+                  </span>
+                  <span>{peerProfileLikeLabel}</span>
                 </button>
+                <button
+                  type="button"
+                  className="peer-home-act-btn peer-home-act-btn--gift"
+                  onClick={openProfileGiftSheet}
+                >
+                  <span className="peer-home-act-icon" aria-hidden>
+                    🌸
+                  </span>
+                  <span>送礼物</span>
+                </button>
+                <button type="button" className="peer-home-act-btn peer-home-act-btn--chat" onClick={handlePeerSayHi}>
+                  <span className="peer-home-act-icon" aria-hidden>
+                    💬
+                  </span>
+                  <span>聊天</span>
+                </button>
+              </div>
+              <div className="peer-home-actionbar peer-home-actionbar--secondary">
                 <button
                   type="button"
                   className={`peer-home-follow-btn ${
@@ -8370,40 +8484,202 @@ export default function App() {
         </div>
       )}
 
-      {showCoinRecharge && (
-        <div className="profile-setup-overlay membership-gate-overlay" onClick={closeCoinRecharge}>
-          <div className="profile-setup-card membership-gate-card coin-recharge-card soul-coin-sheet" onClick={(e) => e.stopPropagation()}>
-            <div className="membership-sheet-handle" aria-hidden="true" />
-            <div className="soul-coin-sheet-head">
-              <h3>盲盒币充值</h3>
-              <button type="button" className="soul-coin-sheet-close" onClick={closeCoinRecharge} aria-label="关闭">
-                ×
+      {showProfileGiftSheet && peerProfile ? (
+        <div className="profile-setup-overlay qs-gift-overlay" onClick={() => setShowProfileGiftSheet(false)}>
+          <div className="qs-gift-sheet" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="qs-gift-close"
+              aria-label="关闭"
+              onClick={() => setShowProfileGiftSheet(false)}
+            >
+              ×
+            </button>
+            <div className="qs-gift-hero">
+              <div className="qs-gift-avatar-wrap">
+                <img
+                  src={peerHeroCover}
+                  alt={peerProfile.nickname || "对方"}
+                  className="qs-gift-avatar"
+                />
+                <span className="qs-gift-avatar-badge" aria-hidden>
+                  🌸
+                </span>
+              </div>
+              <h3 className="qs-gift-title">
+                送花表达心意，让{peerProfile.gender === "MALE" ? "他" : "她"}直接看到你
+              </h3>
+              <p className="qs-gift-sub">
+                和她的配对率可提升 <strong>10 倍</strong>
+              </p>
+              <p className="qs-gift-cost-line">
+                本次消耗 <strong>{profileGiftCost}</strong>
+                <span className="qs-gift-cost-sep">·</span>
+                余额 <strong>{coinBalance}</strong>
+              </p>
+            </div>
+            <div className="qs-gift-benefits">
+              {COIN_RECHARGE_BENEFITS.map((text) => (
+                <div className="qs-gift-benefit-row" key={text}>
+                  <span className="qs-gift-check" aria-hidden>
+                    ✓
+                  </span>
+                  <span>{text}</span>
+                </div>
+              ))}
+            </div>
+            <div className="qs-gift-quick-row">
+              <button
+                type="button"
+                className="qs-gift-send-rose"
+                disabled={giftSending}
+                onClick={sendProfileHighlightGift}
+              >
+                <span aria-hidden>{PROFILE_GIFT_HIGHLIGHT.icon}</span>
+                送{PROFILE_GIFT_HIGHLIGHT.name}（{profileGiftCost}币）
               </button>
             </div>
-            <p className="soul-coin-balance-line">
-              余额：<strong>{coinBalance}</strong> 盲盒币
-              <span className="muted"> · 1元={coinYuanRate}币</span>
+            {giftCatalog.length > 0 ? (
+              <div className="qs-gift-catalog">
+                {giftCatalog.slice(0, 8).map((gift) => (
+                  <button
+                    key={gift.id}
+                    type="button"
+                    className="qs-gift-catalog-item"
+                    disabled={giftSending}
+                    onClick={() => sendGift(gift.id, peerProfile.id)}
+                  >
+                    {gift.badge ? <em>{gift.badge}</em> : null}
+                    <span className="qs-gift-catalog-icon">{gift.icon}</span>
+                    <strong>{gift.name}</strong>
+                    <small>{gift.coinPrice}币</small>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {coinRechargeFeaturedPackages.length > 0 ? (
+              <div className="qs-coin-pack-row">
+                {coinRechargeFeaturedPackages.map((pkg, idx) => (
+                  <button
+                    key={pkg.id}
+                    type="button"
+                    className={`qs-coin-pack-card ${idx === 2 ? "is-featured" : ""}`}
+                    disabled={coinRechargeSubmitting}
+                    onClick={() => {
+                      setCoinRechargePeer(peerProfile);
+                      setShowProfileGiftSheet(false);
+                      setShowCoinRecharge(true);
+                      startCoinRecharge(pkg);
+                    }}
+                  >
+                    {pkg.bonus > 0 ? <em>首充+{pkg.bonus}</em> : null}
+                    {idx === 2 ? <span className="qs-coin-pack-tag">9折</span> : null}
+                    <strong>{pkg.coins}</strong>
+                    <span>盲盒币</span>
+                    <b>¥{pkg.price}</b>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="qs-gift-cta"
+              onClick={() => {
+                setShowProfileGiftSheet(false);
+                openCoinRecharge(peerProfile);
+              }}
+            >
+              获取盲盒币
+            </button>
+            <p className="qs-gift-legal">点击购买即表示同意《隐私政策》《服务条款》</p>
+          </div>
+        </div>
+      ) : null}
+
+      {showCoinRecharge && (
+        <div className="profile-setup-overlay membership-gate-overlay qs-coin-overlay" onClick={closeCoinRecharge}>
+          <div className="profile-setup-card qs-coin-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="membership-sheet-handle" aria-hidden="true" />
+            <div className="qs-coin-sheet-head">
+              <button type="button" className="qs-gift-close" onClick={closeCoinRecharge} aria-label="关闭">
+                ×
+              </button>
+              {coinRechargePeer ? (
+                <div className="qs-coin-peer-head">
+                  <img
+                    src={
+                      resolveAssetUrl(coinRechargePeer.avatarUrl) ||
+                      getGenderFallbackAvatar(coinRechargePeer.gender)
+                    }
+                    alt=""
+                    className="qs-coin-peer-avatar"
+                  />
+                  <div>
+                    <h3>送花给 {coinRechargePeer.nickname || "对方"}</h3>
+                    <p>充值盲盒币，立刻表达心意</p>
+                  </div>
+                </div>
+              ) : (
+                <h3>盲盒币充值</h3>
+              )}
+            </div>
+            <p className="qs-coin-balance">
+              余额 <strong>{coinBalance}</strong> 盲盒币
+              <span> · 1元={coinYuanRate}币</span>
             </p>
             {!coinSelectedPackage ? (
               <>
-                <div className="coin-package-grid soul-coin-grid">
-                  {coinPackages.map((pkg) => (
-                    <button
-                      key={pkg.id}
-                      type="button"
-                      className="soul-coin-pack"
-                      disabled={coinRechargeSubmitting}
-                      onClick={() => startCoinRecharge(pkg)}
-                    >
-                      {pkg.bonus > 0 ? (
-                        <em className="soul-coin-pack-bonus">限时赠{pkg.bonus}</em>
-                      ) : null}
-                      <strong>{pkg.coins} 盲盒币</strong>
-                      <span>¥{pkg.price}</span>
-                    </button>
+                <div className="qs-gift-benefits qs-gift-benefits--compact">
+                  {COIN_RECHARGE_BENEFITS.map((text) => (
+                    <div className="qs-gift-benefit-row" key={`coin-${text}`}>
+                      <span className="qs-gift-check" aria-hidden>
+                        ✓
+                      </span>
+                      <span>{text}</span>
+                    </div>
                   ))}
                 </div>
-                <p className="feed-tip soul-coin-tip">充值后可用于送礼物；消费盲盒币累计贡献积分</p>
+                <div className="qs-coin-pack-row qs-coin-pack-row--sheet">
+                  {(coinRechargeFeaturedPackages.length ? coinRechargeFeaturedPackages : coinPackages).map(
+                    (pkg, idx) => (
+                      <button
+                        key={pkg.id}
+                        type="button"
+                        className={`qs-coin-pack-card ${idx === 2 ? "is-featured" : ""}`}
+                        disabled={coinRechargeSubmitting}
+                        onClick={() => startCoinRecharge(pkg)}
+                      >
+                        {pkg.bonus > 0 ? <em>首充+{pkg.bonus}</em> : null}
+                        {idx === 2 ? <span className="qs-coin-pack-tag">9折</span> : null}
+                        <strong>{pkg.coins}</strong>
+                        <span>盲盒币</span>
+                        <b>¥{pkg.price}</b>
+                      </button>
+                    )
+                  )}
+                </div>
+                {coinPackages.length > 3 ? (
+                  <details className="qs-coin-more">
+                    <summary>更多档位</summary>
+                    <div className="coin-package-grid soul-coin-grid">
+                      {coinPackages.map((pkg) => (
+                        <button
+                          key={pkg.id}
+                          type="button"
+                          className="soul-coin-pack"
+                          disabled={coinRechargeSubmitting}
+                          onClick={() => startCoinRecharge(pkg)}
+                        >
+                          {pkg.bonus > 0 ? (
+                            <em className="soul-coin-pack-bonus">赠{pkg.bonus}</em>
+                          ) : null}
+                          <strong>{pkg.coins} 盲盒币</strong>
+                          <span>¥{pkg.price}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </details>
+                ) : null}
               </>
             ) : (
               <div className="membership-checkout">
@@ -8432,13 +8708,13 @@ export default function App() {
                 </div>
                 <button
                   type="button"
-                  className="membership-pay-btn soul-coin-pay-btn"
+                  className="qs-vip-pay-btn"
                   disabled={coinRechargeSubmitting || !coinPendingOrderId}
                   onClick={payCoinRecharge}
                 >
                   {coinRechargeSubmitting
                     ? "支付处理中..."
-                    : `立即支付${coinSelectedPackage.price}元`}
+                    : `立即支付 ¥${coinSelectedPackage.price}`}
                 </button>
                 <button
                   type="button"
@@ -8453,21 +8729,89 @@ export default function App() {
                 </button>
               </div>
             )}
+            <p className="qs-gift-legal">点击购买即表示同意《隐私政策》《服务条款》</p>
           </div>
         </div>
       )}
 
       {showMembershipGate && (
-        <div className="profile-setup-overlay membership-gate-overlay" onClick={closeMembershipGate}>
-          <div className="profile-setup-card membership-gate-card" onClick={(e) => e.stopPropagation()}>
+        <div className="profile-setup-overlay membership-gate-overlay qs-vip-overlay" onClick={closeMembershipGate}>
+          <div className="profile-setup-card qs-vip-sheet" onClick={(e) => e.stopPropagation()}>
             <div className="membership-sheet-handle" aria-hidden="true" />
-            <h3>{membershipGateCopy.title}</h3>
-            <p>{membershipGateCopy.desc}</p>
-            {!membershipCheckoutMeta ? (
+            <div className="qs-vip-tabs">
+              <button
+                type="button"
+                className={membershipGateTab === "vip" ? "active" : ""}
+                onClick={() => setMembershipGateTab("vip")}
+              >
+                VIP 特权
+              </button>
+              <button
+                type="button"
+                className={membershipGateTab === "likes" ? "active" : ""}
+                onClick={() => setMembershipGateTab("likes")}
+              >
+                查看谁喜欢我
+              </button>
+            </div>
+            {membershipGateTab === "likes" ? (
+              <div className="qs-vip-likes-placeholder">
+                <span aria-hidden>💕</span>
+                <p>开通 VIP 后可查看对你心动的人</p>
+                <button type="button" className="qs-vip-pay-btn" onClick={() => setMembershipGateTab("vip")}>
+                  去开通 VIP
+                </button>
+              </div>
+            ) : !membershipCheckoutMeta ? (
               <>
+                <div className="qs-vip-user-card">
+                  <img
+                    src={meAvatarUrl}
+                    alt=""
+                    className="qs-vip-user-avatar"
+                  />
+                  <div className="qs-vip-user-meta">
+                    <strong>{user?.nickname || "我"}</strong>
+                    <span>{isMembershipValid ? membershipStatusText : "未开通特权"}</span>
+                    <p>VIP 会员 · 享 {MEMBERSHIP_PRIVILEGES.length} 大特权</p>
+                  </div>
+                  <span className="qs-vip-crown" aria-hidden>
+                    👑
+                  </span>
+                </div>
+                <div className="qs-vip-plan-row">
+                  {Object.entries(MEMBERSHIP_PLAN_META).map(([planId, plan]) => (
+                    <button
+                      key={planId}
+                      type="button"
+                      className={`qs-vip-plan-card ${membershipPlanPick === planId ? "is-selected" : ""} ${
+                        plan.featured ? "is-featured" : ""
+                      }`}
+                      disabled={membershipSubmitting}
+                      onClick={() => setMembershipPlanPick(planId)}
+                    >
+                      {plan.tag ? <em>{plan.tag}</em> : null}
+                      <strong>{plan.label}</strong>
+                      <span>{plan.perWeek}元/周</span>
+                      <b>¥{plan.price}</b>
+                    </button>
+                  ))}
+                </div>
+                <div className="qs-vip-privileges">
+                  <p className="qs-vip-privileges-title">含 {MEMBERSHIP_PRIVILEGES.length} 项特权</p>
+                  {MEMBERSHIP_PRIVILEGES.map((item) => (
+                    <div className="qs-vip-privilege-row" key={item.title}>
+                      <span className="qs-vip-privilege-icon">{item.icon}</span>
+                      <div>
+                        <strong>{item.title}</strong>
+                        <small>{item.desc}</small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
                 <div className="membership-points-redeem">
                   <p className="membership-points-title">
-                    贡献积分兑换 <strong>{contributionPoints}</strong>
+                    或用积分兑换 <strong>{contributionPoints}</strong>
                   </p>
                   <div className="membership-points-grid">
                     {POINT_MEMBERSHIP_REDEEM.map((option) => (
@@ -8488,21 +8832,18 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-                <p className="membership-divider-label">或直接购买会员</p>
-                <div className="werewolf-menu">
-                  <button type="button" disabled={membershipSubmitting} onClick={() => openMembershipCheckout("MONTH")}>
-                    月卡 ¥29
-                  </button>
-                  <button type="button" disabled={membershipSubmitting} onClick={() => openMembershipCheckout("QUARTER")}>
-                    季卡 ¥79
-                  </button>
-                  <button type="button" disabled={membershipSubmitting} onClick={() => openMembershipCheckout("YEAR")}>
-                    年卡 ¥269
-                  </button>
-                </div>
-                <button type="button" onClick={closeMembershipGate}>
+                <button
+                  type="button"
+                  className="qs-vip-pay-btn"
+                  disabled={membershipSubmitting}
+                  onClick={() => openMembershipCheckout(membershipPlanPick)}
+                >
+                  获取 VIP
+                </button>
+                <button type="button" className="qs-vip-cancel-btn" onClick={closeMembershipGate}>
                   {membershipGateCopy.cancel}
                 </button>
+                <p className="qs-gift-legal">阅读并同意《自动续费与增值服务协议》《隐私政策》</p>
               </>
             ) : (
               <div className="membership-checkout">
@@ -8531,19 +8872,16 @@ export default function App() {
                 </div>
                 <button
                   type="button"
-                  className="membership-pay-btn"
+                  className="qs-vip-pay-btn"
                   disabled={membershipSubmitting || !membershipPendingOrderId}
                   onClick={subscribeMembership}
                 >
                   {membershipSubmitting
                     ? "支付处理中..."
-                    : `确认支付 ¥${membershipCheckoutMeta.price} 并开通${membershipCheckoutMeta.label}`}
+                    : `确认支付 ¥${membershipCheckoutMeta.price}`}
                 </button>
                 <button type="button" onClick={backToMembershipPlans} disabled={membershipSubmitting}>
                   返回套餐选择
-                </button>
-                <button type="button" className="membership-cancel-pay-btn" onClick={closeMembershipGate} disabled={membershipSubmitting}>
-                  取消支付
                 </button>
               </div>
             )}
