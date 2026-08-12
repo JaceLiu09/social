@@ -1635,7 +1635,7 @@ app.post("/auth/complete-profile", async (req, res) => {
   }
 });
 
-app.patch("/auth/profile", async (req, res) => {
+async function handleAuthProfileUpdate(req, res) {
   try {
     const userId = getAuthUserId(req);
     if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
@@ -1689,7 +1689,10 @@ app.patch("/auth/profile", async (req, res) => {
     }
     return res.status(500).json({ message: error.message || "更新资料失败" });
   }
-});
+}
+
+app.patch("/auth/profile", handleAuthProfileUpdate);
+app.post("/auth/profile", handleAuthProfileUpdate);
 
 app.post("/auth/login", async (req, res) => {
   try {

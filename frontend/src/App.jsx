@@ -486,7 +486,7 @@ function resolveSeedAvatarUrl(raw) {
 function resolveAssetUrl(url) {
   const raw = String(url ?? "").trim();
   if (!raw) return MALE_SYMBOL_AVATAR;
-  if (raw.startsWith("data:")) return raw;
+  if (raw.startsWith("blob:") || raw.startsWith("data:")) return raw;
   const localSeed = mapSeedAssetToLocal(raw);
   if (localSeed) return localSeed;
   const seedHit = resolveSeedAvatarUrl(raw);
@@ -1252,6 +1252,8 @@ export default function App() {
   const [editProfilePhotos, setEditProfilePhotos] = useState(() => Array(PROFILE_EDIT_SLOT_LABELS.length).fill(""));
   /** 仅在服务端相册/头像字段变化时同步编辑格；忽略 user 引用抖动导致的重复 effect */
   const lastProfileEditServerKeyRef = useRef(null);
+  /** 编辑资料本地预览 blob，上传成功后 revoke */
+  const profilePhotoBlobUrlsRef = useRef(new Map());
   const [profileForm, setProfileForm] = useState({
     nickname: "",
     currentCity: "",
@@ -1405,15 +1407,10 @@ export default function App() {
       avatar: tacitPeerMember.avatar || ""
     };
   }, [tacitPeerMember, tacitRoom?.type]);
-  const authHeaders = useMemo(
-    () =>
-      authToken
-        ? {
-            Authorization: `Bearer ${authToken}`
-          }
-        : {},
-    [authToken]
-  );
+  const authHeaders = useMemo(() => {
+    const token = normalizeAuthToken(authToken);
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }, [authToken]);
   const visibleSystemRobotProfiles = useMemo(() => {
     if (!systemRobotProfiles.length) return [];
     const base = systemRobotProfiles.slice(0, 6);
@@ -2313,6 +2310,12 @@ export default function App() {
   }, [squareDraftFiles]);
 
   useEffect(() => {
+    if (mePage === "profile-edit") return;
+    profilePhotoBlobUrlsRef.current.forEach((blobUrl) => URL.revokeObjectURL(blobUrl));
+    profilePhotoBlobUrlsRef.current.clear();
+  }, [mePage]);
+
+  useEffect(() => {
     if (mePage !== "profile-edit") return;
     const serverKey = `${user?.id ?? ""}|${user?.photoUrls ?? ""}|${user?.avatarUrl ?? ""}`;
     if (lastProfileEditServerKeyRef.current === serverKey) return;
@@ -2806,16 +2809,19 @@ export default function App() {
     if (profileSetupPhotos.length < 1) {
       return setMessage("请至少上传1张新用户相册照片");
     }
+    if (profileSetupPhotos.some((u) => String(u).startsWith("blob:"))) {
+      return setMessage("照片仍在上传中，请稍候再提交");
+    }
     if (!gender) return setMessage("请选择性别");
     if (!birthYear || !birthMonth || !birthDay) {
       return setMessage("请选择完整的出生年月日");
     }
     const birthDate = `${birthYear}-${String(birthMonth).padStart(2, "0")}-${String(birthDay).padStart(2, "0")}`;
-    const res = await fetch(`${API}/auth/complete-profile`, {
+    const res = await fetch(buildApiUrl("/auth/complete-profile"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${authToken}`
+        Authorization: `Bearer ${normalizeAuthToken(authToken)}`
       },
       body: JSON.stringify({
         ...profileSetupForm,
@@ -2835,13 +2841,18 @@ export default function App() {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    const previewUrl = URL.createObjectURL(file);
+    setProfileSetupPhotos((prev) => [previewUrl, ...prev.filter((item) => item !== previewUrl)].slice(0, 6));
     try {
       const compressed = await compressImageFile(file);
       const { url: mediaUrl } = await uploadMedia(compressed, "IMAGE", "profile");
-      setProfileSetupPhotos((prev) => [mediaUrl, ...prev.filter((item) => item !== mediaUrl)].slice(0, 6));
+      URL.revokeObjectURL(previewUrl);
+      setProfileSetupPhotos((prev) => [mediaUrl, ...prev.filter((item) => item !== previewUrl && item !== mediaUrl)].slice(0, 6));
       setProfileSetupForm((prev) => ({ ...prev, avatarUrl: mediaUrl }));
     } catch (error) {
-      setMessage(error.message || "新用户相册上传失败");
+      URL.revokeObjectURL(previewUrl);
+      setProfileSetupPhotos((prev) => prev.filter((item) => item !== previewUrl));
+      showToast(mapFetchErrorMessage(error, "新用户相册上传失败"));
     }
   };
 
@@ -3323,9 +3334,12 @@ export default function App() {
     const nextHobbies = [...existing, tag].join("，");
     setMeTagSaving(true);
     try {
-      const res = await fetch(`${API}/auth/profile`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", ...authHeaders },
+      const res = await fetch(buildApiUrl("/auth/profile"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${normalizeAuthToken(authToken)}`
+        },
         body: JSON.stringify({ hobbies: nextHobbies })
       });
       const data = await res.json();
@@ -3343,11 +3357,20 @@ export default function App() {
   };
 
   const saveProfile = async () => {
-    if (!user || !authToken) return;
+    if (!user) return;
+    const token = normalizeAuthToken(authToken);
+    if (!token) {
+      showToast("登录已失效，请重新登录");
+      return;
+    }
     const fallbackRaw = profileForm.avatarUrl || getUserPrimaryRawImageUrl(user);
     const slotUrls = Array.from({ length: PROFILE_EDIT_SLOT_LABELS.length }, (_, i) =>
       String(editProfilePhotos[i] || "").trim()
     );
+    if (slotUrls.some((u) => u.startsWith("blob:"))) {
+      showToast("照片仍在上传中，请稍候再保存");
+      return;
+    }
     const headSlot = slotUrls[0];
     const hasPhotosAfterHead = slotUrls.slice(1).some((u) => u);
     if (!headSlot && hasPhotosAfterHead) {
@@ -3363,26 +3386,34 @@ export default function App() {
     const hasAnySlot = slotUrls.some((u) => u);
     const photoUrlsPayload = hasAnySlot ? slotUrls : fallbackRaw ? [fallbackRaw] : [];
     try {
-      const res = await fetch(`${API}/auth/profile`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", ...authHeaders },
+      const res = await fetch(buildApiUrl("/auth/profile"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
         body: JSON.stringify({
           nickname: profileForm.nickname,
           avatarUrl: finalAvatar || null,
-          photoUrls: JSON.stringify(photoUrlsPayload.slice(0, 10)),
+          photoUrls: photoUrlsPayload.slice(0, 10),
           hometown: profileForm.hometown,
           currentCity: profileForm.currentCity,
           hobbies: profileForm.hobbies,
           partnerExpectation: profileForm.partnerExpectation
         })
       });
-      const data = await res.json();
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (_jsonError) {
+        throw new Error(res.ok ? "保存响应异常" : `保存失败（${res.status}）`);
+      }
       if (!res.ok) throw new Error(data.message || "保存失败");
       setUser(data.user);
       setMePage("home");
-      setMessage("资料已更新");
+      showToast("资料已更新");
     } catch (error) {
-      setMessage(error.message || "保存失败，请稍后重试");
+      showToast(mapFetchErrorMessage(error, "保存失败，请稍后重试"));
     }
   };
 
@@ -3637,9 +3668,25 @@ export default function App() {
       Math.max(0, Number.isFinite(n) ? n : 0),
       PROFILE_EDIT_SLOT_LABELS.length - 1
     );
+    const prevBlob = profilePhotoBlobUrlsRef.current.get(slotIndex);
+    if (prevBlob) {
+      URL.revokeObjectURL(prevBlob);
+      profilePhotoBlobUrlsRef.current.delete(slotIndex);
+    }
+    const previewUrl = URL.createObjectURL(file);
+    profilePhotoBlobUrlsRef.current.set(slotIndex, previewUrl);
+    setEditProfilePhotos((prev) => {
+      const next = Array.from({ length: PROFILE_EDIT_SLOT_LABELS.length }, (_, i) => String(prev[i] || "").trim());
+      next[slotIndex] = previewUrl;
+      const first = next.find((u) => u);
+      setProfileForm((form) => ({ ...form, avatarUrl: first || "" }));
+      return next;
+    });
     try {
       const compressed = await compressImageFile(file);
       const { url: mediaUrl } = await uploadMedia(compressed, "IMAGE", "profile");
+      URL.revokeObjectURL(previewUrl);
+      profilePhotoBlobUrlsRef.current.delete(slotIndex);
       setEditProfilePhotos((prev) => {
         const next = Array.from({ length: PROFILE_EDIT_SLOT_LABELS.length }, (_, i) => String(prev[i] || "").trim());
         next[slotIndex] = mediaUrl;
@@ -3648,7 +3695,16 @@ export default function App() {
         return next;
       });
     } catch (error) {
-      setMessage(mapFetchErrorMessage(error, "头像上传失败"));
+      URL.revokeObjectURL(previewUrl);
+      profilePhotoBlobUrlsRef.current.delete(slotIndex);
+      setEditProfilePhotos((prev) => {
+        const next = Array.from({ length: PROFILE_EDIT_SLOT_LABELS.length }, (_, i) => String(prev[i] || "").trim());
+        next[slotIndex] = "";
+        const first = next.find((u) => u);
+        setProfileForm((form) => ({ ...form, avatarUrl: first || "" }));
+        return next;
+      });
+      showToast(mapFetchErrorMessage(error, "头像上传失败"));
     }
   };
 
