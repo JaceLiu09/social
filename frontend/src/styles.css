@@ -448,10 +448,12 @@ html.kb-open .main-app.chat-detail-mode .chat-detail-footer {
 .main-app.planet-match-route {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  min-height: 100dvh;
+  max-height: 100dvh;
   background: #f5f6fb;
   color: #3a3540;
-  padding-bottom: 20px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  overflow: hidden;
 }
 
 .main-app.planet-match-route .fab,
@@ -4218,10 +4220,12 @@ button:hover {
 .planet-match-page {
   position: relative;
   flex: 1;
-  min-height: calc(100vh - 120px);
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   border-radius: 0;
 }
 
@@ -4288,14 +4292,15 @@ button:hover {
 .planet-match-page-inner {
   position: relative;
   z-index: 1;
-  flex: 1;
+  flex: 1 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 18px 28px;
+  padding: 8px 18px calc(28px + env(safe-area-inset-bottom, 0px) + 20px);
   max-width: 440px;
   margin: 0 auto;
   width: 100%;
+  box-sizing: border-box;
 }
 
 .planet-match-page-loading {
