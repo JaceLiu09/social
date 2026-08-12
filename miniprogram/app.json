@@ -1,7 +1,7 @@
 {
-  "pages": ["pages/index/index"],
+  "pages": ["pages/web/web", "pages/index/index"],
   "window": {
-    "navigationBarTitleText": "盲盒社交",
+    "navigationBarTitleText": "盲盒星球",
     "navigationBarBackgroundColor": "#111827",
     "navigationBarTextStyle": "white",
     "backgroundColor": "#f3f4f6"
