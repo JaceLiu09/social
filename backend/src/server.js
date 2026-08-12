@@ -1545,6 +1545,12 @@ app.post("/chat/upload", async (req, res) => {
       }
     }
 
+    if (process.env.NODE_ENV === "production") {
+      return res.status(503).json({
+        message: "生产环境须配置 OSS（图片 CDN），本地上传已禁用，请联系管理员检查 ALIYUN_OSS_*"
+      });
+    }
+
     const folder = mediaKind === "AUDIO" ? "audio" : "image";
     const dir = path.join(uploadRoot, folder);
     await fs.mkdir(dir, { recursive: true });

@@ -539,16 +539,24 @@ function collectSquarePostImageUrls(post) {
   return urls;
 }
 
-function preloadImage(url) {
+function preloadImage(url, timeoutMs = 6000) {
   return new Promise((resolve) => {
     const src = String(url ?? "").trim();
     if (!src) {
       resolve(false);
       return;
     }
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve(ok);
+    };
+    const timer = window.setTimeout(() => finish(false), timeoutMs);
     const img = new Image();
-    img.onload = () => resolve(true);
-    img.onerror = () => resolve(false);
+    img.onload = () => finish(true);
+    img.onerror = () => finish(false);
     img.src = src;
   });
 }
@@ -897,6 +905,31 @@ export default function App() {
     setUser(saved.user);
     setAuthToken(saved.token);
     setNeedsProfileSetup(!saved.user.profileCompleted);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 8000);
+        const res = await fetch(`${API}/wallet`, {
+          headers: { Authorization: `Bearer ${saved.token}` },
+          signal: controller.signal
+        });
+        window.clearTimeout(timer);
+        if (cancelled) return;
+        if (res.status === 401) {
+          clearStoredAuth();
+          setUser(null);
+          setAuthToken("");
+          setNeedsProfileSetup(false);
+        }
+      } catch (_error) {
+        /* 网络抖动时保留本地登录态，避免误踢 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -6923,7 +6956,15 @@ export default function App() {
                       type="button"
                       onClick={() => setSelectedCover(rawUrl)}
                     >
-                      <img src={resolveAssetUrl(rawUrl)} alt={`相册${idx + 1}`} className="profile-thumb" />
+                      <img
+                        src={resolveAssetUrl(rawUrl)}
+                        alt={`相册${idx + 1}`}
+                        className="profile-thumb"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.style.visibility = "hidden";
+                        }}
+                      />
                     </button>
                   ))}
                   <button
