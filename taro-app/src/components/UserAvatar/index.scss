@@ -1,0 +1,15 @@
+.user-avatar {
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.user-avatar-img {
+  border-radius: 50%;
+  display: block;
+}
+
+.user-avatar-fallback {
+  border-radius: 50%;
+  background: linear-gradient(135deg, #e5e7eb, #d1d5db);
+}

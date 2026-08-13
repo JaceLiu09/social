@@ -26,6 +26,14 @@ import {
 } from "./config.js";
 import { prepareChatTextContent } from "./sensitiveWords.js";
 import { walletSnapshot } from "./wealthLevel.js";
+import { code2Session, isWechatMpConfigured } from "./wechatMp.js";
+import {
+  isWechatPayConfigured,
+  createJsapiPrepay,
+  buildOutTradeNo,
+  parseWechatPayNotify,
+  queryTransactionByOutTradeNo
+} from "./wechatPay.js";
 import {
   applyCharmGain,
   applyCoinRecharge,
@@ -1514,7 +1522,7 @@ app.post("/chat/upload", async (req, res) => {
     const mimeType = match[1];
     const base64 = match[2];
     const allowedImage = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-    const allowedAudio = ["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg"];
+    const allowedAudio = ["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/mp3"];
     if (mediaKind === "IMAGE" && !allowedImage.includes(mimeType)) {
       return res.status(400).json({ message: "不支持的图片格式" });
     }
@@ -2346,8 +2354,34 @@ const membershipOrderCreateSchema = z.object({
 });
 
 const membershipOrderPaySchema = z.object({
-  userId: z.string().min(1)
+  userId: z.string().min(1),
+  paymentMode: z.enum(["mock", "wechat_jsapi"]).optional()
 });
+
+async function fulfillWechatPaidOrder(orderType, orderId, userId) {
+  if (orderType === "membership") {
+    return payMembershipOrder(orderId, userId);
+  }
+  return payCoinRechargeOrder(orderId, userId);
+}
+
+async function createWechatJsapiPayment(orderType, order, userId, description) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { wechatOpenId: true }
+  });
+  if (!user?.wechatOpenId) {
+    throw new Error("请先完成微信授权后再支付");
+  }
+  const outTradeNo = buildOutTradeNo(orderType, order.id);
+  const wechatPay = await createJsapiPrepay({
+    description,
+    outTradeNo,
+    amountYuan: order.amount,
+    openid: user.wechatOpenId
+  });
+  return { pending: true, outTradeNo, wechatPay, order };
+}
 
 const membershipMonthsMap = { MONTH: 1, QUARTER: 3, HALF_YEAR: 6, YEAR: 12 };
 
@@ -2449,6 +2483,22 @@ app.post("/membership/orders/:orderId/pay", async (req, res) => {
     const orderId = String(req.params.orderId || "").trim();
     if (!orderId) return res.status(400).json({ message: "订单号无效" });
     const parsed = membershipOrderPaySchema.parse(req.body || {});
+    if (parsed.paymentMode === "wechat_jsapi") {
+      if (!isWechatPayConfigured()) {
+        return res.status(503).json({ message: "微信支付未配置，请联系管理员" });
+      }
+      const order = await prisma.membershipOrder.findUnique({ where: { id: orderId } });
+      if (!order || order.userId !== parsed.userId) {
+        return res.status(404).json({ message: "订单不存在或无权限" });
+      }
+      const payload = await createWechatJsapiPayment(
+        "membership",
+        order,
+        parsed.userId,
+        `盲盒星球 VIP ${order.plan}`
+      );
+      return res.json(payload);
+    }
     const result = await payMembershipOrder(orderId, parsed.userId);
     return res.json(result);
   } catch (error) {
@@ -2716,10 +2766,94 @@ app.post("/coins/recharge/orders/:orderId/pay", async (req, res) => {
     if (!orderId) return res.status(400).json({ message: "订单号无效" });
     const userId = String(req.body?.userId || "").trim();
     if (!userId) return res.status(400).json({ message: "缺少 userId" });
+    const paymentMode = String(req.body?.paymentMode || "mock").trim();
+    if (paymentMode === "wechat_jsapi") {
+      if (!isWechatPayConfigured()) {
+        return res.status(503).json({ message: "微信支付未配置，请联系管理员" });
+      }
+      const order = await prisma.coinRechargeOrder.findUnique({ where: { id: orderId } });
+      if (!order || order.userId !== userId) {
+        return res.status(404).json({ message: "订单不存在或无权限" });
+      }
+      const payload = await createWechatJsapiPayment(
+        "coin",
+        order,
+        userId,
+        `盲盒星球金币充值 ${order.coins}`
+      );
+      return res.json(payload);
+    }
     const result = await payCoinRechargeOrder(orderId, userId);
     return res.json(result);
   } catch (error) {
     return res.status(400).json({ message: error.message || "支付失败" });
+  }
+});
+
+app.post("/auth/wechat/bind", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    if (!isWechatMpConfigured()) {
+      return res.status(503).json({ message: "微信小程序登录未配置" });
+    }
+    const code = String(req.body?.code || "").trim();
+    const { openid } = await code2Session(code);
+    const existing = await prisma.user.findUnique({ where: { wechatOpenId: openid } });
+    if (existing && existing.id !== userId) {
+      return res.status(409).json({ message: "该微信已绑定其他账号" });
+    }
+    await prisma.user.update({ where: { id: userId }, data: { wechatOpenId: openid } });
+    return res.json({ ok: true, openidBound: true });
+  } catch (error) {
+    return res.status(400).json({ message: error.message || "微信绑定失败" });
+  }
+});
+
+app.post("/payments/wechat/confirm", async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ message: "未登录或登录态失效" });
+    const orderType = String(req.body?.orderType || "").trim();
+    const orderId = String(req.body?.orderId || "").trim();
+    if (!orderId || !["coin", "membership"].includes(orderType)) {
+      return res.status(400).json({ message: "参数不完整" });
+    }
+    const outTradeNo = buildOutTradeNo(orderType, orderId);
+    const tx = await queryTransactionByOutTradeNo(outTradeNo);
+    if (tx.trade_state !== "SUCCESS") {
+      return res.status(400).json({ message: "微信订单尚未支付成功", tradeState: tx.trade_state });
+    }
+    const result = await fulfillWechatPaidOrder(orderType, orderId, userId);
+    return res.json({ ...result, confirmed: true });
+  } catch (error) {
+    return res.status(400).json({ message: error.message || "确认支付失败" });
+  }
+});
+
+app.post("/payments/wechat/notify", async (req, res) => {
+  try {
+    const parsedNotify = parseWechatPayNotify(req.body);
+    if (!parsedNotify.handled) {
+      return res.status(200).json({ code: "SUCCESS", message: "OK" });
+    }
+    const { orderType, orderId } = parsedNotify.parsed;
+    let userId = "";
+    if (orderType === "membership") {
+      const order = await prisma.membershipOrder.findUnique({ where: { id: orderId } });
+      userId = order?.userId || "";
+    } else {
+      const order = await prisma.coinRechargeOrder.findUnique({ where: { id: orderId } });
+      userId = order?.userId || "";
+    }
+    if (!userId) {
+      return res.status(200).json({ code: "SUCCESS", message: "ORDER_NOT_FOUND" });
+    }
+    await fulfillWechatPaidOrder(orderType, orderId, userId);
+    return res.status(200).json({ code: "SUCCESS", message: "OK" });
+  } catch (error) {
+    console.error("[payments/wechat/notify]", error);
+    return res.status(500).json({ code: "FAIL", message: error.message || "FAIL" });
   }
 });
 

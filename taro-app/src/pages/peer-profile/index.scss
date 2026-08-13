@@ -1,0 +1,100 @@
+.peer-page {
+  min-height: 100vh;
+  background: #f5f6fb;
+  padding-bottom: 40px;
+}
+
+.peer-loading {
+  display: block;
+  padding: 120px 0;
+  text-align: center;
+  color: #9ca3af;
+}
+
+.peer-hero {
+  position: relative;
+}
+
+.peer-cover {
+  width: 100%;
+  height: 420px;
+  background: #e5e7eb;
+}
+
+.peer-hero-info {
+  padding: 20px 24px;
+  background: #fff;
+}
+
+.peer-name {
+  display: block;
+  font-size: 40px;
+  font-weight: 700;
+}
+
+.peer-meta {
+  display: block;
+  margin-top: 8px;
+  font-size: 24px;
+  color: #6b7280;
+}
+
+.peer-gallery {
+  white-space: nowrap;
+  padding: 16px 24px;
+  background: #fff;
+}
+
+.peer-gallery-item {
+  display: inline-block;
+  width: 160px;
+  height: 160px;
+  border-radius: 12px;
+  margin-right: 12px;
+}
+
+.peer-section {
+  margin-top: 16px;
+  background: #fff;
+  padding: 24px;
+}
+
+.peer-label {
+  display: block;
+  font-size: 22px;
+  color: #9ca3af;
+  margin-top: 12px;
+}
+
+.peer-text {
+  display: block;
+  margin-top: 8px;
+  font-size: 28px;
+  line-height: 1.6;
+}
+
+.peer-actions {
+  display: flex;
+  gap: 12px;
+  padding: 24px;
+}
+
+.peer-actions .primary-btn,
+.peer-actions .ghost-btn {
+  flex: 1;
+}
+
+.peer-gift-sheet {
+  margin: 0 24px 24px;
+  background: #fff;
+  border-radius: 20px;
+  padding: 24px;
+}
+
+.peer-gift-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 20px 0;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 28px;
+}

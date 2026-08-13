@@ -21,7 +21,26 @@
 }
 
 .login-form {
-  margin-top: 80px;
+  margin-top: 48px;
+}
+
+.login-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 48px;
+  margin-top: 48px;
+}
+
+.login-tab {
+  font-size: 30px;
+  color: #9ca3af;
+  padding-bottom: 8px;
+}
+
+.login-tab--active {
+  color: #111827;
+  font-weight: 600;
+  border-bottom: 4px solid #111827;
 }
 
 .login-input {
@@ -60,4 +79,12 @@
   font-size: 22px;
   color: #9ca3af;
   text-align: center;
+}
+
+.login-legal {
+  display: block;
+  margin-top: 16px;
+  text-align: center;
+  font-size: 22px;
+  color: #6b7280;
 }

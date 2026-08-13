@@ -1,0 +1,37 @@
+.page-shell {
+  min-height: 100vh;
+  box-sizing: border-box;
+  background: #f5f6fb;
+}
+
+.card {
+  background: #fff;
+  border-radius: 20px;
+  padding: 24px;
+}
+
+.muted-text {
+  color: #9ca3af;
+  font-size: 24px;
+}
+
+.section-title {
+  display: block;
+  font-size: 30px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.primary-btn {
+  background: #111827 !important;
+  color: #fff !important;
+  border-radius: 40px;
+  font-size: 28px;
+}
+
+.ghost-btn {
+  background: #f3f4f6 !important;
+  color: #374151 !important;
+  border-radius: 40px;
+  font-size: 28px;
+}

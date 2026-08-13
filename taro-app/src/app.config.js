@@ -1,10 +1,19 @@
 export default {
   pages: [
     "pages/login/index",
+    "pages/profile-setup/index",
     "pages/planet/index",
     "pages/square/index",
     "pages/chat/index",
-    "pages/me/index"
+    "pages/me/index",
+    "pages/match/index",
+    "pages/chat-room/index",
+    "pages/game/index",
+    "pages/peer-profile/index",
+    "pages/me-wallet/index",
+    "pages/me-edit/index",
+    "pages/me-compose/index",
+    "pages/legal/index"
   ],
   window: {
     navigationBarTitleText: "盲盒星球",

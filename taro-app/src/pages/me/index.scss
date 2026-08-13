@@ -1,11 +1,21 @@
 .me-page {
-  padding: 40px;
+  min-height: 100vh;
+  padding: 32px 28px 60px;
+  box-sizing: border-box;
 }
 
-.me-card {
+.me-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
   background: #fff;
   border-radius: 20px;
-  padding: 32px;
+  padding: 28px;
+}
+
+.me-header-main {
+  flex: 1;
+  min-width: 0;
 }
 
 .me-name {
@@ -16,21 +26,106 @@
 
 .me-meta {
   display: block;
-  margin-top: 12px;
-  font-size: 26px;
+  margin-top: 10px;
+  font-size: 24px;
   color: #6b7280;
 }
 
-.me-logout {
-  margin-top: 40px;
-  background: #f3f4f6 !important;
-  color: #374151 !important;
+.me-setup-btn {
+  margin-top: 20px;
 }
 
-.me-api {
+.me-stats {
+  display: flex;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.me-stat {
+  flex: 1;
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px 12px;
+  text-align: center;
+}
+
+.me-stat-num {
   display: block;
-  margin-top: 32px;
+  font-size: 34px;
+  font-weight: 700;
+}
+
+.me-stat-label {
+  display: block;
+  margin-top: 8px;
   font-size: 22px;
   color: #9ca3af;
-  text-align: center;
+}
+
+.me-card {
+  margin-top: 20px;
+  background: #fff;
+  border-radius: 20px;
+  padding: 24px 28px;
+}
+
+.me-card-row {
+  display: block;
+  font-size: 28px;
+  color: #374151;
+  line-height: 1.8;
+}
+
+.me-logout {
+  margin-top: 32px;
+}
+
+.me-menu {
+  margin-top: 20px;
+  background: #fff;
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.me-menu-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 28px 24px;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 28px;
+}
+
+.me-menu-row:last-child {
+  border-bottom: none;
+}
+
+.me-menu-arrow {
+  color: #9ca3af;
+  font-size: 32px;
+}
+
+.me-posts {
+  margin-top: 20px;
+  background: #fff;
+  border-radius: 20px;
+  padding: 24px;
+}
+
+.me-post-row {
+  padding: 16px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.me-post-text {
+  display: block;
+  font-size: 26px;
+  line-height: 1.5;
+}
+
+.me-post-time {
+  display: block;
+  margin-top: 6px;
+  font-size: 22px;
+  color: #9ca3af;
 }

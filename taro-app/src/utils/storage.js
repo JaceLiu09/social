@@ -26,3 +26,9 @@ export function clearAuth() {
     /* ignore */
   }
 }
+
+export function updateStoredUser(user) {
+  const auth = getAuth();
+  if (!auth?.token) return;
+  setAuth(auth.token, user);
+}

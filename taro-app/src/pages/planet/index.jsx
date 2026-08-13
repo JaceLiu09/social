@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { View, Text, Image, Button } from "@tarojs/components";
+import { View, Text, Image, Button, ScrollView } from "@tarojs/components";
 import Taro, { useDidShow } from "@tarojs/taro";
+import { PLANET_MATCH_GAMES } from "../../constants/games";
 import { requestJson } from "../../services/api";
-import { isLoggedIn, getCurrentUser } from "../../services/auth";
+import { ensureLoggedIn, ensureProfileOrRedirect, getCurrentUser } from "../../services/auth";
+import { startMatchFlow } from "../../services/match";
 import { resolveAvatarUrl } from "../../utils/media";
 import "./index.scss";
 
@@ -12,10 +14,8 @@ export default function PlanetPage() {
   const [loading, setLoading] = useState(true);
 
   useDidShow(() => {
-    if (!isLoggedIn()) {
-      Taro.reLaunch({ url: "/pages/login/index" });
-      return;
-    }
+    if (!ensureLoggedIn()) return;
+    if (!ensureProfileOrRedirect()) return;
     loadData();
   });
 
@@ -35,8 +35,12 @@ export default function PlanetPage() {
 
   const user = getCurrentUser();
 
+  const openGame = (gameId) => {
+    Taro.navigateTo({ url: `/pages/game/index?game=${gameId}` });
+  };
+
   return (
-    <View className="planet-page">
+    <ScrollView className="planet-page" scrollY enhanced showScrollbar={false}>
       <View className="hero-card">
         <Text className="hero-label">附近推荐</Text>
         <View className="hero-grid">
@@ -44,11 +48,11 @@ export default function PlanetPage() {
             <Text className="muted">加载中…</Text>
           ) : heroes.length ? (
             heroes.map((item, i) => (
-              <View key={`${item.nickname}-${i}`} className="hero-item">
+              <View key={`${item.id || item.nickname}-${i}`} className="hero-item">
                 <Image
                   className="hero-avatar"
                   mode="aspectFill"
-                  src={resolveAvatarUrl(item.avatar)}
+                  src={resolveAvatarUrl(item.avatar || item.avatarUrl)}
                 />
                 <Text className="hero-name">{item.nickname || "隐藏款"}</Text>
               </View>
@@ -58,7 +62,7 @@ export default function PlanetPage() {
           )}
         </View>
         <Text className="hero-title">寻找你附近的隐藏款</Text>
-        <Button className="hero-btn" onClick={() => Taro.showToast({ title: "匹配流程开发中", icon: "none" })}>
+        <Button className="hero-btn" onClick={startMatchFlow}>
           开始寻找
         </Button>
       </View>
@@ -67,6 +71,21 @@ export default function PlanetPage() {
         当前 {onlineCount.toLocaleString()} 人在线
         {user?.nickname ? ` · 你好，${user.nickname}` : ""}
       </Text>
-    </View>
+
+      <View className="games-section">
+        <Text className="games-title">互动玩法</Text>
+        <View className="games-grid">
+          {PLANET_MATCH_GAMES.map((game) => (
+            <View key={game.id} className={`game-card game-card--${game.variant}`} onClick={() => openGame(game.id)}>
+              {game.badge ? <Text className="game-badge">{game.badge}</Text> : null}
+              <Text className="game-emoji">{game.emoji}</Text>
+              <Text className="game-name">{game.title}</Text>
+              {game.desc ? <Text className="game-desc">{game.desc}</Text> : null}
+              <Text className="game-players">{game.players}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </ScrollView>
   );
 }

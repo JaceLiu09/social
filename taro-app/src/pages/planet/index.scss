@@ -76,3 +76,84 @@
   font-size: 26px;
   color: #9ca3af;
 }
+
+.games-section {
+  margin-top: 32px;
+  padding-bottom: 40px;
+}
+
+.games-title {
+  display: block;
+  font-size: 32px;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+
+.games-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.game-card {
+  position: relative;
+  border-radius: 20px;
+  padding: 24px 20px;
+  min-height: 220px;
+  box-sizing: border-box;
+  color: #fff;
+}
+
+.game-card--sentence {
+  background: linear-gradient(145deg, #3b82f6, #2563eb);
+}
+
+.game-card--commonground {
+  background: linear-gradient(145deg, #22c55e, #16a34a);
+}
+
+.game-card--truth {
+  background: linear-gradient(145deg, #f472b6, #ec4899);
+}
+
+.game-card--tacit {
+  background: linear-gradient(145deg, #fb923c, #f97316);
+}
+
+.game-badge {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #111827;
+  font-size: 20px;
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+.game-emoji {
+  display: block;
+  font-size: 44px;
+  line-height: 1.2;
+}
+
+.game-name {
+  display: block;
+  margin-top: 12px;
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.game-desc {
+  display: block;
+  margin-top: 8px;
+  font-size: 22px;
+  opacity: 0.92;
+}
+
+.game-players {
+  display: block;
+  margin-top: 12px;
+  font-size: 20px;
+  opacity: 0.85;
+}

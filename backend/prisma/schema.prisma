@@ -26,6 +26,7 @@ model User {
   partnerExpectation String         @default("")
   profileCompleted   Boolean        @default(false)
   avatarUrl          String?          @db.VarChar(2048)
+  wechatOpenId       String?          @unique @db.VarChar(64)
   photoUrls          String           @db.Text
   fakeRobotLibrary   FakeRobotLibrary @default(NONE)
   membershipType     MembershipType @default(FREE)
